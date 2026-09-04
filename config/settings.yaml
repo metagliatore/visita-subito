@@ -1,0 +1,41 @@
+# =====================================================
+# Configurazione globale — pigramente letta con PyYAML
+# =====================================================
+browser:
+  # Percorso del binario Chrome. Vuoto => usa lo Selenium Manager default.
+  # In dev (WSL) puntiamo a .chrome/ ; in Docker verrà sostituito dall'image.
+  binary_path: ".chrome/opt/google/chrome/google-chrome"
+  headless: false            # false => finestra visibile; true per Docker/produzione
+  window_size: [1280, 900]
+
+session:
+  # Intervallo (secondi) tra richieste di keep-alive per tenere viva la sessione.
+  keep_alive_seconds: 900          # 15 min
+  # Prima dello scadere dei cookie, notifica che serve re-login.
+  relogin_warn_before_seconds: 3600
+  # Dove salvare i cookie/sessione
+  cookie_files: "data/cookies"
+  # Durata massima ritenuta "fresca" della sessione senza usarla (sentinella)
+  max_idle_seconds: 21600          # 6 ore
+
+scheduler:
+  # Intervallo di polling dei flussi
+  poll_interval_seconds: 300       # 5 min
+
+telegram:
+  # Token del bot creato con @BotFather
+  token: ""  # leggi da .env (TG_TOKEN)
+  # Chat ID della persona che riceve le notifiche (numerico, con - per i gruppi)
+  chat_id: ""  # leggi da .env (TG_CHAT_ID)
+  # Chat ID secondario opzionale (es. gruppo di backup)
+  chat_id_secondary: ""
+
+logging:
+  level: "INFO"           # DEBUG per lo studio dei selettori
+  file: "data/app.log"
+
+approval:
+  # Timeout (sec) entro cui l'utente deve confermare su Telegram
+  timeout_seconds: 600
+  # Se true, dopo il timeout la richiesta viene scartata
+  discard_on_timeout: true

@@ -1,0 +1,4 @@
+selenium>=4.20
+python-telegram-bot>=21
+httpx>=0.27
+PyYAML>=6.0

@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.chrome/
+data/
+*.log
+.env
+.idea/
+*.swp
+.DS_Store
+icloud

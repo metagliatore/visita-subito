@@ -1,0 +1,46 @@
+# =====================================================
+# Definizione dei flussi da monitorare.
+#
+# Due tipologie:
+#   type: new        -> Flow A: nuova prenotazione da ricetta (visita specialistica)
+#   type: reschedule  -> Flow B: anticipare/posticipare visita esistente
+#
+# 'criteri' = preferenze dell'utente. Se la disponibilità trovata matcha questi
+# criteri, il sistema propone la prenotazione e chiede conferma su Telegram.
+#
+# NOTE dal flusso reale PrenotaOnline:
+#  - le province ammesse sono quelle del dropdown (vedi core/selectors ->
+#    PRENOTAONLINE['province'])
+#  - 'giorni' usa i nomi corti: lun/mar/mer/gio/ven/sab/dom (checkbox della
+#    modale "Modifica ricerca"); la modale offre fascia 'mattina'/'pomeriggio'
+#  - 'data_dal' = data minima "A partire da" (formato GG/MM/AAAA)
+# =====================================================
+
+monitors:
+  - id: "visita-specialistica-esempio"
+    enabled: false                 # attiva dopo aver configurato la ricetta
+    type: "new"                    # Flow A
+    # Identificativo ricetta (NRE) o parte della prestazione da selezionare
+    ricetta: "VISITA SPECIALISTICA ESEMPIO"
+    criteri:
+      province: ["MILANO CITTA'"]
+      data_dal: ""                 # es. "01/11/2026"; vuoto = oggi
+      # NB: giorni/fascia NON si applicano sull'interfaccia web: l'estrazione
+      # prende tutti gli slot e il MATCHER li filtra a valle (services/matcher)
+      giorni: ["lun", "mar", "gio"]     # giorni preferiti (nomi corti)
+      escludi_giorni: ["sab", "dom"]    # giorni da escludere
+      fascia: ""                   # "mattina" | "pomeriggio" | "" (tutte)
+      # esclusioni/testi: se la prestazione contiene una keyword di analisi di
+      # laboratorio viene comunque marcata come NON automatizzabile (services/ricette)
+      note: "visita di controllo"
+
+  - id: "controllo-posticipa-esempio"
+    enabled: false                 # esempio disattivato
+    type: "reschedule"             # Flow B
+    ricetta: "RICETTA_2_DESC"
+    criteri:
+      province: ["MILANO PROVINCIA"]
+      giorni: ["lun", "mar", "gio"]
+      escludi_giorni: []
+      fascia: ""
+      note: "vuoi anticipare o posticipare"

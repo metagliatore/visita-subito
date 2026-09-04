@@ -1,0 +1,165 @@
+"""Catalogo ricette: legge la lista delle ricette prenotabili dalla pagina
+`/web/areaprivata/ricette`, le classifica e le marca per la gestione Telegram.
+
+Classificazione:
+    farmaceutica   -> ricetta di farmaci (ARCOXIA, CLEXANE, ...). Non prenotabile.
+    laboratorio    -> esame di analisi/laboratorio (URINE, URINOCOLTURA...).
+                      Ha un flusso DIFFERENTE (prenotaLaboratorio): lo mostriamo
+                      ma NON lo automatizziamo.
+    specialistica  -> visita/esame specialistico: automatizzabile (Flow A).
+
+La distinzione "laboratorio" è la più affidabile quando la ricetta è aperta nel
+portale via `ricettaCtrl.ricetta.isEsameLaboratorio()`, ma nella lista la
+inferiamo anche da keyword nella descrizione della prestazione.
+"""
+from __future__ import annotations
+
+import re
+
+# Keyword tipiche di esami/analisi di laboratorio (inferite dalla prestazione).
+_LAB_KEYWORDS = (
+    "esame", "urino", "urinoc", "chimico", "microscopic", "emocromo",
+    "emocito", "glicem", "colesterol", "triglicer", "esami", "analisi",
+    "azotem", "creatinin", "transaminas", "bilirubin", "emoculture",
+    "biopsia", "tampone rino", "test rapido",
+)
+# Keyword tipiche di ricette farmaceutiche (farmaci)
+_FARM_KEYWORDS = ("mg", "cpr", "cps", "sir", "flacon", "fiale", "gtt", "unit.")
+
+# Pattern frammento: una "prestazione" è spesso separata da virgola o ";".
+
+
+def _norm(txt: str) -> str:
+    return re.sub(r"\s+", " ", (txt or "")).strip().lower()
+
+
+def classify(prestazioni: list[str]) -> str:
+    """Ritorna 'farmaceutica' | 'laboratorio' | 'specialistica'."""
+    blob = _norm(" ".join(prestazioni))
+    if any(_norm(k) in blob for k in _LAB_KEYWORDS):
+        return "laboratorio"
+    if any(k in blob for k in _FARM_KEYWORDS):
+        return "farmaceutica"
+    return "specialistica"
+
+
+def prenotabile_in_automatico(categoria: str) -> bool:
+    """Solo le specialistiche (visite) vengono automatizzate."""
+    return categoria == "specialistica"
+
+
+def parse_ricette(html: str) -> list[dict]:
+    """Estrae le card ricette dalla pagina `/web/areaprivata/ricette`.
+
+    Ogni card è un <div id="NRE" class="prescrizioni-row ricette-row row">
+    Il marcatore primario di classificazione è il testo esplicito
+    "Ricetta specialistica" / "Ricetta farmaceutica" dentro la card;
+    le specialistiche vengono poi riclassificate come 'laboratorio' se la
+    prestazione matcha keyword di analisi (per escluderle dall'automazione).
+    """
+    html = html.replace(r'\"', '"').replace(r'\n', '\n')
+    out = []
+    # gestisce sia "ricette-row" (farmaci) sia "visite-row" (visite specialistiche)
+    parts = re.split(
+        r'<div[^>]*id="([A-Z0-9]+)"[^>]*class="prescrizioni-row (?:ricette-row|visite-row) row"',
+        html)
+    for k in range(1, len(parts) - 1, 2):
+        rid = parts[k]
+        content = parts[k + 1]
+
+        # codice ricetta (NRE)
+        cod = None
+        m = re.search(r'Codice ricetta:.*?<b>([0-9A-Za-z\-]+)</b>', content, re.S)
+        if m:
+            cod = m.group(1)
+        else:
+            for sc in re.findall(r'<b>([^<]+)</b>', content):
+                if re.fullmatch(r'[0-9A-Z]{5,}', sc.strip()):
+                    cod = sc.strip(); break
+
+        # marcatore testuale di tipologia
+        if 'Ricetta farmaceutica' in content:
+            tipologia = 'farmaceutica'
+        else:
+            tipologia = 'specialistica'
+
+        # stato
+        stato = None
+        m = re.search(r'stato-text"><b>([^<]+)</b>', content)
+        if m:
+            stato = m.group(1).strip()
+        # data ricetta: da <time datetime="YYYY-MM-DD"> o testo DD/MM/YYYY
+        data_ricetta = ""
+        m = re.search(r'Data ricetta.*?datetime="(\d{4}-\d{2}-\d{2})"', content)
+        if m:
+            data_ricetta = m.group(1)  # YYYY-MM-DD
+        else:
+            m = re.search(r'Data ricetta:?\s*<b>([^<]+)</b>', content)
+            if m:
+                t = m.group(1).strip()
+                mm = re.search(r'(\d{2}/\d{2}/\d{4})', t)
+                if mm:
+                    # converto DD/MM/YYYY -> YYYY-MM-DD
+                    d, mo, y = mm.group(1).split("/")
+                    data_ricetta = f"{y}-{mo}-{d}"
+        # regime / prescrittore
+        regime = None; prescrittore = None
+        m = re.search(r'Regime:</b>\s*<b>([^<]+)</b>', content)
+        if m: regime = m.group(1).strip()
+        m = re.search(r'Prescrittore:</b>\s*<b>([^<]+)</b>', content)
+        if m: prescrittore = m.group(1).strip()
+
+        # prestazioni: solo i <b> nel blocco "Prestazione:"
+        m = re.search(r'Prestazione:(.*?)(?:\s*<p>|</p>\s*<p>\s*Prescrittore)', content, re.S)
+        if m:
+            prestazioni = [re.sub(r'\s+', ' ', s).strip() for s
+                           in re.findall(r'<b>([^<]+)</b>', m.group(1))]
+            prestazioni = [p.lstrip(', ').strip() for p in prestazioni if p]
+        else:
+            prestazioni = []
+
+        # link prenota
+        link = None
+        m = re.search(r'href="([^"]*prenotaonline[^"]*)"[^>]*class="cambia-visibilita"', content)
+        if m:
+            link = m.group(1)
+        # link scarica (download ricetta)
+        link_download = None
+        m = re.search(r'href="(javascript:addCurrentPage\([^)]*step=downloadRicetta[^)]*)\)"', content)
+        if m:
+            link_download = m.group(1) + ")"
+
+        # categoria finale
+        if tipologia == 'farmaceutica':
+            categoria = 'farmaceutica'
+        elif len(prestazioni) and classify(prestazioni) == 'laboratorio':
+            categoria = 'laboratorio'
+        else:
+            categoria = 'specialistica'
+
+        out.append({
+            "id": rid,
+            "codice": cod,
+            "prestazioni": prestazioni,
+            "stato": stato,
+            "regime": regime,
+            "prescrittore": prescrittore,
+            "data_ricetta": data_ricetta or "",
+            "categoria": categoria,
+            "prenotabile": bool(link),
+            "automatizzabile": bool(link) and categoria == "specialistica",
+            "link": link,
+            "link_download": link_download,
+        })
+    # ordina per data ricetta decrescente (più recenti in alto); senza data in fondo
+    def _datakey(r):
+        d = (r.get("data_ricetta") or "")
+        if len(d) == 10 and d[4] == "-":  # YYYY-MM-DD
+            try:
+                import datetime as _dt
+                return _dt.datetime.strptime(d, "%Y-%m-%d").timestamp()
+            except Exception:  # noqa: BLE001
+                return -1e18
+        return -1e18  # senza data -> fondo (più vecchio)
+    out.sort(key=_datakey, reverse=True)
+    return out

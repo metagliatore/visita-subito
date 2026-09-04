@@ -1,0 +1,12 @@
+services:
+  monitor:
+    build: .
+    container_name: fascicolo-monitor
+    environment:
+      TG_TOKEN: ${TG_TOKEN}
+      TG_CHAT_ID: ${TG_CHAT_ID}
+      TG_CHAT_ID_SECONDARY: ${TG_CHAT_ID_SECONDARY:-}
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    restart: unless-stopped
