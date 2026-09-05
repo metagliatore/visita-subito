@@ -357,9 +357,15 @@ class Flow:
 
     def _request_approval(self, slot) -> str:
         req_id = self.queue.create(self.mid, {"slot": slot.__dict__, "type": self.type})
+        import html as _html
+        import urllib.parse as _up
+        esc = lambda s: _html.escape(str(s or ""))
+        extra = slot.extra or {}
         # contesto: provincia (se nota) e range temporale del monitor
-        prov = (slot.extra or {}).get("provincia", "")
-        azienda = (slot.extra or {}).get("azienda", "")
+        prov = extra.get("provincia", "")
+        azienda = extra.get("azienda", "")
+        sede = extra.get("sede", "")
+        comune = extra.get("comune", "")
         range_txt = ""
         dal = self.criteri.get("data_dal")
         al = self.criteri.get("data_a")
@@ -370,8 +376,22 @@ class Flow:
             f"📅 {slot.date_str} ore {slot.time_str}{f' · {prov}' if prov else ''}{range_txt}"
         )
         if azienda:
-            msg += f"\n🏥 {azienda}"
-        msg += f"\n{self.criteri.get('note', '')}"
+            msg += f"\n🏥 {esc(azienda)}"
+        # luogo: sede (o azienda) + comune, con link Google Maps
+        qparts = [p for p in (sede or azienda, comune) if p.strip()]
+        if qparts:
+            q = _up.quote(" ".join(p.strip() for p in qparts))
+            maps_url = f"https://www.google.com/maps/search/?api=1&query={q}"
+            luogo = []
+            if sede and sede != azienda:
+                luogo.append(esc(sede))
+            elif azienda and not sede:
+                luogo.append(esc(azienda))
+            if comune:
+                luogo.append(f"({esc(comune)})")
+            msg += f"\n📍 {' · '.join(luogo)}"
+            msg += f'\n🗺 <a href="{maps_url.replace("&", "&amp;")}">Apri in Google Maps</a>'
+        msg += f"\n{esc(self.criteri.get('note', ''))}"
         msg += f"\n\nVuoi procedere?"
         # pulsanti inline: Approva/Rifiuta (per reschedule la scelta anticipa/
         # posticipa è IMPLICITA nella data scelta, non serve chiederla)
