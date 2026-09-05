@@ -27,7 +27,7 @@ from selenium.webdriver.common.by import By
 
 from core import selectors
 from flows.base import Flow
-from services.matcher import Slot, nessuna_disponibilita
+from services.matcher import Slot
 
 log = logging.getLogger(__name__)
 
@@ -138,10 +138,12 @@ class RescheduleFlow(Flow):
         first_prov = (self.criteri.get("province") or [""])[0]
         self._provincia_corrente = first_prov
         self._compila_dove_quando_e_cerca(first_prov)
-        time.sleep(6)
-        # chiudi eventuale modale info che copre i risultati
-        self._chiudi_modale_info()
-        time.sleep(2)
+        # attende esito stabile (risultati o assenza) per la prima provincia
+        st = self._attendi_esito(first_prov, timeout_s=30)
+        if st.get("stato") not in ("risultati", "no_risultati"):
+            log.warning("flow B: prima provincia %s non pronta (%s)", first_prov, st.get("stato"))
+        # NB: NON chiudiamo qui la modale di ASSENZA: la gestisce extract_slots
+        # (altrimenti perderemmo lo stato no_risultati della prima provincia)
 
     def _click_by_or(self, sel_list, label="") -> bool:
         el = self._find(sel_list)
@@ -200,9 +202,10 @@ class RescheduleFlow(Flow):
         prov = provincia or (province[0] if province else "")
         if prov:
             d.execute_script(
+                "var target=arguments[0];"
                 "var sel=document.getElementById('provincia');if(sel){"
-                "var o=Array.from(sel.options).find(function(x){return x.textContent===arguments[0]});"
-                "if(o){sel.value=o.value;angular.element(sel).triggerHandler('change');}}return true;",
+                "var o=Array.from(sel.options).filter(function(x){return x.textContent.trim()===target});"
+                "if(o.length){sel.value=o[0].value;angular.element(sel).triggerHandler('change');}}return true;",
                 prov)
         d.execute_script(
             "var el=document.getElementById('quando');if(el){angular.element(el).val(arguments[0]).triggerHandler('input');}return true;",
@@ -237,6 +240,15 @@ class RescheduleFlow(Flow):
             log.info("avviata ricerca/spostamento (bottone: %s)", avanzo.get_attribute("ng-click") or "?")
         else:
             log.warning("nessun bottone ricerca/conferma abilitato (form invalido)")
+        # ATTESA esito stabile (vista risultati o modale assenza) - NON testi residui
+        st = self._attendi_esito(prov, timeout_s=30)
+        if st.get("stato") not in ("risultati", "no_risultati"):
+            log.warning("reschedule: ricerca per %s non completata (stato %s)", prov, st.get("stato"))
+            try:
+                from pathlib import Path
+                Path("data/study/zero_slots.html").write_text(self.driver.page_source, encoding="utf-8")
+            except Exception:  # noqa: BLE001
+                pass
 
     # ---------------- extract_slots (tutte le province) --------------
     def extract_slots(self) -> list[Slot]:
@@ -248,19 +260,41 @@ class RescheduleFlow(Flow):
         slots = self._estrai_slots_pagina_corrente()
         province = list(self.criteri.get("province") or [])
         for prov in province[1:]:
-            if not self._cambia_provincia_e_ricerca(prov):
-                continue
-            slots.extend(self._estrai_slots_pagina_corrente())
+            esito = self._cambia_provincia_e_ricerca(prov)
+            if esito.get("stato") in ("risultati", "no_risultati"):
+                self._provincia_corrente = esito.get("provincia") or prov
+                slots.extend(self._estrai_slots_pagina_corrente())
+            else:
+                log.warning("reschedule: provincia %s ricerca non completata -> skip", prov)
         return slots
 
     def _estrai_slots_pagina_corrente(self) -> list[Slot]:
-        """Estrae gli slot dalla lista disponibilità della pagina corrente."""
-        # provincia corrente (impostata da load_page / _cambia_provincia_e_ricerca)
-        if not hasattr(self, "_provincia_corrente"):
-            self._provincia_corrente = (self.criteri.get("province") or [""])[0]
+        """Estrae gli slot dalla vista risultati CORRENTE.
+
+        La provincia NON e' presa da self._provincia_corrente (variabile
+        Python che puo' restare indietro per la race): viene letta dalla
+        TESTATA dei risultati esposta dal portale in questo momento.
+        """
+        prov_attesa = getattr(self, "_provincia_corrente", "") or (self.criteri.get("province") or [""])[0]
+        st = self._attendi_esito(prov_attesa, timeout_s=20)
+        stato = st.get("stato")
+        if stato == "no_risultati":
+            log.info("reschedule: 0 disponibilita per %s (esito valido)", prov_attesa)
+            return []
+        if stato != "risultati":
+            log.warning("reschedule: vista non pronta (%s) per %s", stato, prov_attesa)
+            return []
+        prov_reale = st.get("provincia") or prov_attesa
+        if prov_attesa and prov_reale.upper() != prov_attesa.upper():
+            log.warning("reschedule: vista su %s, attesa %s -> salto estrazione (no stale)",
+                        prov_reale, prov_attesa)
+            return []
+        self._chiudi_modali_residui()
+        time.sleep(0.5)
         blocks = self._find(self.po["slot_disponibilita"], mult=True)
+        log.info("reschedule: blocks slot trovati = %d (prov %s)", len(blocks or []), prov_reale)
         slots = []
-        for b in blocks:
+        for b in blocks or []:
             try:
                 txt = b.text
             except Exception:  # noqa: BLE001
@@ -285,17 +319,12 @@ class RescheduleFlow(Flow):
                     "azienda": _field("Azienda", "Comune").strip(" -"),
                     "comune": _field("Comune", "Presentarsi").strip(" -"),
                     "sede": _field("Presentarsi in").split("-->")[0].strip(" -"),
-                    "provincia": self._provincia_corrente,
+                    "provincia": prov_reale,
                 },
             ))
         if not slots:
-            if nessuna_disponibilita(self.driver.page_source):
-                log.info("Spostamento: 0 disponibilità per questa ricerca (esito valido).")
+            log.info("reschedule: 0 blocchi in vista risultati (prov %s)", prov_reale)
         return slots
-
-    def _cambia_provincia_e_ricerca_deprecato(self, provincia: str) -> bool:
-        """(Deprecato: ora in base.Flow)"""
-        return self._cambia_provincia_e_ricerca(provincia)
 
     # ---------------- execute ----------------
     def azione_extra(self, slot) -> str:
@@ -303,31 +332,21 @@ class RescheduleFlow(Flow):
                 "/anticipa oppure /posticipa (attaccato alla conferma).")
 
     def execute(self, slot) -> None:
-        """Seleziona lo slot e conferma la riprogrammazione.
+        """Seleziona lo slot della provincia GIUSTA e conferma la riprogrammazione.
 
         - azione = self._ultima_azione ('anticipa' | 'posticipa' | 'approve')
-        - riusa i passi del flusso di prenotazione (verifica e conferma,
-          modale conferma con 'Confermo lettura')
+        - porta la UI sulla provincia dello slot (se serve), poi match esatto
+          data/ora (MAI fallback cieco: eviterebbe di cliccare uno slot di un'al
+         provincia diversa)
+        - dopo la conferma estrai e invia luogo+note (+ICS)
         """
         import time
         azione = getattr(self, "_ultima_azione", "approve")
         log.info("flow B: azione richiesta = %s", azione)
-        # 1) 'Verifica e conferma' sullo slot target
-        bs = self._find(self.po["btn_verifica_conferma"], mult=True)
-        target = None
-        for b in bs or []:
-            try:
-                cont = b.find_element(By.XPATH, "ancestor::*[contains(@class,'appuntamento')][1]")
-                txt = cont.text if cont else ""
-            except Exception:  # noqa: BLE001
-                txt = ""
-            if slot.date_str in txt and (slot.time_str in txt):
-                target = b
-                break
-        if target is None and bs:
-            target = bs[0]
+        target = self._trova_bottone_slot(slot)
         if target is None:
-            raise RuntimeError("Nessun slot/prestito da confermare")
+            raise RuntimeError(
+                f"Slot {slot.date_str} {slot.time_str} non trovato sulla provincia della UI")
         self._click_el(target)
         time.sleep(2)
         # 2) modale conferma prenotazione: checkbox lettura + conferma
@@ -339,4 +358,75 @@ class RescheduleFlow(Flow):
         if conf is not None and not conf.get_attribute("disabled"):
             self._click_el(conf)
         time.sleep(3)
+        # 3) estrai info dalla schermata/modale e invia riepilogo + ICS
+        self._invia_riepilogo_dopo_modifica(slot)
         log.info("flow B: riprogrammazione (%s) confermata %s", azione, slot)
+
+    def _trova_bottone_slot(self, slot):
+        """Trova il pulsante 'Verifica e conferma' dello slot esatto (data+ora).
+
+        Se lo slot ha una provincia e la UI non la mostra, cambia provincia
+        (Modifica ricerca -> provincia -> Aggiorna) e ritenta.
+        """
+        import time
+        prov = (slot.extra or {}).get("provincia", "")
+        # match base
+        target = self._match_verifica_sulla_pagina(slot)
+        if target is not None:
+            return target
+        # se lo slot indica una provincia e la UI è su un'altra, cambia provincia
+        if prov:
+            log.info("flow B: cambio UI sulla provincia %s (slot proposto)", prov)
+            if self._cambia_provincia_e_ricerca(prov).get("stato") == "risultati":
+                target = self._match_verifica_sulla_pagina(slot)
+        return target
+
+    def _match_verifica_sulla_pagina(self, slot):
+        """Match esatto data+ora sul pulsante 'Verifica e conferma' corrente."""
+        bs = self._find(self.po["btn_verifica_conferma"], mult=True)
+        for b in bs or []:
+            try:
+                cont = b.find_element(By.XPATH, "ancestor::*[contains(@class,'appuntamento')][1]")
+                txt = cont.text if cont else ""
+            except Exception:  # noqa: BLE001
+                txt = ""
+            if slot.date_str in txt and (slot.time_str in txt):
+                return b
+        return None
+
+    def _invia_riepilogo_dopo_modifica(self, slot):
+        """Estrae e invia luogo+note dell'appuntamento confermato (+ ICS)."""
+        from services.appuntamento import parse_conferma, parse_successo
+        from services.calendar import write_ics
+        info = parse_conferma(self.driver.page_source)
+        info.data_ora = f"{slot.date_str} - {slot.time_str}" or info.data_ora
+        if not info.prestazione:
+            info.prestazione = self.monitor.get("ricetta", "")
+        info.codice = parse_successo(self.driver.page_source) or ""
+        # invia riepilogo con luogo e note
+        import html as _html
+        e = _html.escape
+        lines = [
+            "📅 <b>Appuntamento confermato</b>",
+            f"📍 Data e ora: {e(info.data_ora) or '-'}",
+            f"🩺 Prestazione: {e(info.prestazione) or '-'}",
+            f"🏥 Azienda: {e(info.azienda) or '-'}",
+        ]
+        if info.presentarsi_in:
+            lines.append(f"🏠 Presentarsi in: {e(info.presentarsi_in)}")
+        if info.indirizzo:
+            lines.append(f"🧭 Indirizzo: {e(info.indirizzo)}")
+        if info.codice:
+            lines.append(f"🎫 Codice prenotazione: {e(info.codice)}")
+        if info.note:
+            lines.append("\n<b>Note esame:</b>")
+            lines.append("\n".join(f"· {e(n)}" for n in info.note))
+        self.bot.notify("\n".join(lines))
+        # ICS
+        try:
+            from pathlib import Path
+            ics = write_ics(info, Path("data/ics"))
+            self.bot.send_file(str(ics), caption=f"📅 Evento calendario {info.data_ora}")
+        except Exception as ex:  # noqa: BLE001
+            log.warning("ICS reschedule: %s", ex)
+        self.store.mark_action(self.mid, "done", str(slot))

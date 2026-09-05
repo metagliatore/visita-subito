@@ -107,11 +107,15 @@ class Controller:
             return False
 
     def get_appuntamenti(self) -> list:
-        """Legge gli appuntamenti esistenti dalla sezione 'I miei appuntamenti'."""
+        """Legge gli appuntamenti esistenti dalla sezione 'I miei appuntamenti'.
+
+        Ritorna una lista di dict con tutti i dati esposti dalla card:
+          codice, prestazione, data_ora, azienda, presentarsi_in, comune
+        (i campi mancanti nella card non vengono inseriti).
+        """
         import re
         import time
         from selenium.webdriver.common.by import By
-        # verifica/rilogin se la sessione è caduta
         if not self.assicura_sessione_attiva():
             return []
         driver = self.browser.start()
@@ -132,28 +136,62 @@ class Controller:
             pass
         time.sleep(2)
         self._dump_pagina_per_debug("appuntamenti", driver)
-        html = driver.page_source.replace(r'\"', '"').replace(r'\n', '\n')
-        out = []
-        # divide per card: ogni card contiene 'Codice prenotazione:' e 'Prestazioni:'
-        text = re.sub(r"<[^>]+>", " ", html)
-        text = re.sub(r"[\s\t]+", " ", text)
-        out = []
-        # formato reale card: "Codice prenotazione: XXXX = 1 --> vedi tutte le...chiudi Prestazioni: NOME = 1 --> ... Data e ora: DD/MM/YYYY - HH:MM"
-        pat = re.compile(
-            r"Codice prenotazione:?\s*([A-Z0-9\-]+)\s*=?\s*\d*\s*-->.*?"
-            r"Prestazioni?\s*:?\s*(.*?)\s*=?\s*\d*\s*-->.*?"
-            r"Data e ora:?\s*(\d{2}/\d{2}/\d{4})\s*[-–]?\s*(\d{2}:\d{2})",
+        html = driver.page_source
+
+        CARD_START = re.compile(r"<li[^>]*app-unificato[^>]*>", re.I)
+        FIELD_PAIR = re.compile(
+            r"<div[^>]*appuntamento-prenotato-field-title[^>]*>\s*<span>([^<]*)</span>\s*</div>\s*"
+            r"<div[^>]*appuntamento-prenotato-field-value[^>]*>\s*<span[^>]*>([^<]*)</span>",
             re.S)
-        for m in pat.finditer(text):
-            prestazione = m.group(2).strip()
-            prestazione = re.sub(r"&gt;|&lt;|-->", "", prestazione)
-            prestazione = re.sub(r"\s*vedi tutte le.*?chiudi(\s|$)", "", prestazione)
-            prestazione = prestazione.strip(" -")
-            out.append({
-                "codice": m.group(1).strip(),
-                "prestazione": prestazione[:80],
-                "data_ora": f"{m.group(3)} - {m.group(4)}",
-            })
+        LI_VAL = re.compile(r"<li[^>]*>([^<]+)</li>", re.I)
+
+        def _valori(card, attr):
+            m = re.search(r"<ul[^>]*valori=\"%s\"[^>]*>(.*?)</ul>" % re.escape(attr),
+                          card, re.S)
+            if not m:
+                return []
+            out = []
+            for lm in LI_VAL.finditer(m.group(1)):
+                v = lm.group(1).strip()
+                if not v:
+                    continue
+                low = v.lower()
+                if "vedi tutte" in low or "chiudi" in low:
+                    continue
+                out.append(v)
+            return out
+
+        def _campi(card):
+            campi = {}
+            for m in FIELD_PAIR.finditer(card):
+                label = re.sub(r"[\s:]+$", "", m.group(1)).strip()
+                val = m.group(2).strip()
+                if label and val:
+                    campi[label] = val
+            return campi
+
+        starts = [m.start() for m in CARD_START.finditer(html)]
+        out = []
+        for idx, s in enumerate(starts):
+            e = starts[idx + 1] if idx + 1 < len(starts) else min(len(html), s + 80000)
+            card = html[s:e]
+            campi = _campi(card)
+            pres = _valori(card, "appuntamentoUnificatoCtrl.prestazioni")
+            cod = _valori(card, "appuntamentoUnificatoCtrl.codici_prenotazione")
+            prestazione = ", ".join(pres)[:80]
+            entry = {
+                "prestazione": prestazione,
+                "data_ora": campi.get("Data e ora", ""),
+                "codice": cod[0] if cod else "",
+                "azienda": campi.get("Azienda", ""),
+                "presentarsi_in": campi.get("Presentarsi in", ""),
+                "comune": campi.get("Comune", ""),
+                "indirizzo": campi.get("Indirizzo", ""),
+                "cap": campi.get("CAP", ""),
+            }
+            if not (entry["codice"] or entry["data_ora"] or prestazione):
+                continue  # card vuota/placeholder non renderizzata
+            out.append(entry)
         return out
 
     def _dump_pagina_per_debug(self, name, driver):
@@ -201,6 +239,10 @@ class Controller:
         self.queue.decide(req_id, approved, extra)
 
     def force_poll(self):
+        """Poll forzato richiesto dall'utente (/poll): oltre a svegliare il
+        loop, marca il giro come MANUALE (le notifiche di fine-giro 'nessuna
+        disponibilità' arrivano solo in questo caso, non nei tick automatici)."""
+        self._poll_manual = True
         self._force.set()
 
     # ---- API di configurazione (per il bot) ----
@@ -413,31 +455,53 @@ class Controller:
                 self.cfg.settings.get("scheduler", {}).get("poll_interval_seconds", 300)))
         log.info("Polling attivo: tick ogni %s secondi (%s)", iv, "; env POLL_INTERVAL_SECONDS" if "POLL_INTERVAL_SECONDS" in os.environ else "config")
         self._next_poll_time = time.time() + iv
-        # serve per forzare il primo giro subito
+        self._poll_manual = False
+        # serve per forzare il primo giro subito (bootstrap, NON manuale)
         self._force.set()
         while not self._stop.is_set():
-            self._force.wait(iv)
+            # attesa con polling ogni 1s per reagire subito a /poll
+            atteso = 0.0
+            while not self._force.is_set():
+                if self._stop.is_set():
+                    return
+                time.sleep(1)
+                atteso += 1
+                if atteso >= iv:
+                    break
             self._force.clear()
-            self._run_poll()
+            manual = self._poll_manual
+            self._poll_manual = False
+            self._run_poll(manual=manual)
             self._next_poll_time = time.time() + iv
 
-    def _run_poll(self):
+    def _run_poll(self, manual: bool = False):
         """Esegue un giro di controllo su tutti i monitor attivi.
 
-        Ogni monitor può avere più province nei criteri: iteriamo le province
-        dell'utente per ciascun flusso.
+        manual=True se il giro è stato richiesto esplicitamente con /poll:
+        solo in quel caso i flow inviano le notifiche di fine-giro "nessuna
+        disponibilità".
+
+        Se /poll è arrivato durante il giro (self._force settato), interrompe
+        i flow rimanenti: il loop ricomincia subito (l'utente ha chiesto un
+        nuovo controllo).
         """
         if self.sess.needs_login() or self.browser.driver is None:
             log.info("Sessione non pronta, salto polling")
             return
         for f in list(self._flows):
+            # interruzione: /poll richiesto durante il giro -> esci subito
+            if self._force.is_set():
+                log.info("Polling interrotto a metà: /poll richiesto dall'utente")
+                break
             log.info("Polling %s (%s)", f.mid, f.type)
             try:
-                # per i flow new: esegue il giro di ricerca per le province
-                # configurate; extract_slots con i criteri (province multiple)
-                f.poll_once()
+                f.poll_once(manual=manual)
             except Exception as e:  # noqa: BLE001
                 log.exception("Polling %s fallito: %s", f.mid, e)
+            # ricontrolla anche dopo un flow lungo (il /poll può essere arrivato)
+            if self._force.is_set():
+                log.info("Polling interrotto:a fine %s: /poll richiesto dall'utente", f.mid)
+                break
 
     # ---- main ----
     def run(self, run_bot: bool = True):

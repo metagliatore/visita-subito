@@ -530,8 +530,37 @@ class TelegramBot:
             return
         lines = [f"📋 {len(appuntamenti)} appuntamenti trovati:"]
         for i, a in enumerate(appuntamenti):
-            lines.append(f"\n{i + 1}) {self._esc(a.get('prestazione',''))}\n"
-                         f"   📅 {self._esc(a.get('data_ora',''))} · 🎫 {self._esc(a.get('codice',''))}")
+            lines.append(f"\n{i + 1}) {self._esc(a.get('prestazione',''))}")
+            if a.get("data_ora"):
+                lines.append(f"   🗓 {self._esc(a.get('data_ora',''))}")
+            azienda = a.get("azienda","").strip()
+            presi = a.get("presentarsi_in","").strip()
+            indirizzo = a.get("indirizzo","").strip()
+            cap = a.get("cap","").strip()
+            comune = (a.get("comune","") or "").strip()
+            if azienda:
+                lines.append(f"   🏥 Azienda: {self._esc(azienda)}")
+            # luogo: presidio (se != azienda), indirizzo, comune
+            luogo = []
+            if presi:
+                luogo.append(self._esc(presi))
+            elif azienda:
+                luogo.append(self._esc(azienda))
+            if indirizzo:
+                luogo.append(self._esc(indirizzo))
+            if comune:
+                luogo.append(f"({self._esc(comune)}{f', {self._esc(cap)}' if cap else ''})")
+            if luogo:
+                lines.append(f"   📍 {' · '.join(luogo)}")
+                # link Google Maps (query = struttura/azienda + comune)
+                qparts = [p for p in (presi or azienda, indirizzo, comune) if p]
+                if qparts:
+                    import urllib.parse as _up
+                    q = _up.quote(" ".join(qparts))
+                    maps_url = f"https://www.google.com/maps/search/?api=1&query={q}"
+                    lines.append(f'   🗺 <a href="{maps_url.replace("&", "&amp;")}">Apri in Google Maps</a>')
+            if a.get("codice"):
+                lines.append(f"   🎫 {self._esc(a.get('codice',''))}")
         msg = "\n".join(lines)
         for chunk in (msg[i:i + 3800] for i in range(0, len(msg), 3800)):
             await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)

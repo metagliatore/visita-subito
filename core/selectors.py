@@ -154,7 +154,7 @@ PRENOTAONLINE = {
     },
     "lista_disponibilita": [("css", "[ng-repeat*='in disponibilitaCtrl.valori']")],
     # blocco di un singolo slot (data/ora + azienda + sede); i campi sono ger archi
-    "slot_disponibilita": [("css", "[ng-repeat='disponibilita in disponibilitaCtrl.valori']")],
+    "slot_disponibilita": [("css", "[ng-repeat*='disponibilita in disponibilitaCtrl.valori']")],
     # campi dentro ogni slot
     "slot_data_ora": [("css", "span[ng-if*='isClassico']")],              # 'DD/MM/YYYY - HH:MM'
     "slot_azienda": [("css", "[ng-repeat*='disponibilita in disponibilitaCtrl.valori'] .appuntamento-field-value span")],

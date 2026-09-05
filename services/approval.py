@@ -33,12 +33,15 @@ class ApprovalQueue:
 
     def _write(self, data: dict) -> None:
         with self._lock:
-            self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            self.path.write_text(
+                json.dumps(data, indent=2, default=str), encoding="utf-8")
 
     # ---- API usate dal poller (Flusso) ----
     def create(self, monitor_id: str, payload: dict) -> str:
-        """Crea una richiesta di approvazione in attesa. Ritorna l'id."""
-        req_id = f"{monitor_id}__{int(time.time())}"
+        """Crea una richiesta di approvazione in attesa. Ritorna un id CORTO
+        (per non superare i 64 byte dei callback_data di Telegram)."""
+        import uuid
+        req_id = uuid.uuid4().hex[:10]
         data = self._read()
         data[req_id] = {
             "monitor_id": monitor_id,

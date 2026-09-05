@@ -33,7 +33,7 @@ from core import selectors
 from flows.base import Flow
 from services.appuntamento import parse_conferma, parse_successo
 from services.calendar import write_ics
-from services.matcher import Slot, nessuna_disponibilita
+from services.matcher import Slot
 
 log = logging.getLogger(__name__)
 
@@ -222,15 +222,6 @@ class NewBookingFlow(Flow):
                 self._set_ng("email", self.criteri["email"])
         self._click_consenso()
 
-    def _set_provincia(self, provincia: str) -> bool:
-        return bool(self.driver.execute_script(
-            "var sel=document.getElementById('provincia');"
-            "if(!sel) return false;"
-            "var o=Array.from(sel.options).find(function(x){return x.textContent===arguments[0]});"
-            "if(!o) return false;"
-            "sel.value=o.value;angular.element(sel).triggerHandler('change');return true;",
-            provincia))
-
     def _click_consenso(self) -> None:
         """Clicca il checkbox consenso solo se non ancora selezionato (con eventi Angular)."""
         self.driver.execute_script(
@@ -258,8 +249,10 @@ class NewBookingFlow(Flow):
         self._attiva_prenotazione()
         self._compila_dove_quando()
         self._ricerca()
-        # attendi caricamento risultati
-        time.sleep(6)
+        # attesa esito stabile (risultati o assenza) per la prima provincia
+        st = self._attendi_esito(self._provincia_corrente, timeout_s=30)
+        if st.get("stato") not in ("risultati", "no_risultati"):
+            log.warning("new: ricerca %s non completata (%s)", self._provincia_corrente, st.get("stato"))
         # reset: il prossimo giro (nuova provincia in rotazione) rifarà la ricerca
         self._ricerca_fatta = False
 
@@ -273,16 +266,39 @@ class NewBookingFlow(Flow):
         slots = self._estrai_slots_corrente()
         province = list(self.criteri.get("province") or [])
         for prov in province[1:]:
-            if self._cambia_provincia_e_ricerca(prov):
+            esito = self._cambia_provincia_e_ricerca(prov)
+            if esito.get("stato") in ("risultati", "no_risultati"):
+                self._provincia_corrente = esito.get("provincia") or prov
                 slots.extend(self._estrai_slots_corrente())
+            else:
+                log.warning("new: provincia %s ricerca non completata -> skip", prov)
         return slots
 
     def _estrai_slots_corrente(self) -> list[Slot]:
-        """Estrae gli slot dalla pagina corrente (una provincia)."""
-        html = self.driver.page_source
+        """Estrae gli slot dalla vista risultati CORRENTE.
+
+        La provincia viene letta dalla TESTATA dei risultati (fonte vera),
+        non da self._provincia_corrente (variabile Python soggetta alla race).
+        """
+        prov_attesa = getattr(self, "_provincia_corrente", "") or (self.criteri.get("province") or [""])[0]
+        st = self._attendi_esito(prov_attesa, timeout_s=20)
+        stato = st.get("stato")
+        if stato == "no_risultati":
+            log.info("new: 0 disponibilita per %s (esito valido)", prov_attesa)
+            return []
+        if stato != "risultati":
+            log.warning("new: vista non pronta (%s) per %s", stato, prov_attesa)
+            return []
+        prov_reale = st.get("provincia") or prov_attesa
+        if prov_attesa and prov_reale.upper() != prov_attesa.upper():
+            log.warning("new: vista su %s, attesa %s -> estrazione saltata (no stale)",
+                        prov_reale, prov_attesa)
+            return []
+        self._chiudi_modali_residui()
+        time.sleep(0.5)
         blocks = self._find(self.sel["slot_disponibilita"], mult=True)
         slots = []
-        for b in blocks:
+        for b in blocks or []:
             try:
                 txt = b.text
             except Exception:  # noqa: BLE001
@@ -290,7 +306,7 @@ class NewBookingFlow(Flow):
             m = re.search(r"(\d{2}/\d{2}/\d{4})\s*-\s*(\d{2}:\d{2})", txt)
             if not m:
                 continue
-            dt = datetime.strptime(f"{m.group(1)} {m.group(2)}", "%d/%m/%Y %H:%M")
+            dt_ok = datetime.strptime(f"{m.group(1)} {m.group(2)}", "%d/%m/%Y %H:%M")
 
             def _field(label, stop_label=None):
                 mm = re.search(re.escape(label) + r"\s*\n?\s*([^\n]+)", txt)
@@ -301,22 +317,17 @@ class NewBookingFlow(Flow):
                     v = v.split(stop_label)[0].strip()
                 return v
 
-            provocorr = getattr(self, "_provincia_corrente", "")
             slots.append(Slot(
-                datetime=dt,
+                datetime=dt_ok,
                 extra={
                     "azienda": _field("Azienda", "Comune").strip(" -"),
                     "comune": _field("Comune", "Presentarsi").strip(" -"),
                     "sede": _field("Presentarsi in").split("-->")[0].strip(" -"),
-                    "provincia": provocorr,
+                    "provincia": prov_reale,
                 },
             ))
         if not slots:
-            # nessuno slot: valido se il portale dichiara assenza disponibilità
-            if nessuna_disponibilita(html):
-                log.info("Nessuna disponibilità per questa ricerca (0 slot, esito valido).")
-            else:
-                log.info("extract_slots: nessuno slot trovato senza messaggio esplicito")
+            log.info("new: 0 blocchi in vista risultati (prov %s)", prov_reale)
         return slots
 
     # ================= execute (prenotazione) =================
@@ -353,6 +364,7 @@ class NewBookingFlow(Flow):
         3. click Conferma
         """
         import time
+        prov = (slot.extra or {}).get("provincia", "")
         # 1) 'Verifica e conferma' sullo slot che matcha (data/ora)
         found = False
         for btn in self._find(self.sel["btn_verifica_conferma"], mult=True) or []:
@@ -370,11 +382,21 @@ class NewBookingFlow(Flow):
                 found = True
                 break
         if not found:
-            # fallback: clicca il primo
-            bs = self._find(self.sel["btn_verifica_conferma"], mult=True)
-            if not bs:
-                raise RuntimeError("Nessun pulsante 'Verifica e conferma'")
-            self._click_el(bs[0])
+            # se lo slot ha provincia e la UI non la mostra, cambia provincia
+            if prov and self._cambia_provincia_e_ricerca(prov).get("stato") == "risultati":
+                for btn in self._find(self.sel["btn_verifica_conferma"], mult=True) or []:
+                    try:
+                        container = btn.find_element(By.XPATH, "ancestor::*[contains(@class,'appuntamento')][1]")
+                    except Exception:  # noqa: BLE001
+                        container = None
+                    txt = (container.text if container is not None else "")
+                    if slot.date_str in txt and slot.time_str in txt:
+                        self._click_el(btn)
+                        found = True
+                        break
+        if not found:
+            raise RuntimeError(
+                f"Slot {slot.date_str} {slot.time_str} non trovato (fallback disabilitato)")
         time.sleep(2)
         # 2) spunta 'Confermo lettura'
         chk = self._find(self.sel["modal_conferma_prenota"]["checkbox_lettura"])
