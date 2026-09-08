@@ -84,19 +84,27 @@ class Flow:
 # ---------------- helper stato pagina (robusto, via JS) ----------------
     def _stato_vista(self) -> dict:
         """Stato REALE della pagina corrente, via JS (il test del testo del DOM
-        è inaffidabile: i messaggi "non ci sono disponibilità" restano nel DOM
-        anche dopo aver chiuso la modale, e un campo nascosto #provincia può
+        e' inaffidabile: i messaggi "non ci sono disponibilita" restano nel DOM
+        anche dopo aver chiuso la modale, e un campo nascosto #provincia puo'
         confondere getElementById).
 
         Ritorna dict:
-          stato: 'risultati' | 'no_risultati' | 'modale_ricerca' | 'form' | 'altro'
+          stato: 'loading' | 'risultati' | 'no_risultati' | 'modale_ricerca' | 'form' | 'altro'
           provincia: la provincia che la pagina ESPONE davvero:
                      - 'risultati'     -> testata risultati (span.field-label)
                      - 'form'/'modale' -> select visibile
+          loading: True se c'e' uno spinner di caricamento attivo
         """
         js = r"""
         function vis(el){if(!el)return false;var s=getComputedStyle(el);return s&&s.display!=='none'&&s.visibility!=='hidden';}
-        var st={stato:'altro',provincia:''},mods=document.querySelectorAll('.modal'),i,m;
+        var st={stato:'altro',provincia:'',loading:false},mods=document.querySelectorAll('.modal'),i,m;
+        // 0) loading attivo (spinner 'caricamento in corso...') -> NON un esito
+        var sp=Array.from(document.querySelectorAll('.spinner-container,[class*="spinner"],[class*="loader"]'));
+        for(i=0;i<sp.length;i++){
+            if(vis(sp[i])&&/caricamento/i.test(sp[i].textContent||'')){
+                st.stato='loading'; st.loading=true; return st;
+            }
+        }
         // 1) modale 'Modifica ricerca' aperta (contiene select provincia)
         for(i=0;i<mods.length;i++){if(vis(mods[i])){m=mods[i];break;}}
         if(m&&m.querySelector('#provincia')){
@@ -118,7 +126,7 @@ class Flow:
             }
             return st;
         }
-        // 3) modale 'Attenzione: non ci sono disponibilità' (0 disponibilità)
+        // 3) modale 'Attenzione: non ci sono disponibilita' (0 disponibilita)
         for(i=0;i<mods.length;i++){
             if(!vis(mods[i]))continue;
             var t=mods[i].textContent||'';
@@ -143,6 +151,7 @@ class Flow:
             r = {}
         r.setdefault("stato", "altro")
         r.setdefault("provincia", "")
+        r.setdefault("loading", False)
         return r
 
     def _chiudi_modali_residui(self) -> None:
@@ -192,35 +201,53 @@ class Flow:
             return False
         return True
 
-    def _attendi_esito(self, provincia: str = "", timeout_s: int = 30) -> dict:
+    def _attendi_esito(self, provincia: str = "", timeout_s: int = 60,
+                      max_load_s: int = 300) -> dict:
         """Attende che la ricerca sia arrivata a un esito STABILE:
 
           - 'risultati'    -> vista risultati attiva (header provincia == attesa)
-          - 'no_risultati' -> modale assenza disponibilità visibile (0 valido)
+          - 'no_risultati' -> modale assenza disponibilita visibile (0 valido)
+          - 'loading'      -> spinner 'caricamento in corso...' attivo
 
-        NON si accontenta di stringhe nel DOM (testo residuo di modali chiuse o
-        della lista vecchia): aspetta davvero la vista nuova. Ritorna lo stato
-        finale (ultimo osservato se timeout).
+        IMPORTANTE: il timeout NON scatta mentre la pagina e' in caricamento
+        (spinner visibile), perche' il portale a volte impiega molto tempo e un
+        timeout fisso farebbe perdere l'esito. Scatta solo quando la pagina e'
+        FERMA (nessuno spinner e nessun esito) da almeno `timeout_s` secondi.
+        Come guardia anti-blocco, se il caricamento supera `max_load_s` totali
+        viene loggato e si ritorna comunque.
         """
         import time
         t0 = time.time()
-        ultimo = {"stato": "altro", "provincia": ""}
-        while time.time() - t0 < timeout_s:
+        ultimo = {"stato": "altro", "provincia": "", "loading": False}
+        idle_da = None  # da quando la pagina non mostra ne' spinner ne' esito
+        while True:
             st = self._stato_vista()
             ultimo = st
             s = st.get("stato", "altro")
+            now = time.time()
             if s == "no_risultati":
                 return st
             if s == "risultati" and (
                     not provincia or (st.get("provincia") or "").upper() == provincia.upper()):
                 return st
+            if s == "loading":
+                idle_da = None
+                if now - t0 > max_load_s:
+                    log.warning("_attendi_esito: caricamento oltre %ss per %s (stato %s)",
+                                max_load_s, provincia or "-", s)
+                    return st
+            else:
+                if idle_da is None:
+                    idle_da = now
+                if now - idle_da > timeout_s:
+                    log.warning("_attendi_esito: timeout %ss (stato %s) per %s",
+                                timeout_s, s, provincia or "-")
+                    return st
             time.sleep(1.0)
-        log.warning("_attendi_esito: timeout %s (stato %s)", provincia or "-", ultimo.get("stato"))
-        return ultimo
 
-    def _attendi_risultati(self, provincia: str, timeout_s: int = 20) -> bool:
+    def _attendi_risultati(self, provincia: str, timeout_s: int = 60) -> bool:
         """Compat: True se esito stabile (o assenza)."""
-        st = self._attendi_esito(provincia, timeout_s)
+        st = self._attendi_esito(provincia, timeout_s=timeout_s)
         return st.get("stato") in ("risultati", "no_risultati")
 
     def _cambia_provincia_e_ricerca(self, provincia: str, _retry: int = 0) -> dict:
@@ -279,7 +306,7 @@ class Flow:
             if b2 is not None and not b2.get_attribute("disabled"):
                 self._click_el(b2)
                 self._provincia_corrente = provincia
-                esito = self._attendi_esito(provincia, timeout_s=50)
+                esito = self._attendi_esito(provincia, timeout_s=60)
                 # se la testata NON è cambiata alla provincia attesa, riprova una volta
                 if (esito.get("stato") == "risultati"
                         and (esito.get("provincia") or "").upper() != provincia.upper()
@@ -397,11 +424,17 @@ class Flow:
         # posticipa è IMPLICITA nella data scelta, non serve chiederla)
         righe = [[("✅ Approva", f"decide:approve:{req_id}"),
                   ("❌ Rifiuta", f"decide:deny:{req_id}")]]
-        self.bot.notify_buttons(msg, righe)
+        inviati = self.bot.notify_buttons(msg, righe)
         # attendo la decisione (bloccante, con timeout)
         decision = self.queue.wait_decision(req_id)
+        scaduta = decision.get("cancelled") and decision.get("reason") == "timeout"
         if decision.get("cancelled") or not decision.get("decision"):
             log.info("[%s] approvazione negata/scaduta", self.mid)
+            # proposta scaduta per timeout: aggiorna il messaggio su Telegram
+            # (mantiene i dettagli e toglie i pulsanti, segnalando la scadenza)
+            if scaduta and inviati:
+                testo = f"{msg}\n\n⏳ Proposta scaduta: il tempo per rispondere è terminato, la disponibilità potrebbe non essere più valida."
+                self.bot.edit_message(testo, inviati)
             return f"Disponibilità {slot} non confermata."
 
         # approvata -> esegui l'azione reale

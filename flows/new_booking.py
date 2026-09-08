@@ -250,7 +250,7 @@ class NewBookingFlow(Flow):
         self._compila_dove_quando()
         self._ricerca()
         # attesa esito stabile (risultati o assenza) per la prima provincia
-        st = self._attendi_esito(self._provincia_corrente, timeout_s=30)
+        st = self._attendi_esito(self._provincia_corrente, timeout_s=60)
         if st.get("stato") not in ("risultati", "no_risultati"):
             log.warning("new: ricerca %s non completata (%s)", self._provincia_corrente, st.get("stato"))
         # reset: il prossimo giro (nuova provincia in rotazione) rifarà la ricerca
@@ -281,7 +281,7 @@ class NewBookingFlow(Flow):
         non da self._provincia_corrente (variabile Python soggetta alla race).
         """
         prov_attesa = getattr(self, "_provincia_corrente", "") or (self.criteri.get("province") or [""])[0]
-        st = self._attendi_esito(prov_attesa, timeout_s=20)
+        st = self._attendi_esito(prov_attesa, timeout_s=60)
         stato = st.get("stato")
         if stato == "no_risultati":
             log.info("new: 0 disponibilita per %s (esito valido)", prov_attesa)

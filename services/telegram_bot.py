@@ -74,33 +74,73 @@ class TelegramBot:
             log.error("notify TG fallita: %s", e)
 
     # ---------- invio con pulsanti inline (da flussi/poller) ----------
-    async def _send_buttons(self, text: str, buttons: list) -> None:
-        """buttons = lista di righe, ognuna lista di (label, callback_data)."""
+    async def _send_buttons(self, text: str, buttons: list) -> list:
+        """Invia testo + pulsanti inline; ritorna [(chat_id, message_id), ...]
+        cosi' il chiamante puo' editare il messaggio in seguito (es. scadenza)."""
         if not (self.token and self.chat_ids):
             log.warning("TG non configurato, notifica con pulsanti non inviata")
-            return
+            return []
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
         ] for row in buttons])
+        sent = []
         app = Application.builder().token(self.token).build()
         async with app:
             for cid in self.chat_ids:
                 try:
-                    await app.bot.send_message(chat_id=cid, text=text,
-                                               reply_markup=kb, parse_mode=ParseMode.HTML)
+                    m = await app.bot.send_message(chat_id=cid, text=text,
+                                                   reply_markup=kb, parse_mode=ParseMode.HTML)
+                    sent.append((cid, m.message_id))
                 except Exception as e:  # noqa: BLE001
                     log.error("invio TG con pulsanti a %s fallito: %s", cid, e)
+        return sent
 
-    def notify_buttons(self, text: str, buttons: list) -> None:
-        """Invia un messaggio con pulsanti inline (sincrono, per poller/flussi)."""
+    def notify_buttons(self, text: str, buttons: list) -> list:
+        """Invia messaggio con pulsanti inline (sincrono).
+
+        Ritorna la lista [(chat_id, message_id)] dei messaggi inviati
+        (per eventuali edit successivi, es. marcare la proposta scaduta).
+        """
         try:
-            asyncio.run(self._send_buttons(text, buttons))
+            return asyncio.run(self._send_buttons(text, buttons))
         except RuntimeError:
             loop = asyncio.new_event_loop()
-            loop.run_until_complete(self._send_buttons(text, buttons))
-            loop.close()
+            try:
+                return loop.run_until_complete(self._send_buttons(text, buttons))
+            finally:
+                loop.close()
         except Exception as e:  # noqa: BLE001
             log.error("notify_buttons TG fallita: %s", e)
+            return []
+
+    # ---------- edit messaggi inviati (es. scadenza proposta) ----------
+    async def _edit_message(self, text: str, destinations: list) -> None:
+        """Sostituisce il testo (e rimuove i pulsanti) dei messaggi inviati."""
+        if not (self.token and destinations):
+            return
+        app = Application.builder().token(self.token).build()
+        async with app:
+            for cid, mid in destinations:
+                try:
+                    await app.bot.edit_message_text(
+                        chat_id=cid, message_id=mid, text=text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=InlineKeyboardMarkup([]))
+                except Exception as e:  # noqa: BLE001
+                    log.error("edit TG %s/%s fallito: %s", cid, mid, e)
+
+    def edit_message(self, text: str, destinations: list) -> None:
+        """Sincrono: edita i messaggi (usato da flussi/poller)."""
+        try:
+            asyncio.run(self._edit_message(text, destinations))
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(self._edit_message(text, destinations))
+            finally:
+                loop.close()
+        except Exception as e:  # noqa: BLE001
+            log.error("edit_message TG fallita: %s", e)
 
     # ---------- invio file (es. .ics) ----------
     async def _send_file(self, path: str, caption: str = "") -> None:

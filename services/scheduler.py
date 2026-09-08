@@ -47,9 +47,16 @@ class Controller:
         self.sess.on_notify = lambda msg: self.bot.notify(msg)
 
         a = cfg.settings.get("approval", {})
+        # timeout di attesa decisione su TG: override via env APPROVAL_TIMEOUT_SECONDS
+        import os as _os
+        try:
+            timeout_seconds = int(_os.environ.get(
+                "APPROVAL_TIMEOUT_SECONDS", a.get("timeout_seconds", 600)))
+        except Exception:  # noqa: BLE001
+            timeout_seconds = a.get("timeout_seconds", 600)
         self.queue = ApprovalQueue(
             Path_like("data/approval.json"),
-            timeout_seconds=a.get("timeout_seconds", 600),
+            timeout_seconds=timeout_seconds,
             discard_on_timeout=a.get("discard_on_timeout", True),
         )
         self.store = Store(Path_like("data/state.json"))

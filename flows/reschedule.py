@@ -139,7 +139,7 @@ class RescheduleFlow(Flow):
         self._provincia_corrente = first_prov
         self._compila_dove_quando_e_cerca(first_prov)
         # attende esito stabile (risultati o assenza) per la prima provincia
-        st = self._attendi_esito(first_prov, timeout_s=30)
+        st = self._attendi_esito(first_prov, timeout_s=60)
         if st.get("stato") not in ("risultati", "no_risultati"):
             log.warning("flow B: prima provincia %s non pronta (%s)", first_prov, st.get("stato"))
         # NB: NON chiudiamo qui la modale di ASSENZA: la gestisce extract_slots
@@ -241,7 +241,7 @@ class RescheduleFlow(Flow):
         else:
             log.warning("nessun bottone ricerca/conferma abilitato (form invalido)")
         # ATTESA esito stabile (vista risultati o modale assenza) - NON testi residui
-        st = self._attendi_esito(prov, timeout_s=30)
+        st = self._attendi_esito(prov, timeout_s=60)
         if st.get("stato") not in ("risultati", "no_risultati"):
             log.warning("reschedule: ricerca per %s non completata (stato %s)", prov, st.get("stato"))
             try:
@@ -276,7 +276,7 @@ class RescheduleFlow(Flow):
         TESTATA dei risultati esposta dal portale in questo momento.
         """
         prov_attesa = getattr(self, "_provincia_corrente", "") or (self.criteri.get("province") or [""])[0]
-        st = self._attendi_esito(prov_attesa, timeout_s=20)
+        st = self._attendi_esito(prov_attesa, timeout_s=60)
         stato = st.get("stato")
         if stato == "no_risultati":
             log.info("reschedule: 0 disponibilita per %s (esito valido)", prov_attesa)
