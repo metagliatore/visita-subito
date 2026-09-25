@@ -3,8 +3,9 @@
 Bot automatizzato che controlla periodicamente le disponibilità per visite ed esami medici specialistici sul portale del Fascicolo Sanitario Elettronico e invia notifiche interattive via **Telegram** per approvare o rifiutare le date trovate.
 
 > [!IMPORTANT]
-> **Compatibilità**: Al momento questo progetto supporta **esclusivamente il portale del Fascicolo Sanitario di Regione Lombardia** (`https://www.fascicolosanitario.regione.lombardia.it`).
-> Per l'accesso automatizzato tramite SPID, è attualmente supportato l'Identity Provider **SielteID** (con notifica push su applicazione mobile).
+> **Compatibilità e limitazioni attuali**:
+> - **Portale regionale**: al momento questo progetto supporta **esclusivamente il portale del Fascicolo Sanitario di Regione Lombardia** (`https://www.fascicolosanitario.regione.lombardia.it`).
+> - **Provider SPID**: è attualmente implementato e supportato **un solo provider SPID, ovvero SielteID** (il provider personale utilizzato dall'autore), con approvazione push via app mobile. Gli altri provider (PosteID, Lepida, Aruba, TIM, Namirial, ecc.) o l'accesso CIE non sono al momento implementati nel flusso di login automatico.
 
 ---
 
@@ -44,7 +45,7 @@ Il modo più semplice e affidabile per eseguire il monitor è tramite **Docker C
 - **Docker** e **Docker Compose** installati (su Linux, Windows con WSL2 o macOS).
 - Un bot Telegram creato tramite [@BotFather](https://t.me/BotFather) da cui ottenere il `TG_TOKEN`.
 - Il tuo `TG_CHAT_ID` (puoi ottenerlo inviando un messaggio a bot come `@userinfobot`).
-- Credenziali SPID **SielteID** con l'app mobile Sielte installata sullo smartphone per autorizzare le notifiche push.
+- Credenziali SPID **SielteID** (l'unico provider attualmente supportato) con l'app mobile Sielte installata sullo smartphone per autorizzare le notifiche push.
 
 ### 2. Configurazione `.env`
 Copia il file di esempio ed inserisci le tue credenziali:
