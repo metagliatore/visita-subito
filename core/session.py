@@ -74,20 +74,77 @@ class SessionManager:
         except Exception:  # noqa: BLE001
             return True
 
+    def _riavvia_con_headless(self, headless: bool) -> None:
+        """Se un driver e' gia' attivo ma con modalita' headless diversa,
+        lo chiude per farne ripartire Chrome con la modalita' richiesta.
+        (Browser.start() riusa il driver esistente: senza questo check un
+        driver headless non verrebbe mai sostituito da uno visibile o viceversa)."""
+        d = self.browser.driver
+        if d is None:
+            return
+        if self.browser.settings.headless == headless:
+            return
+        log.info("riavvio Chrome: headless %s -> %s", self.browser.settings.headless, headless)
+        self.browser.stop()
+
     # ---------------- azioni ----------------
     def relogin_manual(self, url: str) -> webdriver.Chrome:
-        """Apre finestra VISIBILE: l'utente fa login + OTP a mano."""
+        """Apre finestra VISIBILE: l'utente fa login + OTP a mano.
+
+        Attende il completamento con polling su `is_autenticato` (funziona
+        anche sotto nohup, dove `input()` legge /dev/null e salva i cookie
+        prima che il login finisca). Se stdin e' un TTY e non e' configurato
+        un timeout, domanda comunque conferma manuale.
+        """
         prev = self.browser.settings.headless
         self.browser.settings.headless = False  # forza visibile
+        self._riavvia_con_headless(False)
         try:
             driver = self.browser.start()
             driver.get(url)
-            input("Login manuale completato? Premi INVIO dopo aver fatto il login...")
+            self._attendi_login_manuale(driver)
             self.save(driver)
             self.session_valid = True
             return driver
         finally:
             self.browser.settings.headless = prev
+
+    def _attendi_login_manuale(self, driver, timeout_s: int = 600) -> None:
+        """Attende (con polling ogni 5s) che il login manuale sia completato,
+        ovvero che l'URL rientri nell'area privata. Lavora anche senza TTY."""
+        import sys
+        t0 = time.time()
+        log.info("attesa login manuale (timeout %ss): controlla la finestra Chrome e il telefono", timeout_s)
+        if self.on_notify:
+            try:
+                self.on_notify("🔑 Login manuale richiesto: completa il login nella finestra Chrome (SPID + OTP) e torna qui.")
+            except Exception:  # noqa: BLE001
+                pass
+        while time.time() - t0 < timeout_s:
+            if self.is_autenticato(driver):
+                log.info("login manuale completato")
+                return
+            # se stdin e' un TTY, permette anche la conferma manuale classica
+            if sys.stdin.isatty():
+                try:
+                    import select as _sel
+                    r, _, _ = _sel.select([sys.stdin], [], [], 5)
+                    if r:
+                        line = sys.stdin.readline().strip()
+                        if line.lower() in ("", "y", "yes", "si", "invio"):
+                            break
+                        continue
+                except Exception:  # noqa: BLE001
+                    time.sleep(5)
+            else:
+                time.sleep(5)
+        if not self.is_autenticato(driver):
+            log.warning("timeout attesa login manuale: l'URL '%s' non e' nell'area privata", driver.current_url)
+            if self.on_notify:
+                self.on_notify("⚠️ Timeout login manuale: la sessione non è stata verificata.")
+            return
+        # conferma da TTY: salva solo se davvero autenticati (check già passato sopra)
+
 
     def keep_alive(self, driver: webdriver.Chrome, url: str) -> bool:
         """Tocca una pagina del portale per mantenere viva la sessione."""
@@ -115,6 +172,7 @@ class SessionManager:
 
         prev = self.browser.settings.headless
         self.browser.settings.headless = False  # serve la finestra per l'OTP
+        self._riavvia_con_headless(False)
         driver = self.browser.start()
         try:
             if self.on_notify:

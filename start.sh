@@ -8,6 +8,15 @@ echo "🛑 Stop processo precedente (se presente)..."
 
 echo "🚀 Avvio main.py (headless secondo config)..."
 mkdir -p data/study
+# In WSL2 serve DISPLAY per Chrome visibile (headless: false in config).
+# Senza di esso Chrome parte ma la finestra non apparirebbe sul desktop Windows.
+export DISPLAY="${DISPLAY:-:0}"
+if [ -n "${WSL_DISTRO_NAME:-}" ]; then
+  case ":${WSLENV:-}:" in
+    *:DISPLAY/*:*) ;;
+    *) export WSLENV="${WSLENV:+$WSLENV:}DISPLAY/p" ;;
+  esac
+fi
 nohup ./.venv/bin/python main.py > data/study/bot_latest.log 2>&1 &
 echo "PID: $!"
 sleep 5
