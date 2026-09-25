@@ -743,7 +743,26 @@ class TelegramBot:
     # ---------- run ----------
     def run(self) -> None:
         """Avvia il polling del bot (blocca; va in un processo/thread separato)."""
-        self.app = Application.builder().token(self.token).build()
+        from telegram import BotCommand
+
+        async def _post_init(application: Application) -> None:
+            commands = [
+                BotCommand("start", "Panoramica e benvenuto"),
+                BotCommand("monitora", "Crea un nuovo monitor (wizard guidato)"),
+                BotCommand("status", "Stato dei monitor e sessione SPID"),
+                BotCommand("poll", "Forza controllo disponibilità adesso"),
+                BotCommand("ricette", "Elenco delle ricette dematerializzate"),
+                BotCommand("appuntamenti", "Elenco degli appuntamenti già presi"),
+                BotCommand("stop", "Interrompi un monitor attivo"),
+                BotCommand("help", "Guida ai comandi"),
+            ]
+            try:
+                await application.bot.set_my_commands(commands)
+                log.info("Comandi del bot registrati automaticamente su Telegram")
+            except Exception as e:  # noqa: BLE001
+                log.warning("Impossibile registrare i comandi su Telegram: %s", e)
+
+        self.app = Application.builder().token(self.token).post_init(_post_init).build()
         self.app.add_handler(CommandHandler("start", self._h_start))
         self.app.add_handler(CommandHandler("status", self._h_status))
         self.app.add_handler(CommandHandler("ricette", self._h_ricette))

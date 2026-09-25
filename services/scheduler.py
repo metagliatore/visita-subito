@@ -543,8 +543,8 @@ class Controller:
 
     # ---- main ----
     def run(self, run_bot: bool = True):
-        self.ensure_session()
         threads = [
+            threading.Thread(target=self.ensure_session, daemon=True),
             threading.Thread(target=self._keep_alive_loop, daemon=True),
             threading.Thread(target=self._poll_loop, daemon=True),
         ]
