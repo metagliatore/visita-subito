@@ -110,6 +110,35 @@ class NewBookingFlow(Flow):
             return None
 
     # ================= selezione ricetta (dal tab Ricette) =================
+    def _riduci_tab_a_una(self) -> None:
+        """Chiude TUTTE le tab tranne quella corrente.
+
+        Ogni ciclo di monitoring apre una nuova tab (il portale apre su
+        target=_blank il click su 'Prenota'): senza pulizia i tab si
+        accumulano a ogni poll e la RAM esplode.
+        """
+        d = self.driver
+        try:
+            hs = list(d.window_handles or [])
+            if len(hs) <= 1:
+                return
+            current = d.current_window_handle
+            for h in hs:
+                if h == current:
+                    continue
+                try:
+                    d.switch_to.window(h)
+                    d.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                d.switch_to.window(current)
+            except Exception:  # noqa: BLE001
+                if d.window_handles:
+                    d.switch_to.window(d.window_handles[-1])
+        except Exception as e:  # noqa: BLE001
+            log.warning("pulizia tab: %s", e)
+
     def _applica_filtro_specialistiche(self):
         """Applica il filtro 'Specialistiche' + 'Prescritte' per mostrare le visite.
         La pagina Ricette di default mostra i farmaci; serve il submit del filtro.
@@ -183,9 +212,24 @@ class NewBookingFlow(Flow):
             except Exception as ex:  # noqa: BLE001
                 log.debug("diagnostica card: %s", ex)
             return False
-        # la prenotazione si apre in una nuova tab: passa all'ultima
+        # la prenotazione si apre in una nuova tab:
+        # chiudi le tab residue del ciclo precedente e passa all'ultima
         time.sleep(3)
-        d.switch_to.window(d.window_handles[-1])
+        hs = list(d.window_handles or [])
+        ultima = hs[-1] if hs else d.current_window_handle
+        current = d.current_window_handle
+        for h in hs:  # chiudi TUTTE tranne la nuova (evita accumulo RAM)
+            if h == ultima:
+                continue
+            try:
+                d.switch_to.window(h)
+                d.close()
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            d.switch_to.window(ultima)
+        except Exception:  # noqa: BLE001
+            d.switch_to.window(d.window_handles[-1])
         return True
 
     def _attiva_prenotazione(self) -> None:
@@ -286,6 +330,8 @@ class NewBookingFlow(Flow):
         """Esegue l'intera ricerca: Ricette -> prenota -> Dove/Quando -> risultati."""
         if self._ricerca_fatta:
             return
+        # pulizia preventiva: chiude le tab residue dei giri precedenti
+        self._riduci_tab_a_una()
         if not self._apri_ricetta_e_prenota():
             log.warning("load_page: ricetta non aperta, interrompo")
             return
