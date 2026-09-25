@@ -3,9 +3,9 @@
 La modale 'Vuoi confermare l'appuntamento?' (schermata PrenotaOnline) espone:
   - Data e ora            es. '26/10/2026 - 11:15'
   - Prestazione           es. 'VISITA SPECIALISTICA'
-  - Azienda               es. 'DOTT. GIOVANNI TENCONI - STUDIO RADIOLOGICO SRL'
+  - Azienda               es. 'AZIENDA OSPEDALIERA ESEMPIO'
   - Presentarsi in        nome struttura + indirizzo
-  - Ulteriori indicazioni es. 'Via Dezza, 26 - 20144 Milano (MI)'
+  - Ulteriori indicazioni es. 'Via Roma, 1 - 20100 Milano (MI)'
   - Note di preparazione  (collassate)
 Tutto va estratto per (a) inviarlo su Telegram e (b) generare il calendario .ics.
 """

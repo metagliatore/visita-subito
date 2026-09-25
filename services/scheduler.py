@@ -11,7 +11,7 @@ import threading
 import time
 
 from core.browser import Browser, BrowserSettings
-from core.config import Config
+from core.config import Config, env_token
 from core import selectors
 from core.session import SessionManager
 from flows.base import Flow
@@ -35,7 +35,7 @@ class Controller:
 
         br = cfg.settings.get("browser", {})
         self.browser = Browser(BrowserSettings(
-            binary_path=br.get("binary_path", ""),
+            binary_path=env_token("CHROME_BIN", br.get("binary_path", "")),
             headless=br.get("headless", True),
             window_size=tuple(br.get("window_size", [1280, 900])),
             timeouts=cfg.settings.get("timeouts", {}),

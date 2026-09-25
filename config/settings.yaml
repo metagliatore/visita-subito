@@ -3,8 +3,8 @@
 # =====================================================
 browser:
   # Percorso del binario Chrome. Vuoto => usa lo Selenium Manager default.
-  # In dev (WSL) puntiamo a .chrome/ ; in Docker verrà sostituito dall'image.
-  binary_path: ".chrome/opt/google/chrome/google-chrome"
+  # In dev puoi indicare il path o impostare CHROME_BIN in .env; in Docker usa il default di sistema.
+  binary_path: ""
   headless: true            # false => finestra visibile; true per Docker/produzione
   window_size: [1280, 900]
 

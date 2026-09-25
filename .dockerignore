@@ -1,0 +1,30 @@
+# Git
+.git/
+.gitignore
+
+# Environment & Secrets (CRITICO: non includere mai nel build Docker)
+.env
+.env.*
+!.env.example
+
+# Local Chrome & Python virtualenv
+.chrome/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Runtime & State Data
+data/
+*.log
+
+# IDE & Editor
+.vscode/
+.idea/
+
+# Study artifacts
+study/debug_*
+study/*.html
+study/*.log
+study/*.png
