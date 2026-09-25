@@ -2,10 +2,13 @@ services:
   monitor:
     build: .
     container_name: fascicolo-monitor
+    init: true
+    env_file:
+      - .env
     environment:
-      TG_TOKEN: ${TG_TOKEN}
-      TG_CHAT_ID: ${TG_CHAT_ID}
-      TG_CHAT_ID_SECONDARY: ${TG_CHAT_ID_SECONDARY:-}
+      - CHROME_BIN=/usr/bin/google-chrome
+      - PYTHONUNBUFFERED=1
+    shm_size: "2gb"
     volumes:
       - ./data:/app/data
       - ./config:/app/config
