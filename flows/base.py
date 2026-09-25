@@ -98,13 +98,6 @@ class Flow:
         js = r"""
         function vis(el){if(!el)return false;var s=getComputedStyle(el);return s&&s.display!=='none'&&s.visibility!=='hidden';}
         var st={stato:'altro',provincia:'',loading:false},mods=document.querySelectorAll('.modal'),i,m;
-        // 0) loading attivo (spinner 'caricamento in corso...') -> NON un esito
-        var sp=Array.from(document.querySelectorAll('.spinner-container,[class*="spinner"],[class*="loader"]'));
-        for(i=0;i<sp.length;i++){
-            if(vis(sp[i])&&/caricamento/i.test(sp[i].textContent||'')){
-                st.stato='loading'; st.loading=true; return st;
-            }
-        }
         // 1) modale 'Modifica ricerca' aperta (contiene select provincia)
         for(i=0;i<mods.length;i++){if(vis(mods[i])){m=mods[i];break;}}
         if(m&&m.querySelector('#provincia')){
@@ -113,8 +106,15 @@ class Flow:
             if(sp.selectedOptions[0])st.provincia=sp.selectedOptions[0].textContent.trim();
             return st;
         }
-        // 2) vista risultati: bottone 'Modifica ricerca' + testata provincia
-        if(document.querySelector('button[ng-click*="prenotaDisponibilitaCtrl.modificaCriteri"]')){
+        // 2) vista risultati: bottone 'Modifica ricerca' + slot renderizzati
+        //    (o messaggio assenza nel body). NB: va VERIFICATO PRIMA dello
+        //    spinner: il portale lascia un overlay 'caricamento in corso...'
+        //    visibile anche a risultati già renderizzati, e mettere lo spinner
+        //    per primo bloccherebbe il flow in 'loading' per sempre.
+        var hasBtn=document.querySelector('button[ng-click*="prenotaDisponibilitaCtrl.modificaCriteri"]');
+        var slotsInDom=document.querySelectorAll('li.appuntamento').length;
+        var bodyNoDisp=/non sono state trovate|nessuna disponib|non ci sono disponib/i.test(document.body.textContent||'');
+        if(hasBtn&&(slotsInDom>0||bodyNoDisp)){
             st.stato='risultati';
             var fs=document.querySelectorAll('span.field-label');
             for(var j=0;j<fs.length;j++){
@@ -140,6 +140,14 @@ class Flow:
         if(p&&vis(p)){
             st.stato='form';
             if(p.selectedOptions[0])st.provincia=p.selectedOptions[0].textContent.trim();
+            return st;
+        }
+        // 5) spinner 'caricamento in corso...' SOLO se non c'è altro stato reale
+        var sp=Array.from(document.querySelectorAll('.spinner-container,[class*="spinner"],[class*="loader"]'));
+        for(i=0;i<sp.length;i++){
+            if(vis(sp[i])&&/caricamento/i.test(sp[i].textContent||'')){
+                st.stato='loading'; st.loading=true; return st;
+            }
         }
         return st;
         """
