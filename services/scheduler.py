@@ -272,10 +272,13 @@ class Controller:
         self.store.set_preferenza("data_dal", data_dal)
         return True
 
-    def aggiungi_monitor(self, tipo: str, descrizione: str, criteri: dict = None) -> str:
+    def aggiungi_monitor(self, tipo: str, descrizione: str, nre: str = "", criteri: dict = None) -> str:
         """Aggiunge un monitor dinamico (nuova prenotazione o appuntamento).
 
         Ritorna l'id del monitor creato, oppure '' se fallisce.
+        `nre` e' il codice ricetta: serve al flow per individuare l'unica
+        card corretta (il solo match testuale puo' fallire se la descrizione
+        non e' esaustiva).
         """
         if tipo not in FLOW_TYPES:
             return ""
@@ -289,7 +292,7 @@ class Controller:
         prog = len(self.store.get_monitors()) + 1
         mid = f"{tipo}-{parola}-{prog}"
         monitor = {"id": mid, "type": tipo, "enabled": True,
-                    "ricetta": descrizione, "criteri": crit}
+                    "ricetta": descrizione, "nre": nre or "", "criteri": crit}
         self.store.add_monitor(monitor)
         self._flows.append(FLOW_TYPES[tipo](monitor, self.browser, self.queue, self.bot, self.store))
         return mid
@@ -359,13 +362,41 @@ class Controller:
         for f in self._flows:
             # trova il monitor corrispondente per il nome leggibile
             mon = next((m for m in self.store.get_monitors() if m.get("id") == f.mid), None)
-            nome = self._nome_leggibile(mon or {"ricetta": f.monitor.get("ricetta", ""), "type": f.type})
+            # unifica i dati: i monitor dinamici sono dict; quelli statici
+            # vengono già passati come dict di ricetto/type/criteri
+            if mon is None:
+                mon = {"ricetta": f.monitor.get("ricetta", ""), "criteri": f.monitor.get("criteri", {}), "type": f.type}
+            nome = self._nome_leggibile(mon)
             stato = self.store.get_action(f.mid)
             stato_txt = {"idle": "in attesa di novità", "done": "completato",
                          "prenotato": "prenotato", "pending": "in attesa conferma"}.get(stato, stato)
-            lines.append(f"\n• {nome}")
-            lines.append(f"  Tipo: {tipo_nome.get(f.type, f.type)}")
-            lines.append(f"  Stato: {stato_txt}")
+            crit = mon.get("criteri", {}) if isinstance(mon, dict) else {}
+            riga = f"\n• {nome}"
+            # ricetta reale (la riga "nome" potrebbe essere generica, es. 'monitor')
+            ricetta = (mon.get("ricetta") or "").strip() if isinstance(mon, dict) else ""
+            # pulisce i resti del portale dal testo della ricetta
+            import re as _re
+            ricetta = _re.sub(r"=\s*\d+.*", "", ricetta)
+            ricetta = _re.sub(r"\s+chiudi.*", "", ricetta, flags=_re.IGNORECASE)
+            ricetta = _re.sub(r"\s+vedi tutte le.*", "", ricetta, flags=_re.IGNORECASE)
+            if ricetta:
+                riga += f"\n  🩺 Ricetta: {ricetta}"
+            nre = (mon.get("nre") or "").strip() if isinstance(mon, dict) else ""
+            if nre:
+                riga += f"\n  🔖 NRE: {nre}"
+            riga += f"\n  Tipo: {tipo_nome.get(f.type, f.type)}"
+            province = crit.get("province")
+            if province:
+                if isinstance(province, (list, tuple)):
+                    riga += f"\n  📍 Province: {', '.join(p for p in province if p)}"
+                else:
+                    riga += f"\n  📍 Provincia: {province}"
+            dal = crit.get("data_dal") or ""
+            al = crit.get("data_a") or ""
+            if dal or al:
+                riga += f"\n  📅 Range: da {dal or 'oggi'} a {al or 'senza limite'}"
+            riga += f"\n  Stato: {stato_txt}"
+            lines.append(riga)
         return "\n".join(lines)
 
     # ---- bootstrap sessione ----

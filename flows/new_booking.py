@@ -46,6 +46,7 @@ class NewBookingFlow(Flow):
         self.sel = selectors.PRENOTAONLINE
         self.ric = selectors.RICETTE
         self._ricetta = self.monitor.get("ricetta", "")
+        self._nre = (self.monitor.get("nre") or "").strip()
         self.criteri = self.monitor.get("criteri", {})
         # stato per non riavviare la ricerca se già sui risultati
         self._ricerca_fatta = False
@@ -92,12 +93,21 @@ class NewBookingFlow(Flow):
         return True
 
     def _set_ng(self, element_id, value):
-        """Imposta un campo Angular (per id) con evento reale input+change."""
+        """Imposta un campo Angular (per id) con evento reale input+change.
+
+        Robusto: se l'elemento non esiste ancora (form in renderizzazione)
+        ritorna None SENZA sollevare (angular.element(null) lancia
+        'Cannot read properties of undefined (reading triggerHandler)').
+        """
         import json
-        return self.driver.execute_script(
-            "var el=document.getElementById('%s');var s=angular.element(el);"
-            "s.val(%s).triggerHandler('input').triggerHandler('change');"
-            "return el.value;" % (element_id, json.dumps(value)))
+        try:
+            return self.driver.execute_script(
+                "var el=document.getElementById('%s');if(!el)return null;var s=angular.element(el);"
+                "s.val(%s).triggerHandler('input').triggerHandler('change');"
+                "return el.value;" % (element_id, json.dumps(value)))
+        except Exception as e:  # noqa: BLE001
+            log.warning("_set_ng(%s): %s", element_id, e)
+            return None
 
     # ================= selezione ricetta (dal tab Ricette) =================
     def _applica_filtro_specialistiche(self):
@@ -129,15 +139,27 @@ class NewBookingFlow(Flow):
             time.sleep(3)
         # applica il filtro specialistiche per rendere visibili le visite
         self._applica_filtro_specialistiche()
-        # ricerca la card: match per testo prestazione o per id=NRE
-        done = d.execute_script(
-            "var q=String(arguments[0]);"
-            "var links=Array.from(document.querySelectorAll('a.cambia-visibilita[href*=prenotaonline]'));"
-            "var a=links.find(function(l){var c=l.closest('.prescrizioni-row');"
-            "return c && ((c.textContent.indexOf(q)>-1) || "
-            "(c.getAttribute('id')||'')===q);});"
-            "if(!a) return false; a.click(); return true;",
-            self._ricetta)
+        # 1) match deterministico per id=NRE (univoco, non ambiguo)
+        done = False
+        if self._nre:
+            done = d.execute_script(
+                "var q=String(arguments[0]);"
+                "var links=Array.from(document.querySelectorAll('a.cambia-visibilita[href*=prenotaonline]'));"
+                "var a=links.find(function(l){var c=l.closest('.prescrizioni-row');"
+                "return c && (c.getAttribute('id')||'')===q;});"
+                "if(!a) return false; a.click(); return true;",
+                self._nre)
+        # 2) match per testo prestazione
+        if not done:
+            # ricerca la card: match per testo prestazione
+            done = d.execute_script(
+                "var q=String(arguments[0]);"
+                "var links=Array.from(document.querySelectorAll('a.cambia-visibilita[href*=prenotaonline]'));"
+                "var a=links.find(function(l){var c=l.closest('.prescrizioni-row');"
+                "return c && ((c.textContent.indexOf(q)>-1) || "
+                "(c.getAttribute('id')||'')===q);});"
+                "if(!a) return false; a.click(); return true;",
+                self._ricetta)
         if not done:
             # second tentativo: caso-insensitive e più permissivo (anche senza .prescrizioni-row)
             log.warning("ricetta '%s' non trovata al primo tentativo; riprovo...", self._ricetta)
@@ -197,6 +219,24 @@ class NewBookingFlow(Flow):
         self._click_by(self.sel["modal_info_chiudi"], "chiudi modale info")
 
     # ================= Dove/Quando =================
+    def _attendi_form_dove_quando(self, timeout_s=20) -> bool:
+        """Attende che il form Dove/Quando sia renderizzato (select provincia +
+        campo data). Subito dopo la modale 'Completa dati' la nuova vista
+        impiega qualche secondo ad apparire: senza questa attesa i JS di
+        compilazione girano su elementi null e falliscono.
+        """
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        try:
+            WebDriverWait(self.driver, timeout_s).until(
+                EC.presence_of_element_located((By.ID, "provincia")))
+            WebDriverWait(self.driver, timeout_s).until(
+                lambda d: d.find_elements(By.ID, "quando"))
+            return True
+        except Exception as e:  # noqa: BLE001
+            log.warning("form Dove/Quando non pronto in %ss: %s", timeout_s, e)
+            return False
+
     def _compila_dove_quando(self):
         """Compila provincia (a rotazione tra quelle configurate), data minima,
         recapiti e consenso.
@@ -204,6 +244,9 @@ class NewBookingFlow(Flow):
         NB: NON sovrascrive telefono/email se già valorizzati (default del
         portale associati al profilo).
         """
+        # attende il form prima di compilare (vista non pronta subito dopo la modale)
+        if not self._attendi_form_dove_quando():
+            log.warning("dove/quando: form non pronto, provo comunque")
         province = self.criteri.get("province") or selectors.PRENOTAONLINE["province"]
         prov = province[0] if province else ""
         self._provincia_corrente = prov

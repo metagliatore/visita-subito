@@ -67,12 +67,18 @@ def parse_ricette(html: str) -> list[dict]:
         rid = parts[k]
         content = parts[k + 1]
 
-        # codice ricetta (NRE)
+        # codice ricetta (NRE): sta nello <span id="codiceRicetta"> NASCOSTO,
+        # NON nel primo <b> dopo "Codice ricetta:" (in quello c'è l'idPrescrizione
+        # interno a 16 cifre, es. 0300A...) che confonderebbe il flow.
         cod = None
-        m = re.search(r'Codice ricetta:.*?<b>([0-9A-Za-z\-]+)</b>', content, re.S)
-        if m:
-            cod = m.group(1)
-        else:
+        m = re.search(r'<span[^>]*id="codiceRicetta"[^>]*>([^<]+)</span>', content)
+        if m and m.group(1).strip():
+            cod = m.group(1).strip()
+        if not cod:
+            m = re.search(r'Codice ricetta:.*?<b>([0-9A-Za-z\-]+)</b>', content, re.S)
+            if m:
+                cod = m.group(1)
+        if not cod:
             for sc in re.findall(r'<b>([^<]+)</b>', content):
                 if re.fullmatch(r'[0-9A-Z]{5,}', sc.strip()):
                     cod = sc.strip(); break

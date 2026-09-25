@@ -135,6 +135,15 @@ class RescheduleFlow(Flow):
         self._gestisci_completa_dati(no=True)
         time.sleep(2)
         # 5) compila Dove/Quando (provincia da criteri) e cerca disponibilità
+        #    NB: attende che il form sia renderizzato (vista lenta dopo le modali)
+        try:
+            from selenium.webdriver.support.ui import WebDriverWait
+            WebDriverWait(d, 20).until(
+                lambda drv: drv.find_elements(By.ID, "provincia"))
+            WebDriverWait(d, 20).until(
+                lambda drv: drv.find_elements(By.ID, "quando"))
+        except Exception as e:  # noqa: BLE001
+            log.warning("flow B: form Dove/Quando non pronto in 20s: %s", e)
         first_prov = (self.criteri.get("province") or [""])[0]
         self._provincia_corrente = first_prov
         self._compila_dove_quando_e_cerca(first_prov)

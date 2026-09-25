@@ -322,16 +322,33 @@ class TelegramBot:
         prov_list = wiz.get("province", [])
         data_dal = wiz.get("data_dal", "")
         data_a = wiz.get("data_a", "")
-        desc = target.get("prestazione") or target.get("descrizione") or "monitor"
+        # le target-ricetta hanno 'prestazioni' (lista) e 'codice' (NRE);
+        # gli appuntamenti hanno 'prestazione' (stringa). Prima il nome della
+        # prestazione, poi gli altri campi, e solo alla fine il fallback.
+        prestazioni = target.get("prestazioni") or []
+        if prestazioni:
+            desc = ", ".join(p for p in prestazioni if p)
+        else:
+            desc = target.get("prestazione") or target.get("descrizione") or ""
+        nre = target.get("codice") or ""
+        if not desc and not nre:
+            # mai piu' placeholder 'monitor': senza nome prestazione (ricetto) e
+            # senza NRE il flow non saprebbe quale card aprire
+            self._wizard.pop(chat_id, None)
+            await q.edit_message_text(
+                "⚠️ Non riesco a ricavare la prestazione da monitorare dall'elenco. "
+                "Riprova con /monitora e scegli la ricetta dall'elenco.")
+            return
         mid = self.controller.aggiungi_monitor(
-            tipo, desc,
+            tipo, desc, nre=nre,
             criteri={"province": prov_list, "data_dal": data_dal, "data_a": data_a})
         self._wizard.pop(chat_id, None)
         q = update.callback_query
         if mid:
             prov_txt = ", ".join(prov_list) if prov_list else "default"
+            nre_txt = f"\n🔖 NRE: {self._esc(nre)}" if nre else ""
             await q.edit_message_text(
-                f"✅ Monitor creato!\n🎯 {self._esc(desc)}\n🏙 {self._esc(prov_txt)}\n"
+                f"✅ Monitor creato!\n🎯 {self._esc(desc)}{nre_txt}\n🏙 {self._esc(prov_txt)}\n"
                 f"📅 Range: {self._esc(data_dal)} → {self._esc(data_a)}\n"
                 f"🆔 {self._esc(mid)}\n\n"
                 f"Ti notificherò solo se trovo disponibilità nel range.")
