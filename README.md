@@ -162,6 +162,17 @@ python main.py
 
 ---
 
+## 🧪 Esecuzione dei Test
+
+Il progetto include una suite completa di unit test (eseguibili senza browser e senza connessione a internet) con `pytest`:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+---
+
 ## 📂 Struttura del Progetto
 
 ```text
@@ -179,9 +190,13 @@ python main.py
 │   └── reschedule.py     # Flusso B: anticipo/spostamento appuntamento
 ├── services/
 │   ├── approval.py       # Gestione coda richieste di conferma (approval.json)
+│   ├── matcher.py        # Algoritmo di matching disponibilità secondo i criteri
 │   ├── ricette.py        # Parser e classificazione ricette (specialistica/laboratorio)
 │   ├── scheduler.py      # Orchestratore keep-alive e ciclo di polling
 │   └── telegram_bot.py   # Bot Telegram asincrono e wizard interattivi
+├── state/
+│   └── store.py          # Persistenza stato monitor e prenotazioni (state.json)
+├── tests/                # Suite di test unitari con pytest
 ├── data/                 # Directory persistente (cookie, state.json, log)
 ├── entrypoint.sh         # Script di avvio container con server X virtuale (Xvfb)
 ├── Dockerfile            # Immagine Docker Python 3.11 con Google Chrome
