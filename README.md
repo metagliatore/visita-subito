@@ -43,11 +43,27 @@ Il modo più semplice e affidabile per eseguire il monitor è tramite **Docker C
 
 ### 1. Prerequisiti
 - **Docker** e **Docker Compose** installati (su Linux, Windows con WSL2 o macOS).
-- Un bot Telegram creato tramite [@BotFather](https://t.me/BotFather) da cui ottenere il `TG_TOKEN`.
-- Il tuo `TG_CHAT_ID` (puoi ottenerlo inviando un messaggio a bot come `@userinfobot`).
 - Credenziali SPID **SielteID** (l'unico provider attualmente supportato) con l'app mobile Sielte installata sullo smartphone per autorizzare le notifiche push.
 
-### 2. Configurazione `.env`
+### 2. Configurazione del Bot Telegram
+Prima di avviare l'applicazione, è necessario creare il proprio bot Telegram personale:
+
+1. **Creare il bot con BotFather**:
+   - Apri Telegram e cerca [@BotFather](https://t.me/BotFather) (l'account ufficiale con la spunta blu).
+   - Invia il comando `/newbot`.
+   - Inserisci un nome a piacere per il tuo bot (es. `Mio Monitor Sanitario`).
+   - Scegli un *username* univoco che termini con `bot` (es. `miomonitor_sanitario_bot`).
+   - BotFather ti risponderà fornendoti l'**API Token** (una stringa del tipo `123456789:ABCdefGHIjklMNOpqrSTUvwxYZ`). Questo valore corrisponde a `TG_TOKEN`.
+
+2. **Recuperare il proprio Chat ID**:
+   - Cerca su Telegram il bot [@userinfobot](https://t.me/userinfobot) (oppure [@raw_data_bot](https://t.me/raw_data_bot)).
+   - Premi `/start`: il bot risponderà mostrandoti il tuo `Id` numerico personale (es. `123456789`). Questo valore corrisponde a `TG_CHAT_ID`.
+   - *(Opzionale)* Se vuoi ricevere le notifiche anche su un gruppo Telegram, aggiungi il bot al gruppo e inserisci l'ID del gruppo (che comincia solitamente con un segno meno, es. `-987654321`) in `TG_CHAT_ID_SECONDARY`.
+
+3. **Inizializzare la chat con il bot**:
+   - **Passo fondamentale**: Apri la chat con il tuo bot appena creato e clicca su **AVVIA** (`/start`). Telegram impedisce ai bot di inviare messaggi agli utenti che non hanno preventivamente avviato la conversazione.
+
+### 3. Configurazione `.env`
 Copia il file di esempio ed inserisci le tue credenziali:
 
 ```bash
@@ -72,21 +88,21 @@ MAX_LOGIN_RETRIES=3
 APPROVAL_TIMEOUT_SECONDS=600
 ```
 
-### 3. Avvio del container
+### 4. Avvio del container
 Avvia il container in background:
 
 ```bash
 docker compose up -d
 ```
 
-### 4. Primo Accesso SPID
+### 5. Primo Accesso SPID
 Alla prima esecuzione:
 1. Il container si avvia e naviga automaticamente verso il portale di autenticazione SielteID.
 2. Riceverai un messaggio su Telegram: `📲 Sto per inviare la notifica SielteID: prepara il telefono e approvala appena arriva!`.
 3. Apri l'app **SielteID** sul tuo smartphone e approva la richiesta push entro 3 minuti.
 4. I cookie di sessione verranno salvati automaticamente nel volume persistente `./data/cookies/cookies.pkl`. Da questo momento in poi il monitor rimarrà attivo autonomamente.
 
-### 5. Gestione del container
+### 6. Gestione del container
 - **Visualizzare i log in tempo reale**:
   ```bash
   docker compose logs -f
