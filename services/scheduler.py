@@ -64,10 +64,12 @@ class Controller:
         self._flows = []
         self._stop = threading.Event()
         self._force = threading.Event()
+        self._login_lock = threading.Lock()
         self._build_flows()
         # --- retry login ---
         self.login_retries = 0
         self.login_bloccato = False
+        self.login_in_corso = False
         try:
             self.max_login_retries = int(os.environ.get("MAX_LOGIN_RETRIES", "3"))
         except Exception:  # noqa: BLE001
@@ -89,42 +91,23 @@ class Controller:
     def assicura_sessione_attiva(self) -> bool:
         """Assicura una sessione autenticata prima dei comandi che toccano il portale.
 
-        Ritorna True se autenticato (o dopo nuovo login). Il bot avvisa su TG
-        del re-login e dell'approvazione push.
+        Ritorna True se autenticato (o dopo nuovo login).
         """
-        import os
-        try:
-            driver = self.browser.start()
-            driver.get(selectors.LOGIN_SPID["url_accedi"])
-            time.sleep(3)
-            if self.sess.is_autenticato(driver):
-                return True
-            user = os.environ.get("SIELTE_USERNAME", "")
-            pwd = os.environ.get("SIELTE_PASSWORD", "")
-            if user and pwd:
-                self.bot.notify("🔄 Sessione scaduta: avvio re-login... approvala la push appena arriva!")
-                self.sess.relogin_sielte(username=user, password=pwd)
-                return True
-            else:
-                self.bot.notify("🔑 Sessione scaduta: completa il login SPID nella finestra.")
-                self.sess.relogin_manual(selectors.LOGIN_SPID["url_accedi"])
-                return True
-        except Exception as e:  # noqa: BLE001
-            log.warning("assicura_sessione_attiva: %s", e)
-            return False
+        driver = self.ensure_session()
+        return driver is not None and self.sess.session_valid
 
-    def get_appuntamenti(self) -> list:
+    def get_appuntamenti(self) -> list | None:
         """Legge gli appuntamenti esistenti dalla sezione 'I miei appuntamenti'.
 
         Ritorna una lista di dict con tutti i dati esposti dalla card:
           codice, prestazione, data_ora, azienda, presentarsi_in, comune
-        (i campi mancanti nella card non vengono inseriti).
+        (i campi mancanti nella card non vengono inseriti), oppure None se fallisce il login.
         """
         import re
         import time
         from selenium.webdriver.common.by import By
         if not self.assicura_sessione_attiva():
-            return []
+            return None
         driver = self.browser.start()
         # naviga SEMPRE a prenotaonline/riservata (stato home della SPA)
         driver.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
@@ -210,16 +193,16 @@ class Controller:
         except Exception:  # noqa: BLE001
             pass
 
-    def get_ricette(self) -> list:
+    def get_ricette(self) -> list | None:
         """Legge la pagina Ricette e ritorna le card classificate.
 
         Mostra sia le ricette attive/prenotabili sia quelle prenotate non
-        ancora erogate (con link download).
+        ancora erogate (con link download), oppure None se fallisce il login.
         """
         import time
         from selenium.webdriver.common.by import By
         if not self.assicura_sessione_attiva():
-            return []
+            return None
         driver = self.browser.start()
         # naviga SEMPRE alla pagina ricette
         driver.get(selectors.RICETTE["url"])
@@ -342,12 +325,18 @@ class Controller:
         tipo_nome = {"new": "nuova prenotazione", "reschedule": "appuntamento esistente"}
         lines = [f"🤖 Monitor attivi: {len(self._flows)}"]
         # stato sessione
-        if self.sess.session_valid:
-            sess = "✅ attiva"
+        if self.login_bloccato:
+            sess = "⛔ Bloccata (raggiunti max tentativi falliti. Invia /poll o un comando per sbloccare)"
+        elif getattr(self, "login_in_corso", False):
+            sess = "🔄 Login SielteID in corso (approva la notifica push sull'app!)"
+        elif self.sess.is_expired(self.cfg.settings.get("session", {}).get("max_idle_seconds", 21600)):
+            sess = "⚠️ Scaduta per inattività (sarà rinnovata al prossimo controllo)"
+        elif self.sess.session_valid:
+            sess = "✅ Attiva e autenticata"
         elif self.sess.needs_login():
-            sess = "⚠️ mai loggato (serve login)"
+            sess = "⚠️ Mai loggato (serve primo login)"
         else:
-            sess = "⚠️ sessione non verificata"
+            sess = "❌ Non attiva / fallita (invia /poll per riautenticare)"
         lines.append(f"🔐 Sessione SPID: {sess}")
         # prossimo controllo programmato
         if hasattr(self, "_next_poll_time"):
@@ -410,35 +399,51 @@ class Controller:
         if self.login_bloccato:
             log.info("Login bloccato (max retry raggiunto): serve un comando per risvegliare")
             return None
-        if self.sess.needs_login():
-            if self._avvia_login():
-                self.login_retries = 0
-            else:
-                self._incrementa_retry()
-        else:
+        with self._login_lock:
+            if self.login_bloccato:
+                return None
             try:
                 driver = self.browser.start()
-                if self.sess.is_autenticato(driver):
+                if self.sess.session_valid and self.sess.is_autenticato(driver):
                     log.info("Sessione già attiva: %s", driver.current_url[:60])
+                    self.login_retries = 0
                     return driver
-                driver.get(selectors.LOGIN_SPID["url_accedi"])
-                time.sleep(4)
-                self.sess.load_cookies(driver)
-                if self.sess.is_autenticato(driver):
-                    log.info("Sessione da cookie OK: %s", driver.current_url[:60])
-                else:
-                    log.info("Cookie non bastano -> login SielteID")
-                    if self._avvia_login():
+                if not self.sess.needs_login():
+                    driver.get("https://www.fascicolosanitario.regione.lombardia.it")
+                    time.sleep(2)
+                    self.sess.load_cookies(driver)
+                    driver.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
+                    time.sleep(3)
+                    if self.sess.is_autenticato(driver):
+                        log.info("Sessione da cookie OK: %s", driver.current_url[:60])
+                        self.sess.session_valid = True
                         self.login_retries = 0
+                        return driver
                     else:
-                        self._incrementa_retry()
-            except Exception as e:  # noqa: BLE001
-                log.warning("ensure_session: %s -> login", e)
+                        log.info("Cookie scaduti o non sufficienti -> avvio login SielteID")
+                else:
+                    log.info("Nessuna sessione precedente salvata -> avvio login SielteID")
+
+                self.sess.session_valid = False
                 if self._avvia_login():
                     self.login_retries = 0
+                    self.sess.session_valid = True
+                    return self.browser.driver
                 else:
+                    self.sess.session_valid = False
                     self._incrementa_retry()
-        return self.browser.driver
+                    return None
+            except Exception as e:  # noqa: BLE001
+                log.warning("ensure_session: %s -> login", e)
+                self.sess.session_valid = False
+                if self._avvia_login():
+                    self.login_retries = 0
+                    self.sess.session_valid = True
+                    return self.browser.driver
+                else:
+                    self.sess.session_valid = False
+                    self._incrementa_retry()
+                    return None
 
     def _incrementa_retry(self):
         self.login_retries += 1
@@ -447,7 +452,7 @@ class Controller:
             self.bot.notify(
                 "⛔ Troppi tentativi di login falliti. Il bot resta in ascolto ma "
                 "non riproverà il login in automatico.\nInvia un comando qualunque "
-                "(es. /status) per riavviare il tentativo di login.")
+                "(es. /status o /poll) per riprovare il login.")
             log.warning("MAX_LOGIN_RETRIES raggiunto (%s): login bloccato", self.max_login_retries)
 
     def risveglia(self) -> bool:
@@ -455,25 +460,28 @@ class Controller:
         self.login_bloccato = False
         self.login_retries = 0
         log.info("Risveglio da comando: riprovo il login")
-        if self._avvia_login():
-            self.login_retries = 0
-        return True
+        return self._avvia_login()
 
     def _avvia_login(self) -> bool:
         """Avvia il login (SielteID o manuale). Ritorna True se autenticato."""
         import os
         user = os.environ.get("SIELTE_USERNAME", "")
         pwd = os.environ.get("SIELTE_PASSWORD", "")
+        self.login_in_corso = True
         try:
             if user and pwd:
-                self.bot.notify("🔑 Login SielteID in corso: approva la notifica push sull'app!")
                 self.sess.relogin_sielte(username=user, password=pwd)
             else:
-                self.bot.notify("🔑 Richiesto login SPID manuale: completa l'accesso nella finestra.")
                 self.sess.relogin_manual(selectors.LOGIN_SPID["url_accedi"])
+            self.login_in_corso = False
+            self.sess.session_valid = True
+            self.bot.notify("✅ Login completato con successo! Sessione attiva.")
             return True
         except Exception as e:  # noqa: BLE001
+            self.login_in_corso = False
+            self.sess.session_valid = False
             log.warning("login fallito: %s", e)
+            self.bot.notify(f"❌ Login SielteID fallito: {e}")
             return False
 
     # ---- keep-alive loop ----
@@ -481,10 +489,14 @@ class Controller:
         ka = self.cfg.settings.get("session", {}).get("keep_alive_seconds", 900)
         while not self._stop.wait(ka):
             try:
-                if self.browser.driver is not None:
-                    self.sess.keep_alive(self.browser.driver, selectors.LOGIN_SPID["url_accedi"])
+                if self.browser.driver is not None and self.sess.session_valid:
+                    ok = self.sess.keep_alive(self.browser.driver, selectors.LOGIN_SPID["url_accedi"])
+                    if not ok:
+                        log.warning("Keep-alive fallito: marco sessione come non valida")
+                        self.sess.session_valid = False
             except Exception as e:  # noqa: BLE001
                 log.warning("keep-alive loop: %s", e)
+                self.sess.session_valid = False
 
     # ---- polling loop ----
     def _poll_loop(self):
@@ -523,9 +535,18 @@ class Controller:
         i flow rimanenti: il loop ricomincia subito (l'utente ha chiesto un
         nuovo controllo).
         """
-        if self.sess.needs_login() or self.browser.driver is None:
-            log.info("Sessione non pronta, salto polling")
-            return
+        if not self.sess.session_valid or self.browser.driver is None:
+            if manual:
+                self.bot.notify("🔍 Controllo e rinnovo sessione SPID in corso...")
+                if not self.assicura_sessione_attiva():
+                    self.bot.notify("❌ Polling interrotto: impossibile autenticare la sessione SPID.")
+                    return
+            else:
+                log.info("Sessione non pronta, provo ensure_session")
+                if not self.ensure_session():
+                    log.info("Sessione ancora non pronta, salto polling automatico")
+                    return
+
         for f in list(self._flows):
             # interruzione: /poll richiesto durante il giro -> esci subito
             if self._force.is_set():
@@ -536,6 +557,9 @@ class Controller:
                 f.poll_once(manual=manual)
             except Exception as e:  # noqa: BLE001
                 log.exception("Polling %s fallito: %s", f.mid, e)
+                err_str = str(e).lower()
+                if "login" in err_str or "autentica" in err_str or "sessione" in err_str:
+                    self.sess.session_valid = False
             # ricontrolla anche dopo un flow lungo (il /poll può essere arrivato)
             if self._force.is_set():
                 log.info("Polling interrotto:a fine %s: /poll richiesto dall'utente", f.mid)
@@ -544,7 +568,6 @@ class Controller:
     # ---- main ----
     def run(self, run_bot: bool = True):
         threads = [
-            threading.Thread(target=self.ensure_session, daemon=True),
             threading.Thread(target=self._keep_alive_loop, daemon=True),
             threading.Thread(target=self._poll_loop, daemon=True),
         ]

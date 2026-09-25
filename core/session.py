@@ -146,15 +146,25 @@ class SessionManager:
         # conferma da TTY: salva solo se davvero autenticati (check già passato sopra)
 
 
+    def invalidate(self) -> None:
+        """Marca la sessione come non valida/scaduta."""
+        self.session_valid = False
+
     def keep_alive(self, driver: webdriver.Chrome, url: str) -> bool:
         """Tocca una pagina del portale per mantenere viva la sessione."""
         try:
             driver.get(url)
+            time.sleep(3)
+            if not self.is_autenticato(driver):
+                self.session_valid = False
+                log.warning("keep-alive: sessione scaduta (URL: %s)", driver.current_url)
+                return False
             self.save(driver)
             self.session_valid = True
             log.debug("keep-alive ok (%s)", url)
             return True
         except Exception as e:  # noqa: BLE001
+            self.session_valid = False
             log.warning("keep-alive fallito: %s", e)
             return False
 

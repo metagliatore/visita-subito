@@ -188,16 +188,14 @@ class TelegramBot:
     def _risveglia_se_needed(self, update) -> bool:
         """Se il login è bloccato, un qualunque comando lo risveglia e riprova.
 
-        Ritorna True se abbiamo risvegliato (l'handler deve interrompersi).
+        Ritorna True se abbiamo risvegliato (l'handler avvisa e avvia il login).
         """
         if self.controller is None:
             return False
         if self.controller.login_bloccato:
-            try:
-                getattr(update, "callback_query", None).answer("Riavvio login...")
-            except Exception:  # noqa: BLE001
-                pass
-            self.controller.risveglia()
+            import threading
+            self.notify("🔄 Tentativi di login sbloccati! Avvio un nuovo tentativo di accesso SielteID... controlla il telefono per approvare la push!")
+            threading.Thread(target=self.controller.risveglia, daemon=True).start()
             return True
         return False
 
@@ -427,6 +425,9 @@ class TelegramBot:
                 return
             if data == "mon:app":
                 app = self.controller.get_appuntamenti()
+                if app is None:
+                    await q.edit_message_text("⚠️ Impossibile recuperare gli appuntamenti: sessione SPID scaduta o login fallito. Usa /status o /poll per riprovare.")
+                    return
                 if not app:
                     await q.edit_message_text("Nessun appuntamento trovato.")
                     return
@@ -444,7 +445,7 @@ class TelegramBot:
                     await q.answer("Scelta non valida"); return
                 target = app[idx]
                 self._wizard[chat_id] = {"step": "provincia", "target": target,
-                                        "tipo": "reschedule"}
+                                         "tipo": "reschedule"}
                 await self._chiedi_provincia(update, ctx, chat_id)
             elif data.startswith("mon:prov:") and data != "mon:prov:__ferma__":
                 prov = data.split(":", 2)[2]
@@ -468,6 +469,9 @@ class TelegramBot:
                 await self._conferma_monitor(update, ctx, chat_id, wiz)
             elif data == "mon:ric":
                 ric = self.controller.get_ricette()
+                if ric is None:
+                    await q.edit_message_text("⚠️ Impossibile recuperare le ricette: sessione SPID scaduta o login fallito. Usa /status o /poll per riprovare.")
+                    return
                 if not ric:
                     await q.edit_message_text("Nessuna ricetta trovata.")
                     return
@@ -577,10 +581,14 @@ class TelegramBot:
         if self.controller is None:
             await update.message.reply_text("Controller non inizializzato.")
             return
+        await update.message.reply_text("⏳ Recupero gli appuntamenti dal portale...")
         try:
             appuntamenti = self.controller.get_appuntamenti()
         except Exception as e:  # noqa: BLE001
             await update.message.reply_text(f"Errore lettura appuntamenti: {e}")
+            return
+        if appuntamenti is None:
+            await update.message.reply_text("⚠️ Impossibile recuperare gli appuntamenti: sessione SPID scaduta o login fallito. Verifica con /status o riprova con /poll.")
             return
         if not appuntamenti:
             await update.message.reply_text("Nessun appuntamento trovato.")
@@ -630,10 +638,14 @@ class TelegramBot:
         if self.controller is None:
             await update.message.reply_text("Controller non inizializzato.")
             return
+        await update.message.reply_text("⏳ Recupero le ricette dal portale...")
         try:
-            ricette = self.controller.get_ricette()  # list[dict]
+            ricette = self.controller.get_ricette()  # list[dict] | None
         except Exception as e:  # noqa: BLE001
             await update.message.reply_text(f"Errore lettura ricette: {e}")
+            return
+        if ricette is None:
+            await update.message.reply_text("⚠️ Impossibile recuperare le ricette: sessione SPID scaduta o login fallito. Verifica con /status o riprova con /poll.")
             return
         if not ricette:
             await update.message.reply_text("Nessuna ricetta trovata.")
