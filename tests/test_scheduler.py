@@ -111,3 +111,23 @@ def test_controller_rimuovi_monitor():
     assert ctrl._flows[0].mid == "m2"
     ctrl.store.remove_monitor.assert_called_once_with("m1")
 
+
+def test_run_poll_session_expired_triggers_relogin():
+    ctrl = MagicMock()
+    ctrl.cfg.settings = {"session": {"max_idle_seconds": 3600}}
+    ctrl.sess.is_expired.return_value = True
+    ctrl.sess.session_valid = True
+    ctrl.browser.driver = MagicMock()
+    ctrl.sess.is_autenticato.return_value = False
+    ctrl.assicura_sessione_attiva.return_value = False
+    ctrl.bot = MagicMock()
+    ctrl._flows = [MagicMock()]
+
+    Controller._run_poll(ctrl, manual=True)
+
+    assert ctrl.sess.session_valid is False
+    ctrl.assicura_sessione_attiva.assert_called_once()
+    # Flusso non deve essere eseguito se la sessione non è rinnovata
+    ctrl._flows[0].poll_once.assert_not_called()
+    assert any("impossibile autenticare" in str(c) for c in ctrl.bot.notify.call_args_list)
+

@@ -334,7 +334,9 @@ class NewBookingFlow(Flow):
         self._riduci_tab_a_una()
         if not self._apri_ricetta_e_prenota():
             log.warning("load_page: ricetta non aperta, interrompo")
-            return
+            if not self._is_autenticato():
+                raise RuntimeError("Sessione scaduta o non valida durante l'apertura della ricetta")
+            raise RuntimeError(f"Ricetta '{self._ricetta}' non trovata o non prenotabile")
         self._attiva_prenotazione()
         self._compila_dove_quando()
         self._ricerca()

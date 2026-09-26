@@ -39,6 +39,21 @@ class Flow:
     def mid(self) -> str:
         return self.monitor["id"]
 
+    def _is_autenticato(self) -> bool:
+        """True se il browser corrente è autenticato e non su pagine di login/IdPC."""
+        d = getattr(self.browser, "driver", None)
+        if d is None:
+            return False
+        try:
+            url = (d.current_url or "").lower()
+            if not url or "about:blank" in url:
+                return False
+            if any(k in url for k in ["idpcwrapper", "identity.", "login", "/sso"]):
+                return False
+            return ("/web/areaprivata/" in url) or ("/prenotaonline/" in url)
+        except Exception:
+            return False
+
     # ---- da implementare nelle sottoclassi ----
     def load_page(self) -> None:
         """Naviga e predisponi la pagina col browser."""
@@ -346,12 +361,28 @@ class Flow:
         (/poll): solo in quel caso viene inviata la notifica di fine-giro
         "nessuna disponibilità" (nei tick automatici sarebbe invasiva).
         """
+        if not self._is_autenticato():
+            msg = "Sessione non autenticata o scaduta (redirect a login)"
+            log.warning("[%s] %s", self.mid, msg)
+            if manual:
+                self.bot.notify(f"⚠️ Controllo non riuscito per {self.mid}: {msg}")
+            raise RuntimeError(msg)
+
         try:
             self.load_page()
+            if not self._is_autenticato():
+                msg = "Sessione scaduta durante il caricamento della pagina"
+                log.warning("[%s] %s", self.mid, msg)
+                if manual:
+                    self.bot.notify(f"⚠️ Controllo non riuscito per {self.mid}: {msg}")
+                raise RuntimeError(msg)
+
             slots = self.extract_slots()
         except Exception as e:  # noqa: BLE001
             log.error("[%s] load/extract errato: %s", self.mid, e)
-            return ""
+            if manual:
+                self.bot.notify(f"⚠️ Controllo non riuscito per {self.mid}: {e}")
+            raise
 
         # filtra per evitare di riproporre slot già visti
         seen = self.store.seen_slots(self.mid)

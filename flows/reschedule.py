@@ -88,13 +88,11 @@ class RescheduleFlow(Flow):
         d = self.driver
         time.sleep(1)
         # 0) Naviga SEMPRE alla SPA prenotaonline (stato home, dove c'è il menu)
-        if "/prenotaonline/" not in d.current_url:
-            d.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
-            time.sleep(5)
-        else:
-            # ricarica lo stato home per evitare viste intermedie
-            d.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
-            time.sleep(4)
+        d.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
+        time.sleep(4)
+        if not self._is_autenticato():
+            raise RuntimeError("Sessione scaduta o non valida: reindirizzato a pagina di login")
+
         # chiudi eventuale modale info (truffe SMS)
         try:
             d.execute_script("var el=document.querySelector('button[ng-click*=messaggiCtrl]');if(el)el.click();")
@@ -105,12 +103,16 @@ class RescheduleFlow(Flow):
         if not self._click_by_or(self.sel["menu_gestisci"], "menu gestisci appuntamenti") \
            and not self._click_by_or(self.sel["menu_gestisci_alt"], "menu gestisci (alt)"):
             log.warning("flow B: menu Gestisci non trovato")
+            if not self._is_autenticato():
+                raise RuntimeError("Sessione scaduta: menu Gestisci non raggiungibile (redirect login)")
         time.sleep(3)
         # 2) trova il pulsante 'Dettaglio' (l'appuntamento è quello in lista)
         dettagli = self._find(self.sel["btn_dettaglio"], mult=True)
         if not dettagli:
+            if not self._is_autenticato():
+                raise RuntimeError("Sessione scaduta: redirect su login durante il caricamento appuntamenti")
             log.warning("flow B: nessuna card appuntamento trovata")
-            return
+            raise RuntimeError(f"Nessuna card appuntamento trovata per {self._appuntamento}")
         # apri il dettaglio del monitor: match per prestazione o primo disponibile
         target = dettagli[0]
         ric = self.monitor.get("ricetta", "").strip()

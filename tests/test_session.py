@@ -19,8 +19,13 @@ def test_is_autenticato(tmp_path):
     mock_driver.current_url = "https://identity.sieltecloud.it/login"
     assert sm.is_autenticato(mock_driver) is False
 
+    mock_driver.current_url = "https://idpcwrapper.crs.lombardia.it/PublisherMetadata/SSOService"
+    assert sm.is_autenticato(mock_driver) is False
+
     mock_driver.current_url = "https://www.fascicolosanitario.regione.lombardia.it/accesso-spid"
     assert sm.is_autenticato(mock_driver) is False
+
+    assert sm.is_autenticato(None) is False
 
 
 def test_is_expired(tmp_path):

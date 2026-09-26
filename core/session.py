@@ -62,8 +62,18 @@ class SessionManager:
 
     def is_autenticato(self, driver: webdriver.Chrome) -> bool:
         """True se il driver corrente è autenticato su area privata/prenotaonline."""
-        url = (driver.current_url or "").split("?")[0]
-        return ("/web/areaprivata/" in url) or ("/prenotaonline/" in url)
+        if driver is None:
+            return False
+        try:
+            url = (driver.current_url or "").split("?")[0].lower()
+            if not url or "about:blank" in url:
+                return False
+            # Se siamo stati rimandati all'IdPC o a pagine di login, non siamo autenticati
+            if any(k in url for k in ["idpcwrapper", "identity.", "login", "/sso"]):
+                return False
+            return ("/web/areaprivata/" in url) or ("/prenotaonline/" in url)
+        except Exception:
+            return False
 
     def is_expired(self, max_idle_seconds: int) -> bool:
         if not self.meta_file.exists():

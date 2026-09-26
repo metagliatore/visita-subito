@@ -410,11 +410,17 @@ class Controller:
                 return None
             try:
                 driver = self.browser.start()
+                max_idle = self.cfg.settings.get("session", {}).get("max_idle_seconds", 21600)
+                if self.sess.is_expired(max_idle):
+                    log.info("Sessione scaduta per inattività (max_idle=%ds) -> invalido sessione", max_idle)
+                    self.sess.session_valid = False
+
                 if self.sess.session_valid and self.sess.is_autenticato(driver):
                     log.info("Sessione già attiva: %s", driver.current_url[:60])
                     self.login_retries = 0
                     return driver
-                if not self.sess.needs_login():
+
+                if not self.sess.needs_login() and not self.sess.is_expired(max_idle):
                     driver.get("https://www.fascicolosanitario.regione.lombardia.it")
                     time.sleep(2)
                     self.sess.load_cookies(driver)
@@ -426,9 +432,9 @@ class Controller:
                         self.login_retries = 0
                         return driver
                     else:
-                        log.info("Cookie scaduti o non sufficienti -> avvio login SielteID")
+                        log.info("Cookie scaduti o non sufficienti -> avvio login")
                 else:
-                    log.info("Nessuna sessione precedente salvata -> avvio login SielteID")
+                    log.info("Nessuna sessione valida salvata o cookie scaduti -> avvio login")
 
                 self.sess.session_valid = False
                 if self._avvia_login():
@@ -540,14 +546,20 @@ class Controller:
         i flow rimanenti: il loop ricomincia subito (l'utente ha chiesto un
         nuovo controllo).
         """
-        if not self.sess.session_valid or self.browser.driver is None:
+        max_idle = self.cfg.settings.get("session", {}).get("max_idle_seconds", 21600)
+        sessione_scaduta = self.sess.is_expired(max_idle)
+        driver_ok = self.browser.driver is not None and self.sess.is_autenticato(self.browser.driver)
+
+        if sessione_scaduta or not self.sess.session_valid or not driver_ok:
+            self.sess.session_valid = False
+            auth_desc = getattr(self.auth_config, "describe", lambda: "SPID")() if hasattr(self, "auth_config") else "SPID"
             if manual:
-                self.bot.notify("🔍 Controllo e rinnovo sessione SPID in corso...")
+                self.bot.notify(f"🔍 Sessione non attiva o scaduta ({auth_desc}). Avvio rinnovo sessione...")
                 if not self.assicura_sessione_attiva():
-                    self.bot.notify("❌ Polling interrotto: impossibile autenticare la sessione SPID.")
+                    self.bot.notify(f"❌ Polling interrotto: impossibile autenticare la sessione ({auth_desc}).")
                     return
             else:
-                log.info("Sessione non pronta, provo ensure_session")
+                log.info("Sessione scaduta o non pronta (%s), provo ensure_session", auth_desc)
                 if not self.ensure_session():
                     log.info("Sessione ancora non pronta, salto polling automatico")
                     return
