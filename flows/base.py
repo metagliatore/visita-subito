@@ -400,7 +400,7 @@ class Flow:
                 d_str = pren.get("data_ora") or ""
                 self.bot.notify(
                     f"ℹ️ {self.mid} risulta già prenotata ({d_str}). "
-                    f"Usa i pulsanti della conferma per fermare o continuare il monitoraggio in modalità anticipa/posticipa."
+                    f"Usa i pulsanti della conferma per fermare o continuare a monitorare (prova ad anticipare)."
                 )
             return ""
 
@@ -540,12 +540,12 @@ class Flow:
             f"📅 Data confermata: <b>{slot.date_str} ore {slot.time_str}</b>\n\n"
             f"Cosa desideri fare con il monitoraggio per questa visita?\n\n"
             f"• 🛑 <b>Ferma monitoraggio</b>: interrompe i controlli (l'appuntamento confermato rimane attivo).\n"
-            f"• 🔄 <b>Continua a monitorare</b>: continua la ricerca per verificare disponibilità migliori "
-            f"(spostamento anticipa/posticipa) rispetto a quella appena fissata."
+            f"• 🔄 <b>Continua a monitorare (prova ad anticipare)</b>: continua la ricerca automatica cercando esclusivamente date migliori "
+            f"(anticipo prima del <b>{slot.date_str}</b> rispetto a quella appena fissata)."
         )
         righe = [[
             ("🛑 Ferma monitoraggio", f"postbook:stop:{self.mid}"),
-            ("🔄 Continua a monitorare", f"postbook:continue:{self.mid}"),
+            ("🔄 Continua a monitorare (prova ad anticipare)", f"postbook:continue:{self.mid}"),
         ]]
         try:
             if hasattr(self.bot, "notify_buttons"):

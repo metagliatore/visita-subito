@@ -431,9 +431,9 @@ class TelegramBot:
                         pren = self.controller.store.get_prenotazione(mid)
                         data_ora = pren.get("data_ora") or "la data prenotata"
                         await q.edit_message_text(
-                            f"🔄 <b>Monitoraggio aggiornato in modalità spostamento!</b>\n\n"
-                            f"📌 Data di riferimento: <b>{self._esc(data_ora)}</b>\n"
-                            f"Il bot continuerà a verificare la disponibilità di date migliori (anticipa/posticipa).",
+                            f"🔄 <b>Monitoraggio aggiornato: ricerca anticipo attiva!</b>\n\n"
+                            f"📌 Appuntamento attuale: <b>{self._esc(data_ora)}</b>\n"
+                            f"Il bot continuerà a verificare automaticamente per provare ad anticipare la visita rispetto alla data prenotata.",
                             parse_mode=ParseMode.HTML,
                         )
                     else:

@@ -441,7 +441,7 @@ class Controller:
             stato_txt = {
                 "idle": "in attesa di novità",
                 "done": "completato (prenotato)",
-                "done_pending_choice": "prenotato (in attesa scelta: ferma o continua)",
+                "done_pending_choice": "prenotato (in attesa scelta: ferma o prova ad anticipare)",
                 "prenotato": "prenotato",
                 "pending": "in attesa conferma",
             }.get(stato, stato)

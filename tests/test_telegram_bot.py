@@ -214,6 +214,6 @@ def test_postbook_continue_callback():
     bot.controller.converti_in_reschedule.assert_called_once_with("m1")
     up.callback_query.edit_message_text.assert_called_once()
     msg = up.callback_query.edit_message_text.call_args[0][0]
-    assert "spostamento" in msg
+    assert "anticipo" in msg
     assert "15/10/2026 10:00" in msg
 
