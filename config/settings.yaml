@@ -1,6 +1,21 @@
 # =====================================================
 # Configurazione globale — pigramente letta con PyYAML
 # =====================================================
+auth:
+  # Metodo di autenticazione: "spid" | "cie" | "manual"
+  method: "spid"
+
+  spid:
+    # Provider SPID supportati:
+    # "sielte" (automatizzato con push/OTP), "poste", "aruba", "infocert",
+    # "lepida", "namirial", "tim", "register", "etna", "infocamere", "intesigroup"
+    provider: "sielte"
+    otp_mode: "notifica"  # "notifica" (push app) oppure "otp" (SMS/app)
+
+  cie:
+    # Modalità CIE: "app" (CieID / QR Code) oppure "smartcard" (lettore NFC)
+    mode: "app"
+
 browser:
   # Percorso del binario Chrome. Vuoto => usa lo Selenium Manager default.
   # In dev puoi indicare il path o impostare CHROME_BIN in .env; in Docker usa il default di sistema.

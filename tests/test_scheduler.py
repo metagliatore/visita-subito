@@ -39,7 +39,7 @@ def test_status_text_variations(tmp_path):
     ctrl.login_in_corso = True
     ctrl.sess.session_valid = False
     text = Controller.status_text(ctrl)
-    assert "🔄 Login SielteID in corso" in text
+    assert "🔄 Login in corso" in text
 
     # Caso 3: Sessione attiva e autenticata
     ctrl.login_bloccato = False

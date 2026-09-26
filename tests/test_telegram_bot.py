@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from services.telegram_bot import TelegramBot
@@ -87,8 +88,6 @@ def test_mostra_calendario():
 
 
 def test_h_help():
-    import asyncio
-    from unittest.mock import AsyncMock
     bot = TelegramBot.__new__(TelegramBot)
     bot.chat_ids = ["12345"]
     bot.controller = MagicMock()
@@ -102,8 +101,6 @@ def test_h_help():
 
 
 def test_h_status():
-    import asyncio
-    from unittest.mock import AsyncMock
     bot = TelegramBot.__new__(TelegramBot)
     bot.chat_ids = ["12345"]
     bot.controller = MagicMock()
@@ -118,8 +115,6 @@ def test_h_status():
 
 
 def test_h_poll():
-    import asyncio
-    from unittest.mock import AsyncMock
     bot = TelegramBot.__new__(TelegramBot)
     bot.chat_ids = ["12345"]
     bot.controller = MagicMock()
@@ -134,8 +129,6 @@ def test_h_poll():
 
 
 def test_h_echo_chat():
-    import asyncio
-    from unittest.mock import AsyncMock
     bot = TelegramBot.__new__(TelegramBot)
     bot.chat_ids = ["12345"]
     up = MagicMock()
@@ -150,8 +143,6 @@ def test_h_echo_chat():
 
 
 def test_h_appuntamenti_session_invalid():
-    import asyncio
-    from unittest.mock import AsyncMock
     bot = TelegramBot.__new__(TelegramBot)
     bot.chat_ids = ["12345"]
     bot.controller = MagicMock()
@@ -168,8 +159,6 @@ def test_h_appuntamenti_session_invalid():
 
 
 def test_h_ricette_session_invalid():
-    import asyncio
-    from unittest.mock import AsyncMock
     bot = TelegramBot.__new__(TelegramBot)
     bot.chat_ids = ["12345"]
     bot.controller = MagicMock()
@@ -183,5 +172,3 @@ def test_h_ricette_session_invalid():
     assert up.message.reply_text.await_count == 2
     second_call_args = up.message.reply_text.await_args_list[1][0]
     assert "sessione SPID scaduta o login fallito" in second_call_args[0]
-
-

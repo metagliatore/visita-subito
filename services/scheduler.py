@@ -65,6 +65,9 @@ class Controller:
         self._stop = threading.Event()
         self._force = threading.Event()
         self._login_lock = threading.Lock()
+        from core.auth import AuthConfig, get_auth_provider
+        self.auth_config = AuthConfig.from_settings_and_env(cfg.settings)
+        self.auth_provider = get_auth_provider(self.auth_config)
         self._build_flows()
         # --- retry login ---
         self.login_retries = 0
@@ -324,11 +327,14 @@ class Controller:
     def status_text(self) -> str:
         tipo_nome = {"new": "nuova prenotazione", "reschedule": "appuntamento esistente"}
         lines = [f"🤖 Monitor attivi: {len(self._flows)}"]
+        # modalità autenticazione
+        auth_desc = getattr(self.auth_config, "describe", lambda: "SPID")() if hasattr(self, "auth_config") else "SPID"
+        lines.append(f"🔑 Autenticazione: {auth_desc}")
         # stato sessione
         if self.login_bloccato:
             sess = "⛔ Bloccata (raggiunti max tentativi falliti. Invia /poll o un comando per sbloccare)"
         elif getattr(self, "login_in_corso", False):
-            sess = "🔄 Login SielteID in corso (approva la notifica push sull'app!)"
+            sess = f"🔄 Login in corso ({auth_desc}) - segui le istruzioni"
         elif self.sess.is_expired(self.cfg.settings.get("session", {}).get("max_idle_seconds", 21600)):
             sess = "⚠️ Scaduta per inattività (sarà rinnovata al prossimo controllo)"
         elif self.sess.session_valid:
@@ -337,7 +343,7 @@ class Controller:
             sess = "⚠️ Mai loggato (serve primo login)"
         else:
             sess = "❌ Non attiva / fallita (invia /poll per riautenticare)"
-        lines.append(f"🔐 Sessione SPID: {sess}")
+        lines.append(f"🔐 Stato sessione: {sess}")
         # prossimo controllo programmato
         if hasattr(self, "_next_poll_time"):
             rimanenti = int(self._next_poll_time - time.time())
@@ -463,16 +469,14 @@ class Controller:
         return self._avvia_login()
 
     def _avvia_login(self) -> bool:
-        """Avvia il login (SielteID o manuale). Ritorna True se autenticato."""
-        import os
-        user = os.environ.get("SIELTE_USERNAME", "")
-        pwd = os.environ.get("SIELTE_PASSWORD", "")
+        """Avvia il login secondo la modalità configurata (SPID Sielte, altri SPID, CIE, Manuale)."""
         self.login_in_corso = True
         try:
-            if user and pwd:
-                self.sess.relogin_sielte(username=user, password=pwd)
-            else:
-                self.sess.relogin_manual(selectors.LOGIN_SPID["url_accedi"])
+            self.auth_provider.login(
+                session_manager=self.sess,
+                browser=self.browser,
+                notify_cb=lambda msg: self.bot.notify(msg),
+            )
             self.login_in_corso = False
             self.sess.session_valid = True
             self.bot.notify("✅ Login completato con successo! Sessione attiva.")
@@ -481,7 +485,8 @@ class Controller:
             self.login_in_corso = False
             self.sess.session_valid = False
             log.warning("login fallito: %s", e)
-            self.bot.notify(f"❌ Login SielteID fallito: {e}")
+            desc = getattr(self.auth_config, "describe", lambda: "Autenticazione")()
+            self.bot.notify(f"❌ Login fallito ({desc}): {e}")
             return False
 
     # ---- keep-alive loop ----
