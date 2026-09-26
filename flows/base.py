@@ -96,6 +96,36 @@ class Flow:
         """
         return ""
 
+    def _riduci_tab_a_una(self) -> None:
+        """Chiude TUTTE le tab tranne quella corrente.
+
+        Ogni ciclo o click su link target=_blank può aprire tab residue:
+        senza pulizia i tab si accumulano a ogni poll e la RAM cresce.
+        """
+        d = getattr(self, "driver", None) or getattr(self.browser, "driver", None)
+        if d is None:
+            return
+        try:
+            hs = list(d.window_handles or [])
+            if len(hs) <= 1:
+                return
+            current = d.current_window_handle
+            for h in hs:
+                if h == current:
+                    continue
+                try:
+                    d.switch_to.window(h)
+                    d.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                d.switch_to.window(current)
+            except Exception:  # noqa: BLE001
+                if d.window_handles:
+                    d.switch_to.window(d.window_handles[-1])
+        except Exception as e:  # noqa: BLE001
+            log.warning("pulizia tab: %s", e)
+
 # ---------------- helper stato pagina (robusto, via JS) ----------------
     def _stato_vista(self) -> dict:
         """Stato REALE della pagina corrente, via JS (il test del testo del DOM

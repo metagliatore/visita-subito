@@ -87,7 +87,8 @@ class RescheduleFlow(Flow):
         """
         d = self.driver
         time.sleep(1)
-        # 0) Naviga SEMPRE alla SPA prenotaonline (stato home, dove c'è il menu)
+        # 0) Pulisci eventuali tab residue e naviga alla SPA prenotaonline
+        self._riduci_tab_a_una()
         d.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
         time.sleep(4)
         if not self._is_autenticato():
@@ -130,31 +131,39 @@ class RescheduleFlow(Flow):
         # controlla se l'appuntamento è gestibile in autonomia
         if self._find(self.sel["non_gestibile"]):
             log.warning("flow B: appuntamento NON gestibile in autonomia")
-        # 3) click Anticipa/Posticipa (riprenota)
-        self._click_by_or(self.sel["modal_dettaglio"]["btn_riprenota"], "Anticipa/Posticipa")
+        # 3) click Anticipa/Posticipa (riprenota) con attesa esplicita che la modale sia aperta
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        riprenota_btn = None
+        for by, val in self.sel["modal_dettaglio"]["btn_riprenota"]:
+            try:
+                riprenota_btn = WebDriverWait(d, 8).until(
+                    EC.element_to_be_clickable((self._by(by), val)))
+                if riprenota_btn:
+                    break
+            except Exception:
+                continue
+        if riprenota_btn:
+            self._click_el(riprenota_btn)
+        else:
+            log.warning("flow B: bottone Anticipa/Posticipa non cliccabile")
+            raise RuntimeError("Modale Dettaglio: bottone Anticipa/Posticipa non cliccabile")
         time.sleep(2)
-        # 4) modale completa-dati: radio No poi Conferma (con attesa cliccabile)
+        # 4) modale completa-dati: radio No poi Conferma (con attesa cliccabile se presente)
         self._gestisci_completa_dati(no=True)
-        time.sleep(2)
+        time.sleep(1)
         # 5) compila Dove/Quando (provincia da criteri) e cerca disponibilità
-        #    NB: attende che il form sia renderizzato (vista lenta dopo le modali)
         try:
-            from selenium.webdriver.support.ui import WebDriverWait
-            WebDriverWait(d, 20).until(
-                lambda drv: drv.find_elements(By.ID, "provincia"))
-            WebDriverWait(d, 20).until(
-                lambda drv: drv.find_elements(By.ID, "quando"))
+            WebDriverWait(d, 15).until(
+                lambda drv: drv.find_elements(By.ID, "provincia") and drv.find_elements(By.ID, "quando"))
         except Exception as e:  # noqa: BLE001
-            log.warning("flow B: form Dove/Quando non pronto in 20s: %s", e)
+            log.warning("flow B: form Dove/Quando non pronto in 15s: %s", e)
+            if not self._is_autenticato():
+                raise RuntimeError("Sessione scaduta durante il caricamento del form Dove/Quando")
+            raise RuntimeError(f"Form Dove/Quando non caricato: {e}")
         first_prov = (self.criteri.get("province") or [""])[0]
         self._provincia_corrente = first_prov
         self._compila_dove_quando_e_cerca(first_prov)
-        # attende esito stabile (risultati o assenza) per la prima provincia
-        st = self._attendi_esito(first_prov, timeout_s=60)
-        if st.get("stato") not in ("risultati", "no_risultati"):
-            log.warning("flow B: prima provincia %s non pronta (%s)", first_prov, st.get("stato"))
-        # NB: NON chiudiamo qui la modale di ASSENZA: la gestisce extract_slots
-        # (altrimenti perderemmo lo stato no_risultati della prima provincia)
 
     def _click_by_or(self, sel_list, label="") -> bool:
         el = self._find(sel_list)
@@ -169,6 +178,9 @@ class RescheduleFlow(Flow):
         d = self.driver
         from selenium.webdriver.support.ui import WebDriverWait
         from selenium.webdriver.support import expected_conditions as EC
+        # Se siamo già al form Dove/Quando, la modale non è presente
+        if d.find_elements(By.ID, "provincia"):
+            return
         sel_radio = self.po["modal_completa_dati"]["radio_no" if no else "radio_si"]
         r = self._find(sel_radio)
         if r is not None:
@@ -176,12 +188,13 @@ class RescheduleFlow(Flow):
         # attende che il bottone Conferma sia cliccabile e lo clicca
         for by, val in self.po["modal_completa_dati"]["btn_conferma"]:
             try:
-                el = WebDriverWait(d, 8).until(EC.element_to_be_clickable((self._by(by), val)))
+                el = WebDriverWait(d, 5).until(EC.element_to_be_clickable((self._by(by), val)))
                 el.click()
                 return
             except Exception:  # noqa: BLE001
                 continue
-        log.warning("flow B: bottone conferma completa-dati non trovato")
+        if not d.find_elements(By.ID, "provincia"):
+            log.warning("flow B: bottone conferma completa-dati non trovato")
 
     def _chiudi_modale_info(self):
         """Chiude eventuale modale informativa (messaggiCtrl)."""
@@ -251,6 +264,7 @@ class RescheduleFlow(Flow):
             log.info("avviata ricerca/spostamento (bottone: %s)", avanzo.get_attribute("ng-click") or "?")
         else:
             log.warning("nessun bottone ricerca/conferma abilitato (form invalido)")
+            raise RuntimeError("Form Dove/Quando: nessun bottone ricerca/conferma abilitato")
         # ATTESA esito stabile (vista risultati o modale assenza) - NON testi residui
         st = self._attendi_esito(prov, timeout_s=60)
         if st.get("stato") not in ("risultati", "no_risultati"):

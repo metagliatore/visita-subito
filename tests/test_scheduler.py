@@ -168,6 +168,34 @@ def test_converti_in_reschedule():
     )
 
 
+def test_converti_in_reschedule_tightens_existing_data_a():
+    ctrl = MagicMock()
+    ctrl.store.get_prenotazione.return_value = {
+        "codice": "PREN123",
+        "data_ora": "15/10/2026 - 09:00",
+    }
+    # Caso 1: data_a esistente è posteriore (es. 31/12/2026) -> deve essere ristretta a 15/10/2026
+    ctrl.store.get_monitors.return_value = [
+        {"id": "m1", "type": "new", "criteri": {"data_a": "31/12/2026"}},
+    ]
+    ctrl._flows = [MagicMock(mid="m1")]
+    Controller.converti_in_reschedule(ctrl, "m1")
+
+    saved_mon = ctrl.store.add_monitor.call_args[0][0]
+    assert saved_mon["criteri"]["data_a"] == "15/10/2026"
+
+    # Caso 2: data_a esistente è già anteriore (es. 01/10/2026) -> non deve essere allargata
+    ctrl.store.get_monitors.return_value = [
+        {"id": "m2", "type": "new", "criteri": {"data_a": "01/10/2026"}},
+    ]
+    ctrl._flows = [MagicMock(mid="m2")]
+    Controller.converti_in_reschedule(ctrl, "m2")
+
+    saved_mon2 = ctrl.store.add_monitor.call_args[0][0]
+    assert saved_mon2["criteri"]["data_a"] == "01/10/2026"
+
+
+
 def test_build_flows_dedup_and_disabled():
     ctrl = MagicMock()
     ctrl.cfg.active_monitors = [

@@ -52,7 +52,7 @@ class Browser:
         self.driver = webdriver.Chrome(options=self._options())
         t = self.settings.timeouts or {}
         self.driver.set_page_load_timeout(t.get("page", 60))
-        self.driver.implicitly_wait(t.get("implicit", 5))
+        self.driver.implicitly_wait(t.get("implicit", 0))
         return self.driver
 
     def stop(self) -> None:

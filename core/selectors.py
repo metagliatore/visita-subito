@@ -200,7 +200,7 @@ PRENOTAONLINE = {
     "input_email": [("id", "email")],
     "checkbox_consenso": [("id", "consensoPrenotazione")],
     # bottone Conferma dopo i recapiti che porta alla lista disponibilità
-    "btn_conferma_dove_quando": [("css", "button[ng-click*='doveQuandoCtrl.conferma'], button:has-text('Conferma')")],
+    "btn_conferma_dove_quando": [("css", "button[ng-click*='doveQuandoCtrl.conferma']"), ("xpath", "//button[contains(., 'Conferma')]")],
     # bottone che invia la ricerca dopo Dove/Quando (abilita solo se form VALID)
     "btn_ricerca_disponibilita": [("css", "button[ng-click*='doveQuandoCtrl.ricercaDisponibilita']")],
     # --- step 3: LISTA DISPONIBILITA' ---
@@ -241,7 +241,7 @@ PRENOTAONLINE = {
     # campi dentro ogni slot
     "slot_data_ora": [("css", "span[ng-if*='isClassico']")],              # 'DD/MM/YYYY - HH:MM'
     "slot_azienda": [("css", "[ng-repeat*='disponibilita in disponibilitaCtrl.valori'] .appuntamento-field-value span")],
-    "slot_none_msg": [("css", "h5:has-text('Non sono state trovate disponibilità')")],
+    "slot_none_msg": [("xpath", "//h5[contains(., 'Non sono state trovate disponibilità')]")],
     # pulsante "Verifica e conferma" per uno slot
     "btn_verifica_conferma": [("css", "button[ng-click*='setAzioneRichiestaConfermaDisponibilita']")],
     # --- modale conferma prenotazione (dopo 'Verifica e conferma') ---
@@ -251,10 +251,10 @@ PRENOTAONLINE = {
         "btn_annulla": [("css", "button[ng-click*='verificaPrenotazioneCtrl.annulla']")],
     },
     # schermata di successo prenotazione
-    "esito_successo": [("css", "*:has-text('Prenotazione effettuata con successo')")],
-    "esito_codice": [("css", "*:has-text('Codice prenotazione')")],
+    "esito_successo": [("xpath", "//*[contains(., 'Prenotazione effettuata con successo')]")],
+    "esito_codice": [("xpath", "//*[contains(., 'Codice prenotazione')]")],
     # area appuntamento confermato (per annullo/aggiornamento)
-    "btn_annulla_appuntamento": [("css", "button:has-text('Annulla appuntamento')")],
+    "btn_annulla_appuntamento": [("xpath", "//button[contains(., 'Annulla appuntamento')]")],
     # pulsanti per ridurre/cercare altre date/orari
     "btn_ricerca_altre_date": [("css", "button[ng-click*='ricercaUlterioriDisponibilita'][ng-click*=\"'D'\"]")],
     "btn_ricerca_altri_orari": [("css", "button[ng-click*='ricercaUlterioriDisponibilita'][ng-click*=\"'O'\"]")],
@@ -271,13 +271,13 @@ BOOKING = {
     # menu a tendina dell'area/specialità
     "sel_area": [("css", "select[name*='area'], #area, [data-testid*='area']")],
     # pulsante che carica la pagina delle disponibilità
-    "btn_cerca": [("css", "button[type='submit'], button:has-text('Cerca'), #cerca")],
+    "btn_cerca": [("css", "button[type='submit'], #cerca"), ("xpath", "//button[contains(., 'Cerca')]")],
     # contenitore della lista delle disponibilità (righe = slot)
     "lista_disponibilita": [("css", "[data-testid*='disponibilita'], .lista-appuntamenti, body")],
     # singola riga di disponibilità (usato dal parser)
     "riga_disponibilita": [("css", "tr, [data-testid*='slot'], .slot")],
     # pulsante per confermare/prenotare lo slot scelto
-    "btn_conferma": [("css", "button:has-text('Conferma'), .conferma, #conferma")],
+    "btn_conferma": [("css", ".conferma, #conferma"), ("xpath", "//button[contains(., 'Conferma')]")],
 }
 
 # ------------------------------------------------------------------
@@ -299,7 +299,7 @@ RESCHEDULE = {
         "btn_chiudi": [("css", "button[ng-click*='AppuntamentoDettaglioModalCtrl.chiudi']")],
     },
     # avviso "non gestibile in autonomia" (alcuni appuntamenti)
-    "non_gestibile": [("css", "*:has-text('Non e\\' possibile gestire in autonomia')")],
+    "non_gestibile": [("xpath", "//*[contains(., \"Non e' possibile gestire in autonomia\") or contains(., \"Non è possibile gestire in autonomia\")]")],
 
     # NB: dalla modale 'Anticipa/Posticipa' si rientra negli step comuni del
     # flusso di prenotazione (modale completa-dati, Dove/Quando, lista

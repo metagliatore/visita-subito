@@ -333,10 +333,21 @@ class Controller:
             # Se la visita è fissata per una certa data, imposta data_a alla data prenotata
             # per cercare esclusivamente date migliorative (anticipo)
             try:
-                data_solo = data_ora.split()[0].replace("-", "").strip()
-                if "/" in data_solo:
+                import re as _re
+                from datetime import datetime as _dt
+                m = _re.search(r"(\d{2}/\d{2}/\d{4})", data_ora)
+                if m:
+                    data_solo = m.group(1)
                     crit = mon.setdefault("criteri", {})
-                    if not crit.get("data_a"):
+                    d_target = _dt.strptime(data_solo, "%d/%m/%Y").date()
+                    if crit.get("data_a"):
+                        try:
+                            d_curr = _dt.strptime(crit["data_a"], "%d/%m/%Y").date()
+                            if d_curr > d_target:
+                                crit["data_a"] = data_solo
+                        except Exception:
+                            crit["data_a"] = data_solo
+                    else:
                         crit["data_a"] = data_solo
             except Exception:  # noqa: BLE001
                 pass
