@@ -440,4 +440,13 @@ class RescheduleFlow(Flow):
             self.bot.send_file(str(ics), caption=f"📅 Evento calendario {info.data_ora}")
         except Exception as ex:  # noqa: BLE001
             log.warning("ICS reschedule: %s", ex)
-        self.store.mark_action(self.mid, "done", str(slot))
+        # Memorizza prenotazione aggiornata nello store
+        try:
+            self.store.record_prenotazione(
+                self.mid, info.codice or "",
+                f"{slot.date_str} {slot.time_str}",
+                info.__dict__ if hasattr(info, "__dict__") else {},
+            )
+            log.info("[%s] riprogrammazione registrata nello store (cod %s)", self.mid, info.codice)
+        except Exception as ex:  # noqa: BLE001
+            log.warning("salvataggio riprogrammazione nello store: %s", ex)

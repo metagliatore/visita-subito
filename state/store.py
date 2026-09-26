@@ -87,11 +87,24 @@ class Store:
     def add_monitor(self, monitor: dict) -> None:
         self.data.setdefault("_monitors", {})
         self.data["_monitors"][monitor["id"]] = monitor
+        # rimuove dai disabilitati se era stato disabilitato
+        disabled = self.data.get("_disabled_monitors", [])
+        if monitor["id"] in disabled:
+            disabled = [m for m in disabled if m != monitor["id"]]
+            self.data["_disabled_monitors"] = disabled
         self._flush()
 
     def remove_monitor(self, monitor_id: str) -> None:
         self.data.setdefault("_monitors", {}).pop(monitor_id, None)
+        disabled = self.data.setdefault("_disabled_monitors", [])
+        if monitor_id not in disabled:
+            disabled.append(monitor_id)
+        # marca anche action_state come terminato/rimosso
+        self.mark_action(monitor_id, "done", "monitor rimosso/fermato")
         self._flush()
+
+    def is_disabled(self, monitor_id: str) -> bool:
+        return monitor_id in self.data.get("_disabled_monitors", [])
 
     def get_monitors(self) -> list:
         return list(self.data.get("_monitors", {}).values())

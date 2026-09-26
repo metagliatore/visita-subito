@@ -53,3 +53,10 @@ def test_store_dynamic_monitors(tmp_path):
 
     store.remove_monitor("dyn-1")
     assert len(store.get_monitors()) == 0
+    assert store.is_disabled("dyn-1") is True
+    assert store.get_action("dyn-1") == "done"
+
+    # Se riaggiunto, non deve più risultare disabilitato
+    store.add_monitor(mon)
+    assert store.is_disabled("dyn-1") is False
+    assert len(store.get_monitors()) == 1

@@ -409,6 +409,36 @@ class TelegramBot:
                 else:
                     await q.answer("Controller non inizializzato")
                 return
+            # scelta post-prenotazione: stop oppure continua (converte in reschedule)
+            if data.startswith("postbook:"):
+                parti = data.split(":", 2)
+                scelta = parti[1]
+                mid = parti[2]
+                if not self.controller:
+                    await q.answer("Controller non inizializzato.")
+                    return
+                if scelta == "stop":
+                    self.controller.rimuovi_monitor(mid)
+                    await q.edit_message_text(
+                        f"🛑 <b>Monitoraggio interrotto per {self._esc(mid)}.</b>\n\n"
+                        f"La prenotazione effettuata rimane confermata sul tuo Fascicolo Sanitario.",
+                        parse_mode=ParseMode.HTML,
+                    )
+                    return
+                elif scelta == "continue":
+                    ok = self.controller.converti_in_reschedule(mid)
+                    if ok:
+                        pren = self.controller.store.get_prenotazione(mid)
+                        data_ora = pren.get("data_ora") or "la data prenotata"
+                        await q.edit_message_text(
+                            f"🔄 <b>Monitoraggio aggiornato in modalità spostamento!</b>\n\n"
+                            f"📌 Data di riferimento: <b>{self._esc(data_ora)}</b>\n"
+                            f"Il bot continuerà a verificare la disponibilità di date migliori (anticipa/posticipa).",
+                            parse_mode=ParseMode.HTML,
+                        )
+                    else:
+                        await q.edit_message_text(f"⚠️ Impossibile aggiornare il monitor {self._esc(mid)}.")
+                    return
             # calendario inline (seleziona data)
             if (data or "").startswith("cal:"):
                 await self._h_cal(update, chat_id)

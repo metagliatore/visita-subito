@@ -361,6 +361,19 @@ class Flow:
         (/poll): solo in quel caso viene inviata la notifica di fine-giro
         "nessuna disponibilità" (nei tick automatici sarebbe invasiva).
         """
+        # Se la visita è già stata prenotata ed è completata o in attesa di scelta, non fare polling a vuoto
+        action_state = self.store.get_action(self.mid)
+        if action_state in ("done", "done_pending_choice"):
+            log.info("[%s] Visita già prenotata (action_state=%s): salto il controllo", self.mid, action_state)
+            if manual:
+                pren = self.store.get_prenotazione(self.mid)
+                d_str = pren.get("data_ora") or ""
+                self.bot.notify(
+                    f"ℹ️ {self.mid} risulta già prenotata ({d_str}). "
+                    f"Usa i pulsanti della conferma per fermare o continuare il monitoraggio in modalità anticipa/posticipa."
+                )
+            return ""
+
         if not self._is_autenticato():
             msg = "Sessione non autenticata o scaduta (redirect a login)"
             log.warning("[%s] %s", self.mid, msg)
@@ -480,10 +493,34 @@ class Flow:
         try:
             self._ultima_azione = (decision.get("extra") or {}).get("azione", "approve")
             self.execute(slot)
-            self.store.mark_action(self.mid, "done", str(slot))
+            self.store.mark_action(self.mid, "done_pending_choice", str(slot))
             self.bot.notify(f"✅ Appuntamento {slot.date_str} ore {slot.time_str} prenotato.")
+            self._chiedi_post_prenotazione(slot)
             return "ok"
         except Exception as e:  # noqa: BLE001
             log.exception("[%s] esecuzione fallita", self.mid)
             self.bot.notify(f"❌ Errore durante la prenotazione: {e}")
             return "errore"
+
+    def _chiedi_post_prenotazione(self, slot) -> None:
+        """Invia all'utente la richiesta con bottoni per decidere se fermare o proseguire il monitoraggio."""
+        nome = self.monitor.get("ricetta") or self.mid
+        msg = (
+            f"🎯 <b>Prenotazione completata!</b> ({nome})\n"
+            f"📅 Data confermata: <b>{slot.date_str} ore {slot.time_str}</b>\n\n"
+            f"Cosa desideri fare con il monitoraggio per questa visita?\n\n"
+            f"• 🛑 <b>Ferma monitoraggio</b>: interrompe i controlli (l'appuntamento confermato rimane attivo).\n"
+            f"• 🔄 <b>Continua a monitorare</b>: continua la ricerca per verificare disponibilità migliori "
+            f"(spostamento anticipa/posticipa) rispetto a quella appena fissata."
+        )
+        righe = [[
+            ("🛑 Ferma monitoraggio", f"postbook:stop:{self.mid}"),
+            ("🔄 Continua a monitorare", f"postbook:continue:{self.mid}"),
+        ]]
+        try:
+            if hasattr(self.bot, "notify_buttons"):
+                self.bot.notify_buttons(msg, righe)
+            else:
+                self.bot.notify(msg)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[%s] invio richiesta post-prenotazione fallito: %s", self.mid, e)

@@ -176,3 +176,44 @@ def test_h_ricette_session_invalid():
     assert up.message.reply_text.await_count == 2
     second_call_args = up.message.reply_text.await_args_list[1][0]
     assert "sessione SPID scaduta o login fallito" in second_call_args[0]
+
+
+def test_postbook_stop_callback():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot.controller.rimuovi_monitor.return_value = True
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    up.callback_query.data = "postbook:stop:m1"
+    up.callback_query.edit_message_text = AsyncMock()
+
+    asyncio.run(bot._h_callback(up, MagicMock()))
+
+    bot.controller.rimuovi_monitor.assert_called_once_with("m1")
+    up.callback_query.edit_message_text.assert_called_once()
+    msg = up.callback_query.edit_message_text.call_args[0][0]
+    assert "interrotto" in msg
+
+
+def test_postbook_continue_callback():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot.controller.converti_in_reschedule.return_value = True
+    bot.controller.store.get_prenotazione.return_value = {"data_ora": "15/10/2026 10:00"}
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    up.callback_query.data = "postbook:continue:m1"
+    up.callback_query.edit_message_text = AsyncMock()
+
+    asyncio.run(bot._h_callback(up, MagicMock()))
+
+    bot.controller.converti_in_reschedule.assert_called_once_with("m1")
+    up.callback_query.edit_message_text.assert_called_once()
+    msg = up.callback_query.edit_message_text.call_args[0][0]
+    assert "spostamento" in msg
+    assert "15/10/2026 10:00" in msg
+

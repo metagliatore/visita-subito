@@ -80,14 +80,19 @@ class Controller:
 
     def _build_flows(self):
         self._flows = []
-        monitor_list = list(self.cfg.active_monitors) + list(self.store.get_monitors())
-        for m in monitor_list:
-            # se la ricetta è già stata prenotata, il monitor deve gestire
-            # l'appuntamento esistente (spostamento) e non cercare nuova disponibilità
-            if self.store.is_prenotato(m["id"]):
+        # Deduplica: i monitor nello store dinamico hanno priorità rispetto a config statico
+        monitors_dict = {m["id"]: m for m in self.cfg.active_monitors if m.get("enabled", True)}
+        for m in self.store.get_monitors():
+            monitors_dict[m["id"]] = m
+
+        for m in monitors_dict.values():
+            if self.store.is_disabled(m["id"]):
+                continue
+            # se la ricetta è già stata prenotata o è di tipo reschedule, usa RescheduleFlow
+            if self.store.is_prenotato(m["id"]) or m.get("type") == "reschedule":
                 cls = RescheduleFlow
             else:
-                cls = FLOW_TYPES.get(m["type"], NewBookingFlow)
+                cls = FLOW_TYPES.get(m.get("type", "new"), NewBookingFlow)
             self._flows.append(cls(m, self.browser, self.queue, self.bot, self.store))
 
     # ---- API per il bot ----
@@ -292,14 +297,65 @@ class Controller:
         return mid
 
     def rimuovi_monitor(self, monitor_id: str) -> bool:
-        """Rimuove un monitor dinamico."""
+        """Rimuove un monitor (dinamico o statico) arrestando i flussi attivi."""
         self.store.remove_monitor(monitor_id)
         self._flows = [f for f in self._flows if f.mid != monitor_id]
         return True
 
+    def converti_in_reschedule(self, monitor_id: str) -> bool:
+        """Converte un monitor da prima visita a spostamento o aggiorna la data di riferimento."""
+        pren = self.store.get_prenotazione(monitor_id)
+        codice = pren.get("codice") or ""
+        data_ora = pren.get("data_ora") or ""
+
+        # Trova il monitor configurato
+        mon = next((m for m in self.store.get_monitors() if m.get("id") == monitor_id), None)
+        if mon is None:
+            mon = next((m for m in self.cfg.active_monitors if m.get("id") == monitor_id), None)
+            if mon is not None:
+                mon = dict(mon)
+
+        if mon is None:
+            info = pren.get("info", {})
+            mon = {
+                "id": monitor_id,
+                "enabled": True,
+                "ricetta": info.get("prestazione", monitor_id),
+                "criteri": self.criteri_default(),
+            }
+
+        # Aggiorna a tipo reschedule
+        mon["type"] = "reschedule"
+        if codice:
+            mon["codice_appuntamento"] = codice
+        if data_ora:
+            mon["data_attuale"] = data_ora
+            # Se la visita è fissata per una certa data, imposta data_a alla data prenotata
+            # per cercare esclusivamente date migliorative (anticipo)
+            try:
+                data_solo = data_ora.split()[0].replace("-", "").strip()
+                if "/" in data_solo:
+                    crit = mon.setdefault("criteri", {})
+                    if not crit.get("data_a"):
+                        crit["data_a"] = data_solo
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Salva nello store
+        self.store.add_monitor(mon)
+
+        # Ripristina action_state a idle per consentire le future ricerche
+        self.store.mark_action(monitor_id, "idle", f"convertito a reschedule (data {data_ora})")
+
+        # Ricrea il flusso corrispondente in self._flows
+        self._flows = [f for f in self._flows if f.mid != monitor_id]
+        self._flows.append(RescheduleFlow(mon, self.browser, self.queue, self.bot, self.store))
+        log.info("[%s] Monitor convertito a RescheduleFlow (data_attuale=%s)", monitor_id, data_ora)
+        return True
+
     def monitors_attivi(self) -> list:
-        """Ritorna i monitor dinamici attivi (dallo store) per lista/stop."""
-        return self.store.get_monitors()
+        """Ritorna i monitor attivi (dallo store) non disabilitati per lista/stop."""
+        return [m for m in self.store.get_monitors() if not self.store.is_disabled(m.get("id", ""))]
 
     def criteri_default(self) -> dict:
         prefs = self.store.get_preferenze()
@@ -371,8 +427,13 @@ class Controller:
                 mon = {"ricetta": f.monitor.get("ricetta", ""), "criteri": f.monitor.get("criteri", {}), "type": f.type}
             nome = self._nome_leggibile(mon)
             stato = self.store.get_action(f.mid)
-            stato_txt = {"idle": "in attesa di novità", "done": "completato",
-                         "prenotato": "prenotato", "pending": "in attesa conferma"}.get(stato, stato)
+            stato_txt = {
+                "idle": "in attesa di novità",
+                "done": "completato (prenotato)",
+                "done_pending_choice": "prenotato (in attesa scelta: ferma o continua)",
+                "prenotato": "prenotato",
+                "pending": "in attesa conferma",
+            }.get(stato, stato)
             crit = mon.get("criteri", {}) if isinstance(mon, dict) else {}
             riga = f"\n• {nome}"
             # ricetta reale (la riga "nome" potrebbe essere generica, es. 'monitor')
