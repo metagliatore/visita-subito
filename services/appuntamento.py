@@ -97,12 +97,12 @@ def parse_conferma(html: str) -> AppuntamentoInfo:
     text = re.sub(r"\s+", " ", _modale_testo(html))
 
     info = AppuntamentoInfo()
-    info.data_ora = _snippet(text, "Data e ora")
-    info.prestazione = _snippet(text, "Prestazione", "Azienda")
-    info.azienda = _snippet(text, "Azienda", "Comune")
+    info.data_ora = _snippet(text, "Data e ora", "Prestazione").lstrip(": ")
+    info.prestazione = _snippet(text, "Prestazione", "Azienda").lstrip(": ")
+    info.azienda = _snippet(text, "Azienda", "Comune").lstrip(": ")
     # tronca ai successivi marcatori (evita rumore flat dalla lista sotto)
-    info.prestazione = _tr_api_a(info.prestazione, ["Azienda", "Presentarsi", "Comune"])
-    info.azienda = _tr_api_a(info.azienda, ["Presentarsi", "Comune", "Ulteriori"])
+    info.prestazione = _tr_api_a(info.prestazione, ["Azienda", "Presentarsi", "Comune"]).lstrip(": ")
+    info.azienda = _tr_api_a(info.azienda, ["Presentarsi", "Comune", "Ulteriori"]).lstrip(": ")
 
     # 'Presentarsi in' fino a 'Ulteriori indicazioni'
     p = _snippet(text, "Presentarsi in", "Ulteriori indicazioni")
@@ -110,14 +110,14 @@ def parse_conferma(html: str) -> AppuntamentoInfo:
     if p:
         righe = [x.strip(" -") for x in p.split("  ") if x.strip(" -")]
         if righe:
-            info.presentarsi_in = righe[0]
+            info.presentarsi_in = righe[0].lstrip(": ")
             if len(righe) > 1:
-                info.indirizzo = " ".join(righe[1:]).strip(" -")
+                info.indirizzo = " ".join(righe[1:]).strip(" -").lstrip(": ")
 
     # 'Ulteriori indicazioni' -> indirizzo completo (fallback)
     info.indirizzo = info.indirizzo or _snippet(text, "Ulteriori indicazioni", "Note di preparazione")
     info.indirizzo = info.indirizzo or _snippet(text, "Ulteriori indicazioni")
-    info.indirizzo = _tr_api_a(info.indirizzo, ["Note di preparazione", "Note operatore"])
+    info.indirizzo = _tr_api_a(info.indirizzo, ["Note di preparazione", "Note operatore"]).lstrip(": ")
 
     # note di preparazione: tutto dopo 'Note di preparazione' fino al prossimo marker
     ni = text.find("Note di preparazione")

@@ -57,3 +57,55 @@ def test_status_text_variations(tmp_path):
     ctrl.sess.needs_login.return_value = False
     text = Controller.status_text(ctrl)
     assert "❌ Non attiva / fallita" in text
+
+
+def test_controller_retry_and_blocking():
+    ctrl = MagicMock()
+    ctrl.max_login_retries = 3
+    ctrl.login_retries = 2
+    ctrl.login_bloccato = False
+    ctrl.bot = MagicMock()
+
+    Controller._incrementa_retry(ctrl)
+    assert ctrl.login_retries == 3
+    assert ctrl.login_bloccato is True
+    ctrl.bot.notify.assert_called_once()
+
+
+def test_controller_risveglia():
+    ctrl = MagicMock()
+    ctrl.login_bloccato = True
+    ctrl.login_retries = 3
+    ctrl._avvia_login.return_value = True
+
+    res = Controller.risveglia(ctrl)
+    assert res is True
+    assert ctrl.login_bloccato is False
+    assert ctrl.login_retries == 0
+    ctrl._avvia_login.assert_called_once()
+
+
+def test_controller_force_poll():
+    import threading
+    ctrl = MagicMock()
+    ctrl._force = threading.Event()
+    ctrl._poll_manual = False
+
+    Controller.force_poll(ctrl)
+    assert ctrl._poll_manual is True
+    assert ctrl._force.is_set()
+
+
+def test_controller_rimuovi_monitor():
+    ctrl = MagicMock()
+    f1 = MagicMock(); f1.mid = "m1"
+    f2 = MagicMock(); f2.mid = "m2"
+    ctrl._flows = [f1, f2]
+    ctrl.store = MagicMock()
+
+    ok = Controller.rimuovi_monitor(ctrl, "m1")
+    assert ok is True
+    assert len(ctrl._flows) == 1
+    assert ctrl._flows[0].mid == "m2"
+    ctrl.store.remove_monitor.assert_called_once_with("m1")
+
