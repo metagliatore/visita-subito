@@ -1,0 +1,54 @@
+services:
+  monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${IMAGE_NAME:-prenotazioni-fascicolo-sanitario-monitor:latest}
+    container_name: fascicolo-monitor
+    init: true
+    shm_size: "2gb"
+    environment:
+      # --- Telegram Bot ---
+      - TG_TOKEN=${TG_TOKEN}
+      - TG_CHAT_ID=${TG_CHAT_ID}
+      - TG_CHAT_ID_SECONDARY=${TG_CHAT_ID_SECONDARY:-}
+
+      # --- Autenticazione (SPID / CIE / Manuale) ---
+      # Metodo: spid | cie | manual
+      - AUTH_METHOD=${AUTH_METHOD:-spid}
+
+      # Provider SPID supportati: sielte, poste, aruba, infocert, lepida, namirial, tim...
+      - SPID_PROVIDER=${SPID_PROVIDER:-sielte}
+      - SPID_USERNAME=${SPID_USERNAME:-}
+      - SPID_PASSWORD=${SPID_PASSWORD:-}
+      - SPID_OTP_MODE=${SPID_OTP_MODE:-notifica}
+
+      # Credenziali SielteID (retrocompatibilità)
+      - SIELTE_USERNAME=${SIELTE_USERNAME:-}
+      - SIELTE_PASSWORD=${SIELTE_PASSWORD:-}
+
+      # Modalità CIE (app CieID o smartcard NFC)
+      - CIE_MODE=${CIE_MODE:-app}
+      - CIE_USERNAME=${CIE_USERNAME:-}
+      - CIE_PASSWORD=${CIE_PASSWORD:-}
+
+      # --- Scheduler & Polling ---
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-300}
+      - MAX_LOGIN_RETRIES=${MAX_LOGIN_RETRIES:-3}
+      - APPROVAL_TIMEOUT_SECONDS=${APPROVAL_TIMEOUT_SECONDS:-600}
+
+      # --- Runtime di sistema ---
+      - CHROME_BIN=/usr/bin/google-chrome
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Dati persistenti (cookie SPID, stato monitor, log applicativo)
+      - ${DATA_PATH:-fascicolo_data}:/app/data
+      # Configurazione (opzionale: sovrascrive settings.yaml e monitors.yaml)
+      - ${CONFIG_PATH:-fascicolo_config}:/app/config
+    restart: unless-stopped
+
+volumes:
+  fascicolo_data:
+    name: fascicolo_data
+  fascicolo_config:
+    name: fascicolo_config

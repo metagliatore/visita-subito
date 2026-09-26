@@ -120,6 +120,11 @@ Alla prima esecuzione:
   docker compose restart
   ```
 
+### 7. Deploy con Portainer
+Se utilizzi **Portainer** per gestire i tuoi container Docker, è disponibile una configurazione ottimizzata che evita problemi con i file `.env` locali e sfrutta i volumi gestiti di Docker:
+- **File Compose dedicato**: [`docker-compose.portainer.yml`](docker-compose.portainer.yml) (non necessita di `.env` su disco, legge le variabili inserite direttamente nell'interfaccia di Portainer).
+- **Guida passo-passo**: consulta 🚢 **[Guida al Deploy con Portainer](docs/PORTAINER.md)** per le istruzioni dettagliate sia con repository Git (consigliato con auto-aggiornamento) che con Web Editor.
+
 ---
 
 ## 🤖 Comandi Telegram
@@ -198,9 +203,12 @@ pytest
 │   └── store.py          # Persistenza stato monitor e prenotazioni (state.json)
 ├── tests/                # Suite di test unitari con pytest
 ├── data/                 # Directory persistente (cookie, state.json, log)
+├── docs/
+│   └── PORTAINER.md      # Guida dettagliata al deploy tramite Portainer
 ├── entrypoint.sh         # Script di avvio container con server X virtuale (Xvfb)
 ├── Dockerfile            # Immagine Docker Python 3.11 con Google Chrome
-└── docker-compose.yml    # Definizione del servizio containerizzato
+├── docker-compose.yml    # Definizione standard del servizio containerizzato
+└── docker-compose.portainer.yml # Stack ottimizzato per Portainer (variabili da UI)
 ```
 
 ---
