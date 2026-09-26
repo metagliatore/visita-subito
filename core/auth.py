@@ -21,18 +21,18 @@ log = logging.getLogger(__name__)
 
 # Mappatura dei provider SPID noti e dei relativi indici IdPC Regione Lombardia
 SPID_PROVIDERS = {
-    "sielte": {"name": "Sielte", "label": "SielteID", "index": 10},
-    "poste": {"name": "Poste", "label": "PosteID", "index": 0},
-    "aruba": {"name": "Aruba", "label": "Aruba ID", "index": 1},
-    "infocert": {"name": "Infocert", "label": "InfoCert ID", "index": 2},
-    "lepida": {"name": "Lepida", "label": "Lepida ID", "index": 3},
-    "intesigroup": {"name": "IntesiGroupSpid", "label": "Intesi Group", "index": 4},
-    "tim": {"name": "Tim", "label": "TIM id", "index": 5},
-    "teamsystem": {"name": "TeamSystemId", "label": "TeamSystem ID", "index": 6},
-    "register": {"name": "Register", "label": "SpidItalia (Register.it)", "index": 7},
-    "infocamere": {"name": "InfoCamere", "label": "InfoCamere", "index": 8},
-    "etna": {"name": "EtnaID", "label": "EtnaID", "index": 9},
-    "namirial": {"name": "Namirial", "label": "Namirial ID", "index": 11},
+    "infocert": {"name": "Infocert", "label": "InfoCert ID", "index": 0},
+    "register": {"name": "Register", "label": "SpidItalia (Register.it)", "index": 1},
+    "lepida": {"name": "Lepida", "label": "Lepida ID", "index": 2},
+    "intesigroup": {"name": "IntesiGroupSpid", "label": "Intesi Group", "index": 3},
+    "aruba": {"name": "Aruba", "label": "Aruba ID", "index": 4},
+    "namirial": {"name": "Namirial", "label": "Namirial ID", "index": 5},
+    "poste": {"name": "Poste", "label": "PosteID", "index": 6},
+    "infocamere": {"name": "InfoCamere", "label": "InfoCamere", "index": 7},
+    "tim": {"name": "Tim", "label": "TIM id", "index": 8},
+    "sielte": {"name": "Sielte", "label": "SielteID", "index": 9},
+    "teamsystem": {"name": "TeamSystemId", "label": "TeamSystem ID", "index": 10},
+    "etna": {"name": "EtnaID", "label": "EtnaID", "index": 11},
 }
 
 
@@ -86,11 +86,12 @@ class AuthConfig:
         if self.method == "spid":
             info = SPID_PROVIDERS.get(self.spid_provider, {})
             label = info.get("label", self.spid_provider.upper())
-            status = "automatico" if self.spid_provider == "sielte" else "semi-automatico"
+            status = "automatico" if self.spid_user and self.spid_pwd else "semi-automatico"
             return f"SPID ({label}) [{status}]"
         elif self.method == "cie":
             mode_lbl = "App CieID" if self.cie_mode == "app" else "Smartcard/NFC"
-            return f"CIE ({mode_lbl}) [semi-automatico]"
+            status = "automatico" if self.cie_user and self.cie_pwd else "semi-automatico"
+            return f"CIE ({mode_lbl}) [{status}]"
         elif self.method == "manual":
             return "Manuale (apertura finestra)"
         return f"{self.method.upper()}"
@@ -106,7 +107,7 @@ class BaseAuthProvider(ABC):
 class SielteSpidAuthProvider(BaseAuthProvider):
     """Autenticazione automatizzata SPID SielteID con notifica push/OTP."""
 
-    def __init__(self, username: str, password: str):
+    def __init__(self, username: str = "", password: str = ""):
         self.username = username
         self.password = password
 
@@ -116,78 +117,78 @@ class SielteSpidAuthProvider(BaseAuthProvider):
         else:
             if notify_cb:
                 notify_cb("🔑 Richiesto login SPID SielteID manuale (credenziali non configurate).")
-            return session_manager.relogin_manual(selectors.LOGIN_SPID["url_accedi"])
+            return session_manager.relogin_manual()
 
 
-class GenericSpidAuthProvider(BaseAuthProvider):
-    """Accesso SPID per altri provider (PosteID, Aruba, Infocert, Lepida, ecc.).
+class PosteSpidAuthProvider(BaseAuthProvider):
+    """Accesso SPID con PosteID (Poste Italiane)."""
 
-    Seleziona automaticamente il provider nella schermata IdPC di Regione Lombardia
-    e guida l'utente per il completamento dell'autenticazione.
-    """
-
-    def __init__(self, provider_key: str, username: str = "", password: str = ""):
-        self.provider_key = provider_key.lower()
-        self.provider_info = SPID_PROVIDERS.get(
-            self.provider_key,
-            {"name": provider_key, "label": provider_key.upper(), "index": 0}
-        )
+    def __init__(self, username: str = "", password: str = ""):
         self.username = username
         self.password = password
 
     def login(self, session_manager, browser, notify_cb=None) -> webdriver.Chrome:
-        provider_name = self.provider_info.get("name", self.provider_key)
-        provider_label = self.provider_info.get("label", self.provider_key.upper())
+        return session_manager.relogin_spid("poste", username=self.username, password=self.password)
 
-        if notify_cb:
-            notify_cb(f"🔑 Avvio accesso SPID con {provider_label}...\n"
-                      f"Completa il login e l'OTP nella finestra.")
 
-        prev = browser.settings.headless
-        browser.settings.headless = False
-        session_manager._riavvia_con_headless(False)
-        try:
-            driver = browser.start()
-            driver.get(selectors.LOGIN_SPID["url_accedi"])
-            time.sleep(3)
-            if session_manager.is_autenticato(driver):
-                session_manager.save(driver)
-                session_manager.session_valid = True
-                return driver
+class ArubaSpidAuthProvider(BaseAuthProvider):
+    """Accesso SPID con Aruba ID."""
 
-            # Apri menu SPID e clicca sul provider richiesto
-            try:
-                driver.execute_script("var a=document.querySelector('[spid-idp-button], a.button-spid, .pulsante-spid');if(a)a.click();")
-                time.sleep(1)
-                boxes = driver.find_elements(By.CSS_SELECTOR, "a.home-box-fornitore")
-                target = None
-                for b in boxes:
-                    if provider_name.lower() in (b.text or "").lower():
-                        target = b
-                        break
-                if target is None:
-                    idx = self.provider_info.get("index")
-                    if idx is not None and idx < len(boxes):
-                        target = boxes[idx]
-                if target:
-                    driver.execute_script("arguments[0].click();", target)
-            except Exception as e:  # noqa: BLE001
-                log.warning("Selezione provider SPID %s: %s", provider_name, e)
+    def __init__(self, username: str = "", password: str = ""):
+        self.username = username
+        self.password = password
 
-            session_manager._attendi_login_manuale(driver)
-            session_manager.save(driver)
-            session_manager.session_valid = True
-            return driver
-        finally:
-            browser.settings.headless = prev
+    def login(self, session_manager, browser, notify_cb=None) -> webdriver.Chrome:
+        return session_manager.relogin_spid("aruba", username=self.username, password=self.password)
+
+
+class InfocertSpidAuthProvider(BaseAuthProvider):
+    """Accesso SPID con InfoCert ID."""
+
+    def __init__(self, username: str = "", password: str = ""):
+        self.username = username
+        self.password = password
+
+    def login(self, session_manager, browser, notify_cb=None) -> webdriver.Chrome:
+        return session_manager.relogin_spid("infocert", username=self.username, password=self.password)
+
+
+class LepidaSpidAuthProvider(BaseAuthProvider):
+    """Accesso SPID con Lepida ID."""
+
+    def __init__(self, username: str = "", password: str = ""):
+        self.username = username
+        self.password = password
+
+    def login(self, session_manager, browser, notify_cb=None) -> webdriver.Chrome:
+        return session_manager.relogin_spid("lepida", username=self.username, password=self.password)
+
+
+class NamirialSpidAuthProvider(BaseAuthProvider):
+    """Accesso SPID con Namirial ID."""
+
+    def __init__(self, username: str = "", password: str = ""):
+        self.username = username
+        self.password = password
+
+    def login(self, session_manager, browser, notify_cb=None) -> webdriver.Chrome:
+        return session_manager.relogin_spid("namirial", username=self.username, password=self.password)
+
+
+class GenericSpidAuthProvider(BaseAuthProvider):
+    """Accesso SPID generico per qualunque altro fornitore accreditato."""
+
+    def __init__(self, provider_key: str, username: str = "", password: str = ""):
+        self.provider_key = provider_key.lower()
+        self.username = username
+        self.password = password
+
+    def login(self, session_manager, browser, notify_cb=None) -> webdriver.Chrome:
+        return session_manager.relogin_spid(self.provider_key, username=self.username, password=self.password)
 
 
 class CieAuthProvider(BaseAuthProvider):
-    """Accesso con Carta di Identità Elettronica (CIE / CieID).
-
-    Naviga al portale regionale, preme 'Entra con CIE' e attende la convalida
-    tramite app CieID o Smartcard.
-    """
+    """Accesso con Carta di Identità Elettronica (CIE / CieID)."""
 
     def __init__(self, mode: str = "app", username: str = "", password: str = ""):
         self.mode = mode
@@ -195,38 +196,7 @@ class CieAuthProvider(BaseAuthProvider):
         self.password = password
 
     def login(self, session_manager, browser, notify_cb=None) -> webdriver.Chrome:
-        mode_label = "App CieID" if self.mode == "app" else "Smartcard/NFC"
-        if notify_cb:
-            notify_cb(f"🔑 Avvio accesso con CIE ({mode_label})...\n"
-                      f"Completa la verifica con l'app CieID o smartcard nella finestra.")
-
-        prev = browser.settings.headless
-        browser.settings.headless = False
-        session_manager._riavvia_con_headless(False)
-        try:
-            driver = browser.start()
-            driver.get(selectors.LOGIN_SPID["url_accedi"])
-            time.sleep(3)
-            if session_manager.is_autenticato(driver):
-                session_manager.save(driver)
-                session_manager.session_valid = True
-                return driver
-
-            # Clicca 'Entra con CIE'
-            try:
-                driver.execute_script(
-                    "var c=document.querySelector('[cie-button], a.button-cie, .pulsante-cie, a[href*=\"cie\"], a[href*=\"CIE\"]');"
-                    "if(c){c.click();return true} return false;"
-                )
-            except Exception as e:  # noqa: BLE001
-                log.warning("Click pulsante CIE: %s", e)
-
-            session_manager._attendi_login_manuale(driver)
-            session_manager.save(driver)
-            session_manager.session_valid = True
-            return driver
-        finally:
-            browser.settings.headless = prev
+        return session_manager.relogin_cie(username=self.username, password=self.password, mode=self.mode)
 
 
 class ManualAuthProvider(BaseAuthProvider):
@@ -241,14 +211,22 @@ class ManualAuthProvider(BaseAuthProvider):
 def get_auth_provider(auth_config: AuthConfig) -> BaseAuthProvider:
     """Factory per istanziare l'AuthProvider idoneo alla configurazione."""
     if auth_config.method == "spid":
-        if auth_config.spid_provider == "sielte":
-            return SielteSpidAuthProvider(username=auth_config.spid_user, password=auth_config.spid_pwd)
-        else:
-            return GenericSpidAuthProvider(
-                provider_key=auth_config.spid_provider,
-                username=auth_config.spid_user,
-                password=auth_config.spid_pwd,
-            )
+        prov = auth_config.spid_provider.lower()
+        mapping = {
+            "sielte": lambda: SielteSpidAuthProvider(username=auth_config.spid_user, password=auth_config.spid_pwd),
+            "poste": lambda: PosteSpidAuthProvider(username=auth_config.spid_user, password=auth_config.spid_pwd),
+            "aruba": lambda: ArubaSpidAuthProvider(username=auth_config.spid_user, password=auth_config.spid_pwd),
+            "infocert": lambda: InfocertSpidAuthProvider(username=auth_config.spid_user, password=auth_config.spid_pwd),
+            "lepida": lambda: LepidaSpidAuthProvider(username=auth_config.spid_user, password=auth_config.spid_pwd),
+            "namirial": lambda: NamirialSpidAuthProvider(username=auth_config.spid_user, password=auth_config.spid_pwd),
+        }
+        if prov in mapping:
+            return mapping[prov]()
+        return GenericSpidAuthProvider(
+            provider_key=prov,
+            username=auth_config.spid_user,
+            password=auth_config.spid_pwd,
+        )
     elif auth_config.method == "cie":
         return CieAuthProvider(
             mode=auth_config.cie_mode,

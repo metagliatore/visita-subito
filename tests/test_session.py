@@ -78,3 +78,75 @@ def test_save_and_load_cookies(tmp_path):
     success = sm.load_cookies(load_driver)
     assert success is True
     load_driver.add_cookie.assert_called_once_with(fake_cookies[0])
+
+
+def test_find_and_fill(tmp_path):
+    sm = SessionManager(browser=None, cookie_dir=tmp_path)
+    mock_driver = MagicMock()
+    mock_el = MagicMock()
+    mock_driver.find_element.return_value = mock_el
+
+    res = sm._find_and_fill(mock_driver, [("id", "username")], "testuser")
+    assert res is True
+    mock_el.clear.assert_called_once()
+    mock_el.send_keys.assert_called_once_with("testuser")
+
+    # Caso fallimento
+    mock_driver.find_element.side_effect = Exception("Not found")
+    res_fail = sm._find_and_fill(mock_driver, [("id", "notfound")], "val")
+    assert res_fail is False
+
+
+def test_find_and_click(tmp_path):
+    sm = SessionManager(browser=None, cookie_dir=tmp_path)
+    mock_driver = MagicMock()
+    mock_el = MagicMock()
+    mock_driver.find_element.return_value = mock_el
+
+    # Click normale
+    res = sm._find_and_click(mock_driver, [("css", "button.submit")])
+    assert res is True
+    mock_el.click.assert_called_once()
+
+    # Fallback execute_script se click lancia eccezione
+    mock_el.click.side_effect = Exception("Click intercepted")
+    res_fallback = sm._find_and_click(mock_driver, [("css", "button.submit")])
+    assert res_fallback is True
+    mock_driver.execute_script.assert_called_with("arguments[0].click();", mock_el)
+
+    # Fallimento completo
+    mock_driver.find_element.side_effect = Exception("Not found")
+    res_fail = sm._find_and_click(mock_driver, [("xpath", "//missing")])
+    assert res_fail is False
+
+
+def test_relogin_spid_already_authenticated(tmp_path, monkeypatch):
+    mock_browser = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_browser.start.return_value = mock_driver
+    mock_driver.current_url = "https://www.fascicolosanitario.regione.lombardia.it/web/areaprivata/home"
+
+    sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
+    # is_autenticato ritorna True
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: True)
+
+    driver = sm.relogin_spid("poste", username="u", password="p", wait_otp_sec=5)
+    assert driver == mock_driver
+    assert sm.session_valid is True
+
+
+def test_relogin_cie_already_authenticated(tmp_path, monkeypatch):
+    mock_browser = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_browser.start.return_value = mock_driver
+    mock_driver.current_url = "https://www.fascicolosanitario.regione.lombardia.it/web/areaprivata/home"
+
+    sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: True)
+
+    driver = sm.relogin_cie(username="cf", password="pwd", mode="app", wait_otp_sec=5)
+    assert driver == mock_driver
+    assert sm.session_valid is True
+

@@ -18,61 +18,144 @@ LOGIN_SPID = {
     # form che esegue submit verso l'IdP scelto
     "form_spid": [("id", "SPIDform")],
     "field_indexIdp": [("id", "indexIdp")],
-    # lista IdP: l'indice (0-based) è quello da mettere in #indexIdp
+    # lista IdP verificata su IdPC Regione Lombardia
     "idp": {
-        "Poste": 0, "Aruba": 1, "Infocert": 2, "Lepida": 3,
-        "IntesiGroupSpid": 4, "Tim": 5, "TeamSystemId": 6, "Register": 7,
-        "InfoCamere": 8, "EtnaID": 9, "Sielte": 10, "Namirial": 11,
+        "Infocert": 0, "Register": 1, "Lepida": 2, "IntesiGroupSpid": 3,
+        "Aruba": 4, "Namirial": 5, "Poste": 6, "InfoCamere": 7,
+        "Tim": 8, "Sielte": 9, "TeamSystemId": 10, "EtnaID": 11,
     },
     # selettore dei box provider (il click imposta indexIdp e fa submit)
     "box_idp": [("css", "a.home-box-fornitore")],
-    # NB: il form completo dell'IdP (username/password/OTP) è su altro dominio
-    # e va mappato dopo la scelta dell'IdP (vedi LOGIN_IDP_* di seguito)
 }
 
 # ------------------------------------------------------------------
-# Esempio di mappatura form IdP (da completare col provider scelto)
+# Login CIE — Carta d'Identità Elettronica (Ministero dell'Interno)
+# ------------------------------------------------------------------
+LOGIN_CIE = {
+    "url_landing": "https://idserver.servizicie.interno.gov.it/idp/login/livello2",
+    "btn_entra_cie": [
+        ("css", "form[action*='AuthRequestCieService']"),
+        ("css", ".pulsante-cie form"),
+        ("css", ".pulsante-cie"),
+        ("css", "[cie-button]"),
+    ],
+    "form": [("id", "loginUP")],
+    "username": [("id", "username"), ("name", "username")],
+    "password": [("id", "password"), ("name", "password")],
+    "btn_prosegui": [("css", "form#loginUP button[type='submit']"), ("css", "button[type='submit']")],
+    "link_app_cie": [("css", "a[href*='login/app']")],
+    "consenso": [
+        ("css", "button[name='confirm']"),
+        ("css", "button[type='submit']"),
+        ("xpath", "//button[contains(., 'Autorizza') or contains(., 'Acconsento') or contains(., 'Prosegui')]"),
+    ],
+}
+
+# ------------------------------------------------------------------
+# SPID PosteID (Poste Italiane)
 # ------------------------------------------------------------------
 LOGIN_IDP_POSTEID = {
-    "url": "https://posteid.poste.it/",
-    "username": [("id", "username")],
-    "password": [("id", "password")],
-    "btn_avanti": [("css", "button[type=submit], input[type=submit]")],
-    # OTP via SMS / app: campo e pulsante
-    "otp": [("id", "otp")],
+    "url_matcher": "posteid.poste.it",
+    "form": [("css", "form[action*='xloginbasic']"), ("css", "form[name='login']")],
+    "username": [("id", "username"), ("name", "username")],
+    "password": [("id", "password"), ("name", "password")],
+    "btn_avanti": [("css", "form[action*='xloginbasic'] button[type='submit']"), ("css", "button[type='submit']")],
+    "form_qr": [("css", "form[action*='xqrlogindis']")],
+    "otp": [("id", "otp"), ("name", "otp")],
     "btn_otp": [("css", "button[type=submit], input[type=submit]")],
+    "consenso": [
+        ("css", "button[name='confirm']"),
+        ("css", "input[value*='Autorizza']"),
+        ("xpath", "//button[contains(., 'Autorizza') or contains(., 'Conferma') or contains(., 'Prosegui')]"),
+    ],
 }
 
 # ------------------------------------------------------------------
-# IdP scelto dall'utente: SielteID
+# SPID Aruba ID
+# ------------------------------------------------------------------
+LOGIN_IDP_ARUBA = {
+    "url_matcher": "loginspid.aruba.it",
+    "form": [("id", "spid-login")],
+    "username": [("id", "username"), ("name", "username")],
+    "password": [("id", "password"), ("name", "password")],
+    "user_key": [("id", "userKey"), ("name", "userKey")],
+    "btn_avanti": [("css", "#spid-login button[type='submit']"), ("css", "button[type='submit']")],
+    "consenso": [
+        ("css", "button[name*='confirm']"),
+        ("xpath", "//button[contains(., 'Autorizza') or contains(., 'Conferma') or contains(., 'Prosegui')]"),
+    ],
+}
+
+# ------------------------------------------------------------------
+# SPID InfoCert ID
+# ------------------------------------------------------------------
+LOGIN_IDP_INFOCERT = {
+    "url_matcher": "identity.infocert.it",
+    "form": [("id", "spid-login")],
+    "username": [("id", "nome_utente"), ("name", "nome_utente")],
+    "password": [("id", "password"), ("name", "password")],
+    "btn_avanti": [("css", "#spid-login button[type='submit']"), ("css", "button[type='submit']")],
+    "consenso": [
+        ("css", "button[type='submit']"),
+        ("xpath", "//button[contains(., 'Autorizza') or contains(., 'Conferma') or contains(., 'Prosegui')]"),
+    ],
+}
+
+# ------------------------------------------------------------------
+# SPID Lepida ID
+# ------------------------------------------------------------------
+LOGIN_IDP_LEPIDA = {
+    "url_matcher": "id.lepida.it",
+    "form": [("id", "spid-login")],
+    "username": [("id", "username"), ("name", "j_username")],
+    "password": [("id", "password"), ("name", "j_password")],
+    "btn_avanti": [("id", "btn-spid-login"), ("css", "button[type='submit']")],
+    "btn_qr": [("id", "btn_proceed_qr_login")],
+    "consenso": [
+        ("css", "button[name='_eventId_proceed']"),
+        ("xpath", "//button[contains(., 'Autorizza') or contains(., 'Conferma') or contains(., 'Prosegui')]"),
+    ],
+}
+
+# ------------------------------------------------------------------
+# SPID Namirial ID
+# ------------------------------------------------------------------
+LOGIN_IDP_NAMIRIAL = {
+    "url_matcher": "spid.namirial.it",
+    "form": [("id", "kc-form-login")],
+    "username": [("id", "username"), ("name", "username")],
+    "password": [("id", "password"), ("name", "password")],
+    "btn_avanti": [("id", "kc-login"), ("css", "input[type='submit']")],
+    "consenso": [
+        ("css", "input[type='submit']"),
+        ("xpath", "//input[contains(@value, 'Autorizza') or contains(@value, 'Conferma')]"),
+    ],
+}
+
+# ------------------------------------------------------------------
+# IdP: SielteID
 # STEP 1 — loginform (identity.sieltecloud.it/simplesaml/.../loginform.php)
 # username = Codice Fiscale; dopo il submit l'IdP chiede conferma via app/OTP.
 # ------------------------------------------------------------------
 LOGIN_IDP_SIELTEID = {
-    "url_matcher": "identity.sieltecloud.it",  # sottostringa dell'URL
+    "url_matcher": "identity.sieltecloud.it",
     "username": [("id", "username")],
     "password": [("id", "password")],
     "form": [("id", "piLoginForm")],
     "btn_prosegui": [("id", "autorizza")],
     "field_authstate": [("name", "AuthState")],
-    # STEP 2 (da confermare): pagina di conferma push/OTP app MySielteID.
-    # I campi esatti si mapperanno appena si arriva a quel passaggio.
     "scelta_metodo": {
         "url_matcher": "Scegli il metodo",
-        # notifica push sull'app (prima opzione) -> onclick useNotify()
         "notifica": [("eval", "useNotify()")],
         "otp_app": [("eval", "useAPP()")],
-        # input hidden che il JS imposta a 'true'
         "field_usenotify": [("id", "usenotify")],
         "field_useapp": [("id", "useapp")],
     },
-    # STEP 3: consenso/autorizzazione dati (invio info a Regione Lombardia)
     "consenso": {
         "url_matcher": "Autorizza",
-        "btn_autorizza": [("css", "form#piLoginForm button[type=submit]")],
-        "field_accept": [("id", "accept")],  # true = accetta
+        "btn_autorizza": [("css", "form#piLoginForm button[type='submit']")],
+        "field_accept": [("id", "accept")],
     },
-    # Config PKCE/sessione acquisita: pagina finale = area privata/ricette
     "post_login_url": "https://www.fascicolosanitario.regione.lombardia.it/web/areaprivata/ricette",
 }
 

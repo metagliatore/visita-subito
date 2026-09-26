@@ -253,3 +253,194 @@ class SessionManager:
             raise TimeoutError("Timeout nell'attesa approvazione SielteID (approva la push!)")
         finally:
             self.browser.settings.headless = prev
+
+    # ---------------- helper selettori ----------------
+    def _find_and_fill(self, driver, sel_list, value: str) -> bool:
+        from selenium.webdriver.common.by import By
+        BY_MAP = {"id": By.ID, "name": By.NAME, "css": By.CSS_SELECTOR, "xpath": By.XPATH}
+        for strat, val in sel_list:
+            by = BY_MAP.get(strat, By.CSS_SELECTOR)
+            try:
+                el = driver.find_element(by, val)
+                el.clear()
+                el.send_keys(value)
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _find_and_click(self, driver, sel_list) -> bool:
+        from selenium.webdriver.common.by import By
+        BY_MAP = {"id": By.ID, "name": By.NAME, "css": By.CSS_SELECTOR, "xpath": By.XPATH}
+        for strat, val in sel_list:
+            by = BY_MAP.get(strat, By.CSS_SELECTOR)
+            try:
+                el = driver.find_element(by, val)
+                try:
+                    el.click()
+                except Exception:
+                    driver.execute_script("arguments[0].click();", el)
+                return True
+            except Exception:
+                continue
+        return False
+
+    # ---------------- login SPID multi-provider ----------------
+    def relogin_spid(self, provider_key: str, username: str = "", password: str = "",
+                      wait_otp_sec: int = 180) -> webdriver.Chrome:
+        """Accesso SPID per i vari provider (PosteID, Aruba, InfoCert, Lepida, Namirial, ecc.).
+        Compila automaticamente username/password se configurati, invia notifica Telegram,
+        attende l'approvazione secondo fattore (push/OTP) e la schermata di consenso.
+        """
+        from selenium.webdriver.common.by import By
+        from core import selectors
+
+        # Selezione dei selettori specifici del provider
+        prov_map = {
+            "poste": selectors.LOGIN_IDP_POSTEID,
+            "aruba": selectors.LOGIN_IDP_ARUBA,
+            "infocert": selectors.LOGIN_IDP_INFOCERT,
+            "lepida": selectors.LOGIN_IDP_LEPIDA,
+            "namirial": selectors.LOGIN_IDP_NAMIRIAL,
+            "sielte": selectors.LOGIN_IDP_SIELTEID,
+        }
+        prov_sel = prov_map.get(provider_key.lower(), {})
+        prov_name = provider_key.capitalize()
+
+        prev = self.browser.settings.headless
+        self.browser.settings.headless = False
+        self._riavvia_con_headless(False)
+        driver = self.browser.start()
+        try:
+            if self.on_notify:
+                self.on_notify(f"🔑 Avvio accesso SPID con {prov_name}...")
+            driver.get(selectors.LOGIN_SPID["url_accedi"])
+            time.sleep(4)
+            if self.is_autenticato(driver):
+                self.save(driver)
+                self.session_valid = True
+                return driver
+
+            # Apri menu SPID e seleziona il provider
+            try:
+                driver.execute_script("var a=document.querySelector('[spid-idp-button], a.button-spid, .pulsante-spid');if(a)a.click();")
+                time.sleep(1)
+                boxes = driver.find_elements(By.CSS_SELECTOR, "a.home-box-fornitore")
+                target = None
+                for b in boxes:
+                    if provider_key.lower() in (b.text or "").lower():
+                        target = b
+                        break
+                if target is None:
+                    idx = selectors.LOGIN_SPID["idp"].get(prov_name)
+                    if idx is not None and idx < len(boxes):
+                        target = boxes[idx]
+                if target:
+                    driver.execute_script("arguments[0].click();", target)
+            except Exception as e:
+                log.warning("Selezione provider %s: %s", prov_name, e)
+
+            time.sleep(5)
+
+            # Compilazione credenziali se disponibili
+            if username and password:
+                u_sel = prov_sel.get("username", [("id", "username"), ("name", "username"), ("css", "input[type='text'], input[type='email']")])
+                p_sel = prov_sel.get("password", [("id", "password"), ("name", "password"), ("css", "input[type='password']")])
+                self._find_and_fill(driver, u_sel, username)
+                self._find_and_fill(driver, p_sel, password)
+
+                time.sleep(1)
+                btn_sel = prov_sel.get("btn_avanti", [("css", "button[type='submit'], input[type='submit']")])
+                self._find_and_click(driver, btn_sel)
+
+                if self.on_notify:
+                    self.on_notify(f"📲 Credenziali {prov_name} inviate: conferma la notifica push sull'app o inserisci l'OTP.")
+            else:
+                if self.on_notify:
+                    self.on_notify(f"🔑 Finestra {prov_name} aperta: inserisci le credenziali e autorizza l'accesso.")
+
+            # Attesa approvazione 2FA + consenso (SAML attribute release)
+            consenso_sel = prov_sel.get("consenso", [
+                ("css", "button[name='confirm'], input[value*='Autorizza'], button[type='submit']"),
+                ("xpath", "//button[contains(., 'Autorizza') or contains(., 'Conferma') or contains(., 'Prosegui') or contains(., 'Acconsento')]"),
+            ])
+            for _ in range(max(1, wait_otp_sec // 5)):
+                time.sleep(5)
+                # Prova click automatico su eventuale schermata di consenso
+                self._find_and_click(driver, consenso_sel)
+                if self.is_autenticato(driver):
+                    self.save(driver)
+                    self.session_valid = True
+                    return driver
+
+            raise TimeoutError(f"Timeout nell'attesa approvazione SPID ({prov_name})")
+        finally:
+            self.browser.settings.headless = prev
+
+    # ---------------- login CIE ----------------
+    def relogin_cie(self, username: str = "", password: str = "", mode: str = "app",
+                     wait_otp_sec: int = 180) -> webdriver.Chrome:
+        """Accesso tramite CIE (Carta di Identità Elettronica).
+        Naviga all'IdPC, preme 'Entra con CIE' verso il portale del Ministero dell'Interno.
+        Se fornite credenziali (CIE/CF + password), le compila ed effettua il submit (Livello 2),
+        altrimenti lascia la finestra aperta per QR Code / App CieID o Smartcard.
+        """
+        from selenium.webdriver.common.by import By
+        from core import selectors
+
+        prev = self.browser.settings.headless
+        self.browser.settings.headless = False
+        self._riavvia_con_headless(False)
+        driver = self.browser.start()
+        try:
+            mode_lbl = "App CieID (Livello 2)" if mode == "app" else "Smartcard (Livello 3)"
+            if self.on_notify:
+                self.on_notify(f"🔑 Avvio accesso con CIE ({mode_lbl})...")
+            driver.get(selectors.LOGIN_SPID["url_accedi"])
+            time.sleep(4)
+            if self.is_autenticato(driver):
+                self.save(driver)
+                self.session_valid = True
+                return driver
+
+            # Submit form CIE su IdPC Regione Lombardia
+            try:
+                driver.execute_script(
+                    "var f=document.querySelector('form[action*=\"AuthRequestCieService\"], .pulsante-cie form');"
+                    "if(f){f.submit();return true;}"
+                    "var c=document.querySelector('[cie-button], .pulsante-cie');if(c){c.click();return true;}"
+                    "return false;"
+                )
+            except Exception as e:
+                log.warning("Click/submit CIE: %s", e)
+
+            time.sleep(5)
+
+            # Se ci troviamo sul portale Ministero dell'Interno (idserver.servizicie.interno.gov.it)
+            cie_sel = selectors.LOGIN_CIE
+            if username and password:
+                u_sel = cie_sel["username"]
+                p_sel = cie_sel["password"]
+                self._find_and_fill(driver, u_sel, username)
+                self._find_and_fill(driver, p_sel, password)
+                time.sleep(1)
+                self._find_and_click(driver, cie_sel["btn_prosegui"])
+                if self.on_notify:
+                    self.on_notify("📲 Credenziali CIE inviate: conferma la notifica nell'app CieID o inserisci l'OTP.")
+            else:
+                if self.on_notify:
+                    self.on_notify(f"🔑 Schermata CIE aperta: completa l'autenticazione con l'app CieID (QR/notifica) o Smartcard.")
+
+            # Attesa approvazione e consenso
+            for _ in range(max(1, wait_otp_sec // 5)):
+                time.sleep(5)
+                # Eventuale consenso su pagina CIE / Regione
+                self._find_and_click(driver, cie_sel["consenso"])
+                if self.is_autenticato(driver):
+                    self.save(driver)
+                    self.session_valid = True
+                    return driver
+
+            raise TimeoutError("Timeout nell'attesa autenticazione CIE (completa l'accesso con l'app CieID o Smartcard)")
+        finally:
+            self.browser.settings.headless = prev

@@ -5,6 +5,11 @@ from core.auth import (
     AuthConfig,
     SPID_PROVIDERS,
     SielteSpidAuthProvider,
+    PosteSpidAuthProvider,
+    ArubaSpidAuthProvider,
+    InfocertSpidAuthProvider,
+    LepidaSpidAuthProvider,
+    NamirialSpidAuthProvider,
     GenericSpidAuthProvider,
     CieAuthProvider,
     ManualAuthProvider,
@@ -70,18 +75,84 @@ def test_get_auth_provider_factory():
     assert p_sielte.username == "u"
 
     # Poste
-    p_poste = get_auth_provider(AuthConfig(method="spid", spid_provider="poste"))
-    assert isinstance(p_poste, GenericSpidAuthProvider)
-    assert p_poste.provider_key == "poste"
+    p_poste = get_auth_provider(AuthConfig(method="spid", spid_provider="poste", spid_user="u", spid_pwd="p"))
+    assert isinstance(p_poste, PosteSpidAuthProvider)
+    assert p_poste.username == "u"
+
+    # Aruba
+    p_aruba = get_auth_provider(AuthConfig(method="spid", spid_provider="aruba", spid_user="u", spid_pwd="p"))
+    assert isinstance(p_aruba, ArubaSpidAuthProvider)
+
+    # InfoCert
+    p_infocert = get_auth_provider(AuthConfig(method="spid", spid_provider="infocert"))
+    assert isinstance(p_infocert, InfocertSpidAuthProvider)
+
+    # Lepida
+    p_lepida = get_auth_provider(AuthConfig(method="spid", spid_provider="lepida"))
+    assert isinstance(p_lepida, LepidaSpidAuthProvider)
+
+    # Namirial
+    p_namirial = get_auth_provider(AuthConfig(method="spid", spid_provider="namirial"))
+    assert isinstance(p_namirial, NamirialSpidAuthProvider)
+
+    # Generic SPID (e.g. Tim, Register, etc.)
+    p_generic = get_auth_provider(AuthConfig(method="spid", spid_provider="tim"))
+    assert isinstance(p_generic, GenericSpidAuthProvider)
+    assert p_generic.provider_key == "tim"
 
     # CIE
-    p_cie = get_auth_provider(AuthConfig(method="cie", cie_mode="app"))
+    p_cie = get_auth_provider(AuthConfig(method="cie", cie_mode="app", cie_user="c_u", cie_pwd="c_p"))
     assert isinstance(p_cie, CieAuthProvider)
     assert p_cie.mode == "app"
+    assert p_cie.username == "c_u"
 
     # Manual
     p_manual = get_auth_provider(AuthConfig(method="manual"))
     assert isinstance(p_manual, ManualAuthProvider)
+
+
+def test_spid_providers_login():
+    mock_sess = MagicMock()
+    mock_browser = MagicMock()
+
+    # Poste
+    p_poste = PosteSpidAuthProvider(username="POSTE_U", password="PWD")
+    p_poste.login(mock_sess, mock_browser)
+    mock_sess.relogin_spid.assert_called_with("poste", username="POSTE_U", password="PWD")
+
+    # Aruba
+    p_aruba = ArubaSpidAuthProvider(username="ARUBA_U", password="PWD")
+    p_aruba.login(mock_sess, mock_browser)
+    mock_sess.relogin_spid.assert_called_with("aruba", username="ARUBA_U", password="PWD")
+
+    # Infocert
+    p_infocert = InfocertSpidAuthProvider(username="INFO_U", password="PWD")
+    p_infocert.login(mock_sess, mock_browser)
+    mock_sess.relogin_spid.assert_called_with("infocert", username="INFO_U", password="PWD")
+
+    # Lepida
+    p_lepida = LepidaSpidAuthProvider(username="LEP_U", password="PWD")
+    p_lepida.login(mock_sess, mock_browser)
+    mock_sess.relogin_spid.assert_called_with("lepida", username="LEP_U", password="PWD")
+
+    # Namirial
+    p_namirial = NamirialSpidAuthProvider(username="NAM_U", password="PWD")
+    p_namirial.login(mock_sess, mock_browser)
+    mock_sess.relogin_spid.assert_called_with("namirial", username="NAM_U", password="PWD")
+
+    # Generic
+    p_gen = GenericSpidAuthProvider(provider_key="tim", username="TIM_U", password="PWD")
+    p_gen.login(mock_sess, mock_browser)
+    mock_sess.relogin_spid.assert_called_with("tim", username="TIM_U", password="PWD")
+
+
+def test_cie_provider_login():
+    mock_sess = MagicMock()
+    mock_browser = MagicMock()
+
+    p_cie = CieAuthProvider(mode="app", username="CF12345", password="PWD")
+    p_cie.login(mock_sess, mock_browser)
+    mock_sess.relogin_cie.assert_called_once_with(username="CF12345", password="PWD", mode="app")
 
 
 def test_sielte_provider_login_with_credentials():
