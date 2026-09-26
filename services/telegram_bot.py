@@ -194,7 +194,8 @@ class TelegramBot:
             return False
         if self.controller.login_bloccato:
             import threading
-            self.notify("🔄 Tentativi di login sbloccati! Avvio un nuovo tentativo di accesso SielteID... controlla il telefono per approvare la push!")
+            auth_desc = getattr(self.controller.auth_config, "describe", lambda: "Autenticazione")() if hasattr(self.controller, "auth_config") else "Autenticazione"
+            self.notify(f"🔄 Tentativi di login sbloccati! Avvio un nuovo tentativo di accesso ({auth_desc})... controlla il dispositivo per approvare!")
             threading.Thread(target=self.controller.risveglia, daemon=True).start()
             return True
         return False
@@ -242,7 +243,7 @@ class TelegramBot:
         for giorno in range(1, num + 1):
             d = date(anno, mese, giorno)
             dstr = d.strftime("%Y-%m-%d")
-            lbl = f"🌧 {giorno}" if sel == dstr else str(giorno)
+            lbl = f"📍 {giorno}" if sel == dstr else str(giorno)
             riga.append(InlineKeyboardButton(lbl, callback_data=f"cal:day:{dstr}"))
             if len(riga) == 7:
                 bottoni.append(riga); riga = []

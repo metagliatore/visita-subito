@@ -59,13 +59,28 @@ def parse_ricette(html: str) -> list[dict]:
     """
     html = html.replace(r'\"', '"').replace(r'\n', '\n')
     out = []
-    # gestisce sia "ricette-row" (farmaci) sia "visite-row" (visite specialistiche)
-    parts = re.split(
-        r'<div[^>]*id="([A-Z0-9]+)"[^>]*class="prescrizioni-row (?:ricette-row|visite-row) row"',
-        html)
-    for k in range(1, len(parts) - 1, 2):
-        rid = parts[k]
-        content = parts[k + 1]
+    cards: list[tuple[str, str]] = []
+    # Cerca i div card gestendo qualsiasi ordine di id e class e qualsiasi variante di classi CSS
+    tag_matches = list(re.finditer(
+        r'<div\b(?=[^>]*\bid=["\']([A-Z0-9]+)["\'])(?=[^>]*\bclass=["\'][^"\']*prescrizioni-row[^"\']*["\'])[^>]*>',
+        html,
+        re.I,
+    ))
+    if tag_matches:
+        for idx, tm in enumerate(tag_matches):
+            rid = tm.group(1)
+            start_content = tm.end()
+            end_content = tag_matches[idx + 1].start() if idx + 1 < len(tag_matches) else len(html)
+            cards.append((rid, html[start_content:end_content]))
+    else:
+        # Fallback retrocompatibilità su split legacy
+        parts = re.split(
+            r'<div[^>]*id="([A-Z0-9]+)"[^>]*class="prescrizioni-row (?:ricette-row|visite-row) row"',
+            html)
+        for k in range(1, len(parts) - 1, 2):
+            cards.append((parts[k], parts[k + 1]))
+
+    for rid, content in cards:
 
         # codice ricetta (NRE): sta nello <span id="codiceRicetta"> NASCOSTO,
         # NON nel primo <b> dopo "Codice ricetta:" (in quello c'è l'idPrescrizione
@@ -115,12 +130,16 @@ def parse_ricette(html: str) -> list[dict]:
         m = re.search(r'Prescrittore:</b>\s*<b>([^<]+)</b>', content)
         if m: prescrittore = m.group(1).strip()
 
-        # prestazioni: solo i <b> nel blocco "Prestazione:"
-        m = re.search(r'Prestazione:(.*?)(?:\s*<p>|</p>\s*<p>\s*Prescrittore)', content, re.S)
+        # prestazioni: i <b> nel blocco "Prestazione:" (o testo semplice)
+        m = re.search(r'Prestazione:(.*?)(?:</p>|<p\b|</div>|Prescrittore)', content, re.S)
         if m:
             prestazioni = [re.sub(r'\s+', ' ', s).strip() for s
                            in re.findall(r'<b>([^<]+)</b>', m.group(1))]
             prestazioni = [p.lstrip(', ').strip() for p in prestazioni if p]
+            if not prestazioni and m.group(1).strip():
+                clean_txt = re.sub(r'<[^>]+>', ' ', m.group(1)).strip()
+                if clean_txt:
+                    prestazioni = [clean_txt]
         else:
             prestazioni = []
 

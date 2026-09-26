@@ -41,6 +41,28 @@ def _norm_day(g) -> str:
     return s2  # fallback
 
 
+def _norm_time(t: str | int | None) -> str | None:
+    """Normalizza un orario al formato HH:MM a due cifre per confronti ordinati sicuri."""
+    if not t:
+        return None
+    s = str(t).strip()
+    if not s:
+        return None
+    if ":" in s:
+        parts = s.split(":")
+        try:
+            h = int(parts[0])
+            m = int(parts[1]) if len(parts) > 1 else 0
+            return f"{h:02d}:{m:02d}"
+        except ValueError:
+            return s
+    try:
+        h = int(s)
+        return f"{h:02d}:00"
+    except ValueError:
+        return s
+
+
 @dataclass
 class Slot:
     """Una disponibilità estratta dal portale."""
@@ -81,8 +103,8 @@ def match_slot(slot: Slot, criteri: dict) -> tuple[bool, str]:
     """
     giorni = criteri.get("giorni") or []
     escludi = [_norm_day(d) for d in (criteri.get("escludi_giorni") or [])]
-    ora_min = criteri.get("ora_min")
-    ora_max = criteri.get("ora_max")
+    ora_min = _norm_time(criteri.get("ora_min"))
+    ora_max = _norm_time(criteri.get("ora_max"))
     fascia = (criteri.get("fascia") or "").lower()
 
     wd = slot.weekday  # 'MON'..'SUN'

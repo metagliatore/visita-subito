@@ -32,9 +32,12 @@ class Store:
     def seen_slots(self, monitor_id: str) -> set:
         return set(self.data.get(monitor_id, {}).get("seen", []))
 
-    def record_slots(self, monitor_id: str, slot_keys: list[str]) -> None:
+    def record_slots(self, monitor_id: str, slot_keys: list[str], max_history: int = 300) -> None:
         entry = self.data.setdefault(monitor_id, {})
-        entry["seen"] = list(dict.fromkeys([*entry.get("seen", []), *slot_keys]))
+        merged = list(dict.fromkeys([*entry.get("seen", []), *slot_keys]))
+        if len(merged) > max_history:
+            merged = merged[-max_history:]
+        entry["seen"] = merged
         entry["last_seen_ts"] = None
         self._flush()
 
@@ -69,7 +72,7 @@ class Store:
             "info": self.data.get(monitor_id, {}).get("info_prenotazione", {}),
         }
 
-    def get_action(self, monitor_id: str) -> dict:
+    def get_action(self, monitor_id: str) -> str:
         return self.data.get(monitor_id, {}).get("action_state", "idle") or "idle"
 
     # ---- preferenze utente (configurabili da Telegram) ----
