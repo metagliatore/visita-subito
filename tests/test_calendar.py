@@ -44,6 +44,9 @@ def test_build_ics():
     assert "SUMMARY:Visita: PRIMA VISITA OCULISTICA" in ics_text
     assert "NIGUARDA" in ics_text
     assert "PADIGLIONE 1" in ics_text
+    # RFC 5545 compliance: VEVENT can have at most one DESCRIPTION property
+    assert ics_text.count("DESCRIPTION:") == 1
+    assert "Note:" in ics_text
     assert "END:VEVENT" in ics_text
     assert "END:VCALENDAR" in ics_text
 

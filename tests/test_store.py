@@ -15,6 +15,13 @@ def test_store_seen_slots(tmp_path):
     store2 = Store(store_file)
     assert store2.seen_slots("mon-1") == {"slot_a", "slot_b"}
 
+    # Verifica limite storico (max_history)
+    store.record_slots("mon-1", [f"slot_{i}" for i in range(10)], max_history=5)
+    seen = store.seen_slots("mon-1")
+    assert len(seen) == 5
+    assert "slot_9" in seen
+    assert "slot_a" not in seen  # rimosso per fare spazio ai più recenti
+
 
 def test_store_mark_action_and_prenotazione(tmp_path):
     store = Store(tmp_path / "state.json")

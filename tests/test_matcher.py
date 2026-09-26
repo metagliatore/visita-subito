@@ -54,6 +54,12 @@ def test_match_slot_hours_filter():
     ok, _ = match_slot(slot_afternoon, crit_morning)
     assert ok is False
 
+    # Verifica che orari senza zero padding (es. "9:00" anziché "09:00") non falliscano il confronto stringa
+    crit_unpadded = {"ora_min": "9:00", "ora_max": "12"}
+    ok, _ = match_slot(slot_morning, crit_unpadded)
+    assert ok is True
+
+
 
 def test_match_slot_date_range():
     slot1 = Slot(datetime=datetime(2026, 10, 10, 10, 0))

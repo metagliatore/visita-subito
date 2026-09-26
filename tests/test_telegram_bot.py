@@ -49,9 +49,13 @@ def test_telegram_risveglia_se_needed():
     bot.notify.assert_not_called()
 
     # Bloccato -> risveglio
+    ctrl.auth_config = MagicMock()
+    ctrl.auth_config.describe.return_value = "CIE (App CieID)"
     ctrl.login_bloccato = True
     assert bot._risveglia_se_needed(MagicMock()) is True
     bot.notify.assert_called_once()
+    notify_msg = bot.notify.call_args[0][0]
+    assert "CIE (App CieID)" in notify_msg
 
 
 def test_cal_keyboard_structure():
@@ -72,7 +76,7 @@ def test_cal_keyboard_structure():
         for btn in row:
             if btn.callback_data == "cal:day:2026-10-15":
                 has_day_15 = True
-                assert "15" in btn.text
+                assert btn.text == "📍 15"
     assert has_day_15 is True
 
 

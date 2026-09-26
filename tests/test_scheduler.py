@@ -35,11 +35,13 @@ def test_status_text_variations(tmp_path):
     assert "⛔ Bloccata" in text
 
     # Caso 2: Login in corso (push inviata)
+    ctrl.auth_config = MagicMock()
+    ctrl.auth_config.describe.return_value = "SPID (SielteID)"
     ctrl.login_bloccato = False
     ctrl.login_in_corso = True
     ctrl.sess.session_valid = False
     text = Controller.status_text(ctrl)
-    assert "🔄 Login in corso" in text
+    assert "🔄 Login in corso (SPID (SielteID))" in text
 
     # Caso 3: Sessione attiva e autenticata
     ctrl.login_bloccato = False

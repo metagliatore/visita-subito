@@ -50,3 +50,22 @@ def test_parse_ricette_html_card():
     assert r["categoria"] == "specialistica"
     assert r["prenotabile"] is True
     assert r["automatizzabile"] is True
+
+
+def test_parse_ricette_inverted_attributes():
+    # Verifica resilienza se il portale inverte l'ordine degli attributi (class prima di id)
+    # o ha un ordine diverso di classi CSS
+    sample_html = """
+    <div class="row prescrizioni-row visite-row" id="0400B9876543210">
+        <span id="codiceRicetta">0400B9876543210</span>
+        <div class="stato-text"><b>Prescrizione attiva</b></div>
+        <p>Prestazione: <b>PRIMA VISITA DERMATOLOGICA</b></p>
+        <a href="/prenotaonline/prenota?cod=456" class="cambia-visibilita">Prenota</a>
+    </div>
+    """
+    ricette = parse_ricette(sample_html)
+    assert len(ricette) == 1
+    assert ricette[0]["codice"] == "0400B9876543210"
+    assert "PRIMA VISITA DERMATOLOGICA" in ricette[0]["prestazioni"]
+    assert ricette[0]["automatizzabile"] is True
+
