@@ -115,6 +115,10 @@ class Controller:
         # naviga SEMPRE a prenotaonline/riservata (stato home della SPA)
         driver.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
         time.sleep(4)
+        if not self.sess.is_autenticato(driver):
+            log.warning("get_appuntamenti: sessione non valida o reindirizzata al login")
+            self.sess.session_valid = False
+            return None
         # clicca Gestisci Prenotazioni -> 'I miei appuntamenti'
         try:
             el = driver.find_element(By.CSS_SELECTOR, "a[ng-click*='clickGestisciAppuntamenti']")
@@ -210,6 +214,10 @@ class Controller:
         # naviga SEMPRE alla pagina ricette
         driver.get(selectors.RICETTE["url"])
         time.sleep(4)
+        if not self.sess.is_autenticato(driver):
+            log.warning("get_ricette: sessione non valida o reindirizzata al login")
+            self.sess.session_valid = False
+            return None
         # ELIMINA I FILTRI: così compaiono TUTTE le ricette (non solo vecchie/parziali)
         try:
             driver.execute_script(
