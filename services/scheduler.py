@@ -45,6 +45,8 @@ class Controller:
         self.sess = SessionManager(self.browser, Path_like(s.get("cookie_files", "data/cookies")))
         # le notifiche di login (avvisi Telegram) passano dal bot
         self.sess.on_notify = lambda msg: self.bot.notify(msg)
+        self.sess.on_auth_fallback = lambda: self.bot.ask_auth_fallback()
+        self.sess.on_otp_prompt = lambda prompt="": self.bot.ask_otp(prompt)
 
         a = cfg.settings.get("approval", {})
         # timeout di attesa decisione su TG: override via env APPROVAL_TIMEOUT_SECONDS
@@ -557,11 +559,20 @@ class Controller:
     def _avvia_login(self) -> bool:
         """Avvia il login secondo la modalità configurata (SPID Sielte, altri SPID, CIE, Manuale)."""
         self.login_in_corso = True
+
+        def _auth_cb(action: str, **kwargs):
+            if action == "ask_action":
+                return self.bot.ask_auth_fallback()
+            elif action == "ask_otp":
+                return self.bot.ask_otp(kwargs.get("prompt", ""))
+            return None
+
         try:
             self.auth_provider.login(
                 session_manager=self.sess,
                 browser=self.browser,
                 notify_cb=lambda msg: self.bot.notify(msg),
+                auth_callback=_auth_cb,
             )
             self.login_in_corso = False
             self.sess.session_valid = True

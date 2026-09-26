@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -47,6 +48,13 @@ class TelegramBot:
         self.controller = None  # collegato da main per /poll /status /relogin
         # stato wizard monitoraggio per chat
         self._wizard = {}  # chat_id -> snapshot per il wizard /monitora
+        # stato interazioni autenticazione (fallback push / richiesta OTP)
+        self._auth_event = None
+        self._auth_choice = None
+        self._otp_event = None
+        self._otp_value = None
+        self._pending_otp = False
+        self._received_otp = None
 
     # ---------- invio (usato dal poller/flussi) ----------
     async def _send(self, text: str) -> None:
@@ -166,6 +174,87 @@ class TelegramBot:
             loop.close()
         except Exception as e:  # noqa: BLE001
             log.error("send_file TG fallita: %s", e)
+
+    # ---------- interazioni autenticazione (fallback push / otp) ----------
+    def ask_auth_fallback(self, prompt: str = "", timeout_s: int = 120) -> str | None:
+        """Chiede all'utente via pulsanti Telegram se inviare di nuovo notifica o immettere OTP.
+
+        Ritorna:
+          - 'notify': l'utente ha scelto 'Invia notifica'
+          - 'otp': l'utente ha scelto 'Immetti codice OTP'
+          - 'cancel' o None: annullato o timeout
+        """
+        # Se avevamo già ricevuto un codice OTP testuale in anticipo, consideriamo 'otp'
+        if self._received_otp:
+            return "otp"
+
+        if not (self.token and self.chat_ids):
+            log.warning("Telegram non configurato per ask_auth_fallback")
+            return None
+
+        # Reset stati
+        self._auth_choice = None
+        self._auth_event = threading.Event()
+
+        testo = (prompt or
+                 "⚠️ <b>Accesso SPID SielteID</b>\n"
+                 "La notifica push non è stata approvata o non è arrivata sul telefono.\n\n"
+                 "Come vuoi procedere?")
+        bottoni = [
+            [("📲 Invia notifica", "auth:notify"), ("🔢 Immetti codice OTP", "auth:otp")],
+            [("❌ Annulla login", "auth:cancel")],
+        ]
+        inviati = self.notify_buttons(testo, bottoni)
+
+        ok = self._auth_event.wait(timeout_s)
+        scelta = self._auth_choice
+        self._auth_event = None
+
+        if not ok:
+            log.warning("ask_auth_fallback: timeout dopo %ds", timeout_s)
+            if inviati:
+                self.edit_message(f"{testo}\n\n⏳ <i>Tempo scaduto per la selezione.</i>", inviati)
+            return None
+
+        return scelta
+
+    def ask_otp(self, prompt: str = "", timeout_s: int = 120) -> str | None:
+        """Chiede all'utente su Telegram di digitare il codice OTP.
+
+        Ritorna la stringa del codice OTP (pulita da spazi/trattini) oppure None.
+        """
+        # Se abbiamo già un OTP ricevuto in chat durante il fallback
+        if self._received_otp:
+            code = self._received_otp
+            self._received_otp = None
+            return code
+
+        if not (self.token and self.chat_ids):
+            log.warning("Telegram non configurato per ask_otp")
+            return None
+
+        self._otp_value = None
+        self._otp_event = threading.Event()
+        self._pending_otp = True
+
+        testo = (prompt or
+                 "🔢 <b>Immetti codice OTP</b>\n"
+                 "Inserisci qui in chat il codice OTP generato dall'app MySielteID (o ricevuto via SMS):")
+        bottoni = [[("❌ Annulla", "auth:cancel_otp")]]
+        inviati = self.notify_buttons(testo, bottoni)
+
+        ok = self._otp_event.wait(timeout_s)
+        self._pending_otp = False
+        code = self._otp_value
+        self._otp_event = None
+
+        if not ok:
+            log.warning("ask_otp: timeout attesa codice dopo %ds", timeout_s)
+            if inviati:
+                self.edit_message(f"{testo}\n\n⏳ <i>Tempo scaduto per l'inserimento dell'OTP.</i>", inviati)
+            return None
+
+        return code
 
     # ---------- helper autorizzazione ----------
     def _autorizzato(self, update: Update) -> bool:
@@ -378,6 +467,37 @@ class TelegramBot:
         data = q.data or ""
         chat_id = update.effective_chat.id
         try:
+            # interazioni autenticazione SPID/OTP
+            if data.startswith("auth:"):
+                parti = data.split(":", 1)
+                sub = parti[1]
+                if sub == "notify":
+                    if self._auth_event is not None:
+                        self._auth_choice = "notify"
+                        self._auth_event.set()
+                    await q.edit_message_text(
+                        "📲 <b>Scelto: Invia notifica</b>\nInvio di una nuova notifica push in corso...",
+                        parse_mode=ParseMode.HTML)
+                elif sub == "otp":
+                    if self._auth_event is not None:
+                        self._auth_choice = "otp"
+                        self._auth_event.set()
+                    await q.edit_message_text(
+                        "🔢 <b>Scelto: Immetti codice OTP</b>\nPrepara il codice dell'app MySielteID...",
+                        parse_mode=ParseMode.HTML)
+                elif sub == "cancel":
+                    if self._auth_event is not None:
+                        self._auth_choice = "cancel"
+                        self._auth_event.set()
+                    await q.edit_message_text("❌ <b>Login annullato.</b>", parse_mode=ParseMode.HTML)
+                elif sub == "cancel_otp":
+                    if self._otp_event is not None:
+                        self._otp_value = None
+                        self._pending_otp = False
+                        self._otp_event.set()
+                    await q.edit_message_text("❌ <b>Inserimento OTP annullato.</b>", parse_mode=ParseMode.HTML)
+                return
+
             # download ricetta dal comando /ricette
             if data.startswith("ric:dl:"):
                 idx = int(data.split(":", 2)[2])
@@ -750,9 +870,57 @@ class TelegramBot:
         await update.message.reply_text(HELP_TEXT)
 
     async def _h_echo_chat(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Gestisce i messaggi testuali generici (info chat)."""
+        """Gestisce i messaggi testuali generici (info chat, inserimento OTP, risposte fallback)."""
         if not self._autorizzato(update):
             return
+
+        text = (update.message.text or "").strip()
+
+        # 1. Se siamo in attesa dell'inserimento codice OTP
+        if getattr(self, "_pending_otp", False) and self._otp_event is not None:
+            if text.lower() in ("/cancel", "annulla", "esci"):
+                self._otp_value = None
+                self._pending_otp = False
+                self._otp_event.set()
+                await update.message.reply_text("❌ Inserimento OTP annullato.")
+                return
+
+            clean_code = text.replace(" ", "").replace("-", "").strip()
+            self._otp_value = clean_code
+            self._pending_otp = False
+            self._otp_event.set()
+            masked = clean_code[:2] + "****" if len(clean_code) > 2 else "****"
+            await update.message.reply_text(f"✅ Codice OTP ricevuto ({masked}). Procedo con l'autenticazione...")
+            return
+
+        # 2. Se siamo in attesa della scelta fallback (notifica vs otp)
+        if getattr(self, "_auth_event", None) is not None:
+            low = text.lower()
+            if any(k in low for k in ["notifica", "invia notifica", "push", "1"]):
+                self._auth_choice = "notify"
+                self._auth_event.set()
+                await update.message.reply_text("📲 Hai scelto: Invia notifica push.")
+                return
+            elif any(k in low for k in ["otp", "codice", "sms", "app", "2"]):
+                self._auth_choice = "otp"
+                self._auth_event.set()
+                await update.message.reply_text("🔢 Hai scelto: Immetti codice OTP. Inserisci il codice generato dall'app:")
+                return
+            elif any(k in low for k in ["annulla", "cancella", "cancel", "esci"]):
+                self._auth_choice = "cancel"
+                self._auth_event.set()
+                await update.message.reply_text("❌ Login annullato.")
+                return
+            # Se l'utente ha inserito direttamente un codice numerico (es. 6 o 8 cifre)
+            cleaned = text.replace(" ", "").replace("-", "").strip()
+            if cleaned.isdigit() and len(cleaned) in (6, 8):
+                self._auth_choice = "otp"
+                self._received_otp = cleaned
+                self._auth_event.set()
+                masked = cleaned[:2] + "****"
+                await update.message.reply_text(f"✅ Codice OTP ricevuto direttamente ({masked})! Procedo con l'accesso...")
+                return
+
         chat = update.effective_chat
         await update.message.reply_text(
             f"🤖 Bot attivo!\nChat ID: `{chat.id}`\nTipo: {chat.type}"

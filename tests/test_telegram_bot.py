@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from unittest.mock import AsyncMock, MagicMock
 import pytest
 
@@ -216,4 +217,91 @@ def test_postbook_continue_callback():
     msg = up.callback_query.edit_message_text.call_args[0][0]
     assert "anticipo" in msg
     assert "15/10/2026 10:00" in msg
+
+
+def test_auth_callback_notify_and_otp():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot._auth_event = threading.Event()
+    bot._auth_choice = None
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    up.callback_query.data = "auth:notify"
+    up.callback_query.edit_message_text = AsyncMock()
+
+    asyncio.run(bot._h_callback(up, MagicMock()))
+    assert bot._auth_choice == "notify"
+    assert bot._auth_event.is_set()
+
+    # Prova scelta OTP
+    bot._auth_event = threading.Event()
+    bot._auth_choice = None
+    up.callback_query.data = "auth:otp"
+    asyncio.run(bot._h_callback(up, MagicMock()))
+    assert bot._auth_choice == "otp"
+    assert bot._auth_event.is_set()
+
+    # Prova Annulla
+    bot._auth_event = threading.Event()
+    bot._auth_choice = None
+    up.callback_query.data = "auth:cancel"
+    asyncio.run(bot._h_callback(up, MagicMock()))
+    assert bot._auth_choice == "cancel"
+    assert bot._auth_event.is_set()
+
+
+def test_echo_chat_receives_otp():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot._pending_otp = True
+    bot._otp_event = threading.Event()
+    bot._otp_value = None
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    up.message.text = "123 456"
+    up.message.reply_text = AsyncMock()
+
+    asyncio.run(bot._h_echo_chat(up, MagicMock()))
+    assert bot._otp_value == "123456"
+    assert bot._pending_otp is False
+    assert bot._otp_event.is_set()
+    up.message.reply_text.assert_called_once()
+    assert "ricevuto" in up.message.reply_text.call_args[0][0].lower()
+
+
+def test_echo_chat_direct_otp_during_fallback_prompt():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot._auth_event = threading.Event()
+    bot._auth_choice = None
+    bot._received_otp = None
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    up.message.text = "987654"
+    up.message.reply_text = AsyncMock()
+
+    asyncio.run(bot._h_echo_chat(up, MagicMock()))
+    assert bot._auth_choice == "otp"
+    assert bot._received_otp == "987654"
+    assert bot._auth_event.is_set()
+
+
+def test_echo_chat_text_choices_during_fallback():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot._auth_event = threading.Event()
+    bot._auth_choice = None
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    up.message.text = "invia notifica"
+    up.message.reply_text = AsyncMock()
+
+    asyncio.run(bot._h_echo_chat(up, MagicMock()))
+    assert bot._auth_choice == "notify"
+    assert bot._auth_event.is_set()
+
 

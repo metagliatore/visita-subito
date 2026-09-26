@@ -33,6 +33,10 @@ class SessionManager:
         self.session_valid = False
         # callback di notifica (es. invia messaggi Telegram durante il login)
         self.on_notify = None
+        # callback di fallback interattivo su Telegram (notifica vs OTP)
+        self.on_auth_fallback = None
+        # callback per richiesta inserimento codice OTP
+        self.on_otp_prompt = None
 
     # ---------------- persistenze ----------------
     def save(self, driver: webdriver.Chrome) -> None:
@@ -178,14 +182,164 @@ class SessionManager:
             log.warning("keep-alive fallito: %s", e)
             return False
 
+    # ---------------- helper SielteID ----------------
+    def _invia_notifica_sielte(self, driver: webdriver.Chrome) -> bool:
+        """Tenta di selezionare o re-inviare la notifica push su SielteID."""
+        from core import selectors
+        sielte_sel = selectors.LOGIN_IDP_SIELTEID.get("scelta_metodo", {})
+        try:
+            driver.execute_script("if(typeof useNotify === 'function'){ useNotify(); return true; }")
+            time.sleep(1)
+            return True
+        except Exception:  # noqa: BLE001
+            pass
+        return self._find_and_click(driver, sielte_sel.get("notifica", []))
+
+    def _attiva_otp_sielte(self, driver: webdriver.Chrome) -> bool:
+        """Passa alla schermata di inserimento codice OTP su SielteID."""
+        from core import selectors
+        sielte_sel = selectors.LOGIN_IDP_SIELTEID.get("scelta_metodo", {})
+        try:
+            driver.execute_script("if(typeof useAPP === 'function'){ useAPP(); return true; }")
+            time.sleep(1)
+            return True
+        except Exception:  # noqa: BLE001
+            pass
+        return self._find_and_click(driver, sielte_sel.get("otp_app", []))
+
+    def _inserisci_otp_sielte(self, driver: webdriver.Chrome, code: str) -> bool:
+        """Compila e sottomette il codice OTP su SielteID."""
+        from core import selectors
+        sielte_sel = selectors.LOGIN_IDP_SIELTEID
+        filled = self._find_and_fill(driver, sielte_sel.get("otp", []), code)
+        if not filled:
+            try:
+                driver.execute_script(
+                    "var f=document.querySelector('form#piLoginForm');"
+                    "if(f){"
+                    "  var inp=f.querySelector('input[type=password], input[name*=otp], input[type=number], input[type=text]:not([name=username])');"
+                    "  if(inp){ inp.value = arguments[0]; inp.dispatchEvent(new Event('input')); return true; }"
+                    "}"
+                    "return false;", code)
+                filled = True
+            except Exception:  # noqa: BLE001
+                pass
+        time.sleep(1)
+        clicked = self._find_and_click(driver, sielte_sel.get("btn_otp", []))
+        if not clicked:
+            try:
+                driver.execute_script(
+                    "var f=document.querySelector('form#piLoginForm');"
+                    "if(f){ var b=f.querySelector('button[type=submit], input[type=submit]'); if(b) b.click(); else f.submit(); }")
+                clicked = True
+            except Exception:  # noqa: BLE001
+                pass
+        return filled
+
+    def _clicca_consenso_sielte(self, driver: webdriver.Chrome) -> bool:
+        """Tenta di confermare il consenso dati SPID SAML se presente."""
+        from core import selectors
+        sielte_sel = selectors.LOGIN_IDP_SIELTEID.get("consenso", {})
+        try:
+            if "identity.sieltecloud.it" in driver.current_url and ("accept" in driver.page_source or "Autorizza" in driver.page_source):
+                driver.execute_script(
+                    "var f=document.querySelector('form#piLoginForm');"
+                    "if(f){var b=f.querySelector('button[type=submit], input[type=submit]');if(b)b.click();}")
+                time.sleep(2)
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        return self._find_and_click(driver, sielte_sel.get("btn_autorizza", []))
+
+    def _ottieni_scelta_fallback(self, auth_callback=None) -> str | None:
+        """Chiede all'utente via Telegram (o TTY) se inviare notifica o immettere codice OTP."""
+        if auth_callback:
+            try:
+                res = auth_callback("ask_action")
+                if res:
+                    return res
+            except Exception as e:  # noqa: BLE001
+                log.warning("auth_callback ask_action: %s", e)
+        if self.on_auth_fallback:
+            try:
+                res = self.on_auth_fallback()
+                if res:
+                    return res
+            except Exception as e:  # noqa: BLE001
+                log.warning("on_auth_fallback: %s", e)
+
+        # Fallback console se avviato con terminale interattivo (TTY)
+        import sys
+        if sys.stdin.isatty():
+            try:
+                print("\n[SPID SielteID] Notifica non approvata. Scegli:")
+                print("  1) Invia notifica di nuovo")
+                print("  2) Immetti codice OTP")
+                print("Scelta [1/2]: ", end="", flush=True)
+                ans = sys.stdin.readline().strip()
+                if ans == "2":
+                    return "otp"
+                return "notify"
+            except Exception:  # noqa: BLE001
+                pass
+        return None
+
+    def _chiedi_e_inserisci_otp(self, driver: webdriver.Chrome, auth_callback=None) -> bool:
+        """Chiede il codice OTP all'utente, lo compila e ne attende la verifica."""
+        code = None
+        if auth_callback:
+            try:
+                code = auth_callback("ask_otp")
+            except Exception as e:  # noqa: BLE001
+                log.warning("auth_callback ask_otp: %s", e)
+        if not code and self.on_otp_prompt:
+            try:
+                code = self.on_otp_prompt("🔢 Inserisci il codice OTP generato dall'app SielteID:")
+            except Exception as e:  # noqa: BLE001
+                log.warning("on_otp_prompt: %s", e)
+
+        # Fallback console se su TTY
+        if not code:
+            import sys
+            if sys.stdin.isatty():
+                try:
+                    print("\n[SPID SielteID] Inserisci il codice OTP generato dall'app SielteID: ", end="", flush=True)
+                    code = sys.stdin.readline().strip()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        if not code:
+            log.warning("Nessun codice OTP fornito.")
+            return False
+
+        clean_code = str(code).replace(" ", "").replace("-", "").strip()
+        log.info("Inserimento codice OTP nel browser...")
+        if self.on_notify:
+            self.on_notify("⏳ Inserisco il codice OTP nel portale...")
+
+        self._inserisci_otp_sielte(driver, clean_code)
+
+        for _ in range(3):
+            time.sleep(3)
+            self._clicca_consenso_sielte(driver)
+            if self.is_autenticato(driver):
+                return True
+
+        if not self.is_autenticato(driver):
+            if self.on_notify:
+                self.on_notify("❌ Codice OTP non valido o autenticazione non riuscita.")
+            return False
+
+        return True
+
     # ---------------- login SielteID automatico ----------------
     def relogin_sielte(self, username: str = "", password: str = "",
-                       wait_otp_sec: int = 180) -> webdriver.Chrome:
+                       wait_otp_sec: int = 180,
+                       otp_mode: str = "notifica",
+                       auth_callback=None) -> webdriver.Chrome:
         """Login automatico SielteID (finestra visibile): credenziali, scelta
-        metodo notifica push, attesa approvazione OTP + consenso dati.
-
-        Notifica su Telegram del login in corso / necessità di approvazione
-        gestita dal chiamante. Ritorna il driver autenticato.
+        metodo notifica push, con fallback su Telegram per reinvio notifica o
+        immissione codice OTP.
         """
         from selenium.webdriver.common.by import By
         from core import selectors
@@ -227,30 +381,83 @@ class SessionManager:
                 except Exception:  # noqa: BLE001
                     pass
             time.sleep(4)
-            # AVVISO: notifica in arrivo PRIMA del submit push
-            if self.on_notify:
-                self.on_notify("📲 Sto per inviare la notifica SielteID: prepara il telefono e "
-                               "approvala appena arriva!")
-            # scelta metodo: notifica push
-            try:
-                if "identity.sieltecloud.it" in driver.current_url:
-                    driver.execute_script("useNotify();")
-            except Exception:  # noqa: BLE001
-                pass
-            # attesa approvazione (push) + consenso
-            for _ in range(wait_otp_sec // 5):
-                time.sleep(5)
-                if "identity.sieltecloud.it" in driver.current_url and "accept" in driver.page_source:
-                    try:
-                        driver.execute_script("var f=document.querySelector('form#piLoginForm');if(f){var b=f.querySelector('button[type=submit]');if(b)b.click();}")
-                        time.sleep(3)
-                    except Exception:  # noqa: BLE001
-                        pass
+            if self.is_autenticato(driver):
+                self.save(driver); self.session_valid = True
+                return driver
+
+            # ----------------------------------------------------
+            # 2FA: Notifica Push con Fallback Interattivo (Telegram)
+            # ----------------------------------------------------
+            t0 = time.time()
+            deadline = t0 + wait_otp_sec
+
+            # Se l'utente ha configurato esplicitamente la modalità OTP:
+            if (otp_mode or "").lower() == "otp":
+                log.info("Modalità OTP configurata: attivo inserimento codice OTP")
+                self._attiva_otp_sielte(driver)
+                time.sleep(2)
+                self._chiedi_e_inserisci_otp(driver, auth_callback)
+            else:
+                # Modalità notifica (default): invia la prima notifica push
+                if self.on_notify:
+                    self.on_notify("📲 Sto per inviare la notifica SielteID: prepara il telefono e "
+                                   "approvala appena arriva!")
+                self._invia_notifica_sielte(driver)
+
+                # Primo tentativo push: attesa breve (circa 35 secondi)
+                push_wait_until = min(deadline, time.time() + 35)
+                while time.time() < push_wait_until:
+                    time.sleep(4)
+                    self._clicca_consenso_sielte(driver)
+                    if self.is_autenticato(driver):
+                        self.save(driver)
+                        self.session_valid = True
+                        return driver
+
+            # Se non ancora autenticati, la notifica iniziale non è bastata: avvia fallback
+            log.info("Login da notifica non completato: avvio fallback (invia notifica / immetti otp)")
+            while time.time() < deadline:
+                self._clicca_consenso_sielte(driver)
                 if self.is_autenticato(driver):
                     self.save(driver)
                     self.session_valid = True
                     return driver
-            raise TimeoutError("Timeout nell'attesa approvazione SielteID (approva la push!)")
+
+                # Chiede su Telegram: Invia notifica o Immetti codice OTP
+                scelta = self._ottieni_scelta_fallback(auth_callback)
+
+                if scelta == "notify":
+                    log.info("Scelta fallback utente: invia notifica di nuovo")
+                    if self.on_notify:
+                        self.on_notify("📲 Nuova notifica push SielteID inviata: controlla il telefono!")
+                    self._invia_notifica_sielte(driver)
+                    push_wait_until = min(deadline, time.time() + 35)
+                    while time.time() < push_wait_until:
+                        time.sleep(4)
+                        self._clicca_consenso_sielte(driver)
+                        if self.is_autenticato(driver):
+                            self.save(driver)
+                            self.session_valid = True
+                            return driver
+
+                elif scelta == "otp":
+                    log.info("Scelta fallback utente: immetti codice OTP")
+                    self._attiva_otp_sielte(driver)
+                    time.sleep(2)
+                    successo = self._chiedi_e_inserisci_otp(driver, auth_callback)
+                    if successo and self.is_autenticato(driver):
+                        self.save(driver)
+                        self.session_valid = True
+                        return driver
+
+                elif scelta == "cancel":
+                    log.info("Login annullato dall'utente.")
+                    raise RuntimeError("Login SielteID annullato dall'utente.")
+                else:
+                    # Nessuna scelta ricevuta (es. timeout di un ciclo o canale non interattivo)
+                    time.sleep(5)
+
+            raise TimeoutError("Timeout nell'attesa approvazione SielteID (approva la notifica o inserisci l'OTP!)")
         finally:
             self.browser.settings.headless = prev
 
@@ -287,7 +494,7 @@ class SessionManager:
 
     # ---------------- login SPID multi-provider ----------------
     def relogin_spid(self, provider_key: str, username: str = "", password: str = "",
-                      wait_otp_sec: int = 180) -> webdriver.Chrome:
+                      wait_otp_sec: int = 180, auth_callback=None) -> webdriver.Chrome:
         """Accesso SPID per i vari provider (PosteID, Aruba, InfoCert, Lepida, Namirial, ecc.).
         Compila automaticamente username/password se configurati, invia notifica Telegram,
         attende l'approvazione secondo fattore (push/OTP) e la schermata di consenso.
@@ -379,7 +586,7 @@ class SessionManager:
 
     # ---------------- login CIE ----------------
     def relogin_cie(self, username: str = "", password: str = "", mode: str = "app",
-                     wait_otp_sec: int = 180) -> webdriver.Chrome:
+                     wait_otp_sec: int = 180, auth_callback=None) -> webdriver.Chrome:
         """Accesso tramite CIE (Carta di Identità Elettronica).
         Naviga all'IdPC, preme 'Entra con CIE' verso il portale del Ministero dell'Interno.
         Se fornite credenziali (CIE/CF + password), le compila ed effettua il submit (Livello 2),
