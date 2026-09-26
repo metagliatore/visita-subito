@@ -150,3 +150,120 @@ def test_relogin_cie_already_authenticated(tmp_path, monkeypatch):
     assert driver == mock_driver
     assert sm.session_valid is True
 
+
+def test_relogin_sielte_push_success(tmp_path, monkeypatch):
+    mock_browser = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_browser.start.return_value = mock_driver
+    mock_driver.current_url = "https://identity.sieltecloud.it/loginform.php"
+
+    sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
+    auth_state = [False, False, True]
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: auth_state.pop(0) if auth_state else True)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    driver = sm.relogin_sielte(username="user", password="pwd", wait_otp_sec=30)
+    assert driver == mock_driver
+    assert sm.session_valid is True
+
+
+def test_relogin_sielte_fallback_to_otp(tmp_path, monkeypatch):
+    mock_browser = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_browser.start.return_value = mock_driver
+    mock_driver.current_url = "https://identity.sieltecloud.it/loginform.php"
+
+    sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
+    sm.on_auth_fallback = MagicMock(return_value="otp")
+    sm.on_otp_prompt = MagicMock(return_value="123456")
+
+    clock = [1000.0]
+    monkeypatch.setattr("time.time", lambda: clock[0])
+    monkeypatch.setattr("time.sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+
+    # Autenticato solo dopo inserimento OTP (quando il clock supera 1055)
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: clock[0] > 1055)
+    monkeypatch.setattr(sm, "_inserisci_otp_sielte", MagicMock(return_value=True))
+
+    driver = sm.relogin_sielte(username="user", password="pwd", wait_otp_sec=180)
+    assert driver == mock_driver
+    assert sm.session_valid is True
+    sm.on_auth_fallback.assert_called_once()
+    sm.on_otp_prompt.assert_called_once()
+    sm._inserisci_otp_sielte.assert_called_once_with(mock_driver, "123456")
+
+
+def test_relogin_sielte_fallback_re_notify(tmp_path, monkeypatch):
+    mock_browser = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_browser.start.return_value = mock_driver
+    mock_driver.current_url = "https://identity.sieltecloud.it/loginform.php"
+
+    sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
+    sm.on_auth_fallback = MagicMock(return_value="notify")
+
+    clock = [1000.0]
+    monkeypatch.setattr("time.time", lambda: clock[0])
+    monkeypatch.setattr("time.sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+
+    # Autenticato durante la seconda notifica (quando il clock supera 1060)
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: clock[0] > 1060)
+    notify_mock = MagicMock(return_value=True)
+    monkeypatch.setattr(sm, "_invia_notifica_sielte", notify_mock)
+
+    driver = sm.relogin_sielte(username="user", password="pwd", wait_otp_sec=180)
+    assert driver == mock_driver
+    assert sm.session_valid is True
+    sm.on_auth_fallback.assert_called_once()
+    assert notify_mock.call_count >= 2
+
+
+def test_relogin_sielte_fallback_cancel(tmp_path, monkeypatch):
+    mock_browser = MagicMock()
+    mock_driver = MagicMock()
+    mock_browser.start.return_value = mock_driver
+    mock_driver.current_url = "https://identity.sieltecloud.it/loginform.php"
+
+    sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
+    sm.on_auth_fallback = MagicMock(return_value="cancel")
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: False)
+
+    clock = [1000.0]
+    monkeypatch.setattr("time.time", lambda: clock[0])
+    monkeypatch.setattr("time.sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+
+    import pytest
+    with pytest.raises(RuntimeError, match="annullato"):
+        sm.relogin_sielte(username="user", password="pwd", wait_otp_sec=180)
+
+
+def test_relogin_sielte_direct_otp_mode(tmp_path, monkeypatch):
+    mock_browser = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_browser.start.return_value = mock_driver
+    mock_driver.current_url = "https://identity.sieltecloud.it/loginform.php"
+
+    sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
+    sm.on_otp_prompt = MagicMock(return_value="654321")
+
+    clock = [1000.0]
+    monkeypatch.setattr("time.time", lambda: clock[0])
+    monkeypatch.setattr("time.sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: clock[0] > 1020)
+
+    mock_activate = MagicMock(return_value=True)
+    mock_fill = MagicMock(return_value=True)
+    monkeypatch.setattr(sm, "_attiva_otp_sielte", mock_activate)
+    monkeypatch.setattr(sm, "_inserisci_otp_sielte", mock_fill)
+
+    driver = sm.relogin_sielte(username="user", password="pwd", otp_mode="otp", wait_otp_sec=60)
+    assert driver == mock_driver
+    assert sm.session_valid is True
+    mock_activate.assert_called_once()
+    mock_fill.assert_called_once_with(mock_driver, "654321")
+
+
