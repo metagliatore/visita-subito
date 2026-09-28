@@ -267,3 +267,24 @@ def test_relogin_sielte_direct_otp_mode(tmp_path, monkeypatch):
     mock_fill.assert_called_once_with(mock_driver, "654321")
 
 
+def test_relogin_sielte_preserves_browser_and_headless_mode(tmp_path, monkeypatch):
+    mock_browser = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_browser.start.return_value = mock_driver
+    mock_browser.settings.headless = True
+    mock_driver.current_url = "https://identity.sieltecloud.it/loginform.php"
+
+    sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: True)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    driver = sm.relogin_sielte(username="user", password="pwd", wait_otp_sec=30)
+    assert driver == mock_driver
+    # Browser.stop() non deve mai essere chiamato
+    mock_browser.stop.assert_not_called()
+    # Browser.set_headless non deve essere chiamato per uccidere il driver
+    mock_browser.set_headless.assert_not_called()
+
+
+

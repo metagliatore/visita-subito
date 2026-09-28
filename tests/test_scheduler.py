@@ -269,3 +269,21 @@ def test_status_text_paused():
     assert "/resume" in text
 
 
+def test_status_text_polling_in_corso():
+    ctrl = MagicMock()
+    ctrl._flows = []
+    ctrl.cfg.settings = {"session": {"max_idle_seconds": 3600}}
+    ctrl.store.get_monitors.return_value = []
+    ctrl._nome_leggibile = Controller._nome_leggibile
+    ctrl.login_bloccato = False
+    ctrl.login_in_corso = False
+    ctrl.paused = False
+    ctrl.sess.session_valid = True
+    ctrl.sess.is_expired.return_value = False
+
+    ctrl.polling_in_corso = True
+    text = Controller.status_text(ctrl)
+    assert "🔄 Controllo disponibilità in corso..." in text
+
+
+
