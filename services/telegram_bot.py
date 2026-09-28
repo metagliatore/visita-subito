@@ -982,7 +982,15 @@ class TelegramBot:
             except Exception as e:  # noqa: BLE001
                 log.warning("Impossibile registrare i comandi su Telegram: %s", e)
 
+        async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+            import telegram.error
+            if isinstance(context.error, telegram.error.Conflict):
+                log.error("⚠️ Conflitto Telegram (HTTP 409 Conflict): un'altra istanza del bot sta usando lo stesso TG_TOKEN contemporaneamente! Assicurati che solo una istanza del bot sia in esecuzione (es. arresta istanze locali o stack duplicati su Portainer/server).")
+            else:
+                log.error("Errore gestito da TelegramBot: %s", context.error, exc_info=context.error)
+
         self.app = Application.builder().token(self.token).post_init(_post_init).build()
+        self.app.add_error_handler(_error_handler)
         self.app.add_handler(CommandHandler("start", self._h_start))
         self.app.add_handler(CommandHandler("status", self._h_status))
         self.app.add_handler(CommandHandler("ricette", self._h_ricette))
