@@ -112,7 +112,7 @@ class SessionManager:
             self.session_valid = True
             return driver
         finally:
-            self._riavvia_con_headless(prev)
+            self.browser.settings.headless = prev
 
     def _attendi_login_manuale(self, driver, timeout_s: int = 600) -> None:
         """Attende (con polling ogni 5s) che il login manuale sia completato,
@@ -338,67 +338,93 @@ class SessionManager:
         from selenium.webdriver.common.by import By
         from core import selectors
 
-        prev = self.browser.settings.headless
-        self._riavvia_con_headless(False)
         driver = self.browser.start()
+        if self.on_notify:
+            self.on_notify("🔑 Sessione scaduta: avvio il re-login SielteID...")
+        driver.get(selectors.LOGIN_SPID["url_accedi"])
+        time.sleep(4)
+        if self.is_autenticato(driver):
+            self.save(driver); self.session_valid = True
+            return driver
+        # pagina IdPC: apri dropdown + seleziona Sielte
         try:
-            if self.on_notify:
-                self.on_notify("🔑 Sessione scaduta: avvio il re-login SielteID...")
-            driver.get(selectors.LOGIN_SPID["url_accedi"])
-            time.sleep(4)
-            if self.is_autenticato(driver):
-                self.save(driver); self.session_valid = True
-                return driver
-            # pagina IdPC: apri dropdown + seleziona Sielte
+            driver.execute_script("var a=document.querySelector('[spid-idp-button], a.button-spid, .pulsante-spid');if(a)a.click();")
+            time.sleep(1)
+            boxes = driver.find_elements(By.CSS_SELECTOR, "a.home-box-fornitore")
+            target = None
+            for b in boxes:
+                if "Sielte" in (b.text or ""):
+                    target = b; break
+            if target is None and len(boxes) > 11:
+                target = boxes[10]
+            if target:
+                driver.execute_script("arguments[0].click();", target)
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(4)
+        # login form
+        if "identity.sieltecloud.it" in driver.current_url:
             try:
-                driver.execute_script("var a=document.querySelector('[spid-idp-button], a.button-spid, .pulsante-spid');if(a)a.click();")
-                time.sleep(1)
-                boxes = driver.find_elements(By.CSS_SELECTOR, "a.home-box-fornitore")
-                target = None
-                for b in boxes:
-                    if "Sielte" in (b.text or ""):
-                        target = b; break
-                if target is None and len(boxes) > 11:
-                    target = boxes[10]
-                if target:
-                    driver.execute_script("arguments[0].click();", target)
+                driver.find_element(By.ID, "username").send_keys(username)
+                driver.find_element(By.ID, "password").send_keys(password)
+                driver.find_elements(By.ID, "autorizza")[0].click()
             except Exception:  # noqa: BLE001
                 pass
-            time.sleep(4)
-            # login form
-            if "identity.sieltecloud.it" in driver.current_url:
-                try:
-                    driver.find_element(By.ID, "username").send_keys(username)
-                    driver.find_element(By.ID, "password").send_keys(password)
-                    driver.find_elements(By.ID, "autorizza")[0].click()
-                except Exception:  # noqa: BLE001
-                    pass
-            time.sleep(4)
+        time.sleep(4)
+        if self.is_autenticato(driver):
+            self.save(driver); self.session_valid = True
+            return driver
+
+        # ----------------------------------------------------
+        # 2FA: Notifica Push con Fallback Interattivo (Telegram)
+        # ----------------------------------------------------
+        t0 = time.time()
+        deadline = t0 + wait_otp_sec
+
+        # Se l'utente ha configurato esplicitamente la modalità OTP:
+        if (otp_mode or "").lower() == "otp":
+            log.info("Modalità OTP configurata: attivo inserimento codice OTP")
+            self._attiva_otp_sielte(driver)
+            time.sleep(2)
+            self._chiedi_e_inserisci_otp(driver, auth_callback)
+        else:
+            # Modalità notifica (default): invia la prima notifica push
+            if self.on_notify:
+                self.on_notify("📲 Sto per inviare la notifica SielteID: prepara il telefono e "
+                               "approvala appena arriva!")
+            self._invia_notifica_sielte(driver)
+
+            # Primo tentativo push: attesa breve (circa 35 secondi)
+            push_wait_until = min(deadline, time.time() + 35)
+            while time.time() < push_wait_until:
+                time.sleep(4)
+                self._clicca_consenso_sielte(driver)
+                if self.is_autenticato(driver):
+                    self.save(driver)
+                    self.session_valid = True
+                    return driver
+
+        # Se non ancora autenticati, la notifica iniziale non è bastata: avvia fallback
+        log.info("Login da notifica non completato: avvio fallback (invia notifica / immetti otp)")
+        abs_deadline = t0 + 600  # Limite massimo assoluto di 10 minuti per la sessione interattiva
+        while time.time() < deadline and time.time() < abs_deadline:
+            self._clicca_consenso_sielte(driver)
             if self.is_autenticato(driver):
-                self.save(driver); self.session_valid = True
+                self.save(driver)
+                self.session_valid = True
                 return driver
 
-            # ----------------------------------------------------
-            # 2FA: Notifica Push con Fallback Interattivo (Telegram)
-            # ----------------------------------------------------
-            t0 = time.time()
-            deadline = t0 + wait_otp_sec
+            # Chiede su Telegram: Invia notifica o Immetti codice OTP
+            scelta = self._ottieni_scelta_fallback(auth_callback)
 
-            # Se l'utente ha configurato esplicitamente la modalità OTP:
-            if (otp_mode or "").lower() == "otp":
-                log.info("Modalità OTP configurata: attivo inserimento codice OTP")
-                self._attiva_otp_sielte(driver)
-                time.sleep(2)
-                self._chiedi_e_inserisci_otp(driver, auth_callback)
-            else:
-                # Modalità notifica (default): invia la prima notifica push
+            if scelta == "notify":
+                log.info("Scelta fallback utente: invia notifica di nuovo")
+                # Quando l'utente chiede un nuovo invio push, estendiamo la deadline
+                deadline = max(deadline, min(abs_deadline, time.time() + 65))
                 if self.on_notify:
-                    self.on_notify("📲 Sto per inviare la notifica SielteID: prepara il telefono e "
-                                   "approvala appena arriva!")
+                    self.on_notify("📲 Nuova notifica push SielteID inviata: controlla il telefono!")
                 self._invia_notifica_sielte(driver)
-
-                # Primo tentativo push: attesa breve (circa 35 secondi)
-                push_wait_until = min(deadline, time.time() + 35)
+                push_wait_until = min(deadline, time.time() + 45)
                 while time.time() < push_wait_until:
                     time.sleep(4)
                     self._clicca_consenso_sielte(driver)
@@ -407,56 +433,25 @@ class SessionManager:
                         self.session_valid = True
                         return driver
 
-            # Se non ancora autenticati, la notifica iniziale non è bastata: avvia fallback
-            log.info("Login da notifica non completato: avvio fallback (invia notifica / immetti otp)")
-            abs_deadline = t0 + 600  # Limite massimo assoluto di 10 minuti per la sessione interattiva
-            while time.time() < deadline and time.time() < abs_deadline:
-                self._clicca_consenso_sielte(driver)
-                if self.is_autenticato(driver):
+            elif scelta == "otp":
+                log.info("Scelta fallback utente: immetti codice OTP")
+                deadline = max(deadline, min(abs_deadline, time.time() + 130))
+                self._attiva_otp_sielte(driver)
+                time.sleep(2)
+                successo = self._chiedi_e_inserisci_otp(driver, auth_callback)
+                if successo and self.is_autenticato(driver):
                     self.save(driver)
                     self.session_valid = True
                     return driver
 
-                # Chiede su Telegram: Invia notifica o Immetti codice OTP
-                scelta = self._ottieni_scelta_fallback(auth_callback)
+            elif scelta == "cancel":
+                log.info("Login annullato dall'utente.")
+                raise RuntimeError("Login SielteID annullato dall'utente.")
+            else:
+                # Nessuna scelta ricevuta (es. timeout di un ciclo o canale non interattivo)
+                time.sleep(5)
 
-                if scelta == "notify":
-                    log.info("Scelta fallback utente: invia notifica di nuovo")
-                    # Quando l'utente chiede un nuovo invio push, estendiamo la deadline
-                    deadline = max(deadline, min(abs_deadline, time.time() + 65))
-                    if self.on_notify:
-                        self.on_notify("📲 Nuova notifica push SielteID inviata: controlla il telefono!")
-                    self._invia_notifica_sielte(driver)
-                    push_wait_until = min(deadline, time.time() + 45)
-                    while time.time() < push_wait_until:
-                        time.sleep(4)
-                        self._clicca_consenso_sielte(driver)
-                        if self.is_autenticato(driver):
-                            self.save(driver)
-                            self.session_valid = True
-                            return driver
-
-                elif scelta == "otp":
-                    log.info("Scelta fallback utente: immetti codice OTP")
-                    deadline = max(deadline, min(abs_deadline, time.time() + 130))
-                    self._attiva_otp_sielte(driver)
-                    time.sleep(2)
-                    successo = self._chiedi_e_inserisci_otp(driver, auth_callback)
-                    if successo and self.is_autenticato(driver):
-                        self.save(driver)
-                        self.session_valid = True
-                        return driver
-
-                elif scelta == "cancel":
-                    log.info("Login annullato dall'utente.")
-                    raise RuntimeError("Login SielteID annullato dall'utente.")
-                else:
-                    # Nessuna scelta ricevuta (es. timeout di un ciclo o canale non interattivo)
-                    time.sleep(5)
-
-            raise TimeoutError("Timeout nell'attesa approvazione SielteID (approva la notifica o inserisci l'OTP!)")
-        finally:
-            self._riavvia_con_headless(prev)
+        raise TimeoutError("Timeout nell'attesa approvazione SielteID (approva la notifica o inserisci l'OTP!)")
 
     # ---------------- helper selettori ----------------
     def _find_and_fill(self, driver, sel_list, value: str) -> bool:
@@ -510,75 +505,69 @@ class SessionManager:
         }
         prov_sel = prov_map.get(provider_key.lower(), {})
         prov_name = provider_key.capitalize()
-
-        prev = self.browser.settings.headless
-        self._riavvia_con_headless(False)
         driver = self.browser.start()
+        if self.on_notify:
+            self.on_notify(f"🔑 Avvio accesso SPID con {prov_name}...")
+        driver.get(selectors.LOGIN_SPID["url_accedi"])
+        time.sleep(4)
+        if self.is_autenticato(driver):
+            self.save(driver)
+            self.session_valid = True
+            return driver
+
+        # Apri menu SPID e seleziona il provider
         try:
+            driver.execute_script("var a=document.querySelector('[spid-idp-button], a.button-spid, .pulsante-spid');if(a)a.click();")
+            time.sleep(1)
+            boxes = driver.find_elements(By.CSS_SELECTOR, "a.home-box-fornitore")
+            target = None
+            for b in boxes:
+                if provider_key.lower() in (b.text or "").lower():
+                    target = b
+                    break
+            if target is None:
+                idx = selectors.LOGIN_SPID["idp"].get(prov_name)
+                if idx is not None and idx < len(boxes):
+                    target = boxes[idx]
+            if target:
+                driver.execute_script("arguments[0].click();", target)
+        except Exception as e:
+            log.warning("Selezione provider %s: %s", prov_name, e)
+
+        time.sleep(5)
+
+        # Compilazione credenziali se disponibili
+        if username and password:
+            u_sel = prov_sel.get("username", [("id", "username"), ("name", "username"), ("css", "input[type='text'], input[type='email']")])
+            p_sel = prov_sel.get("password", [("id", "password"), ("name", "password"), ("css", "input[type='password']")])
+            self._find_and_fill(driver, u_sel, username)
+            self._find_and_fill(driver, p_sel, password)
+
+            time.sleep(1)
+            btn_sel = prov_sel.get("btn_avanti", [("css", "button[type='submit'], input[type='submit']")])
+            self._find_and_click(driver, btn_sel)
+
             if self.on_notify:
-                self.on_notify(f"🔑 Avvio accesso SPID con {prov_name}...")
-            driver.get(selectors.LOGIN_SPID["url_accedi"])
-            time.sleep(4)
+                self.on_notify(f"📲 Credenziali {prov_name} inviate: conferma la notifica push sull'app o inserisci l'OTP.")
+        else:
+            if self.on_notify:
+                self.on_notify(f"🔑 Finestra {prov_name} aperta: inserisci le credenziali e autorizza l'accesso.")
+
+        # Attesa approvazione 2FA + consenso (SAML attribute release)
+        consenso_sel = prov_sel.get("consenso", [
+            ("css", "button[name='confirm'], input[value*='Autorizza'], button[type='submit']"),
+            ("xpath", "//button[contains(., 'Autorizza') or contains(., 'Conferma') or contains(., 'Prosegui') or contains(., 'Acconsento')]"),
+        ])
+        for _ in range(max(1, wait_otp_sec // 5)):
+            time.sleep(5)
+            # Prova click automatico su eventuale schermata di consenso
+            self._find_and_click(driver, consenso_sel)
             if self.is_autenticato(driver):
                 self.save(driver)
                 self.session_valid = True
                 return driver
 
-            # Apri menu SPID e seleziona il provider
-            try:
-                driver.execute_script("var a=document.querySelector('[spid-idp-button], a.button-spid, .pulsante-spid');if(a)a.click();")
-                time.sleep(1)
-                boxes = driver.find_elements(By.CSS_SELECTOR, "a.home-box-fornitore")
-                target = None
-                for b in boxes:
-                    if provider_key.lower() in (b.text or "").lower():
-                        target = b
-                        break
-                if target is None:
-                    idx = selectors.LOGIN_SPID["idp"].get(prov_name)
-                    if idx is not None and idx < len(boxes):
-                        target = boxes[idx]
-                if target:
-                    driver.execute_script("arguments[0].click();", target)
-            except Exception as e:
-                log.warning("Selezione provider %s: %s", prov_name, e)
-
-            time.sleep(5)
-
-            # Compilazione credenziali se disponibili
-            if username and password:
-                u_sel = prov_sel.get("username", [("id", "username"), ("name", "username"), ("css", "input[type='text'], input[type='email']")])
-                p_sel = prov_sel.get("password", [("id", "password"), ("name", "password"), ("css", "input[type='password']")])
-                self._find_and_fill(driver, u_sel, username)
-                self._find_and_fill(driver, p_sel, password)
-
-                time.sleep(1)
-                btn_sel = prov_sel.get("btn_avanti", [("css", "button[type='submit'], input[type='submit']")])
-                self._find_and_click(driver, btn_sel)
-
-                if self.on_notify:
-                    self.on_notify(f"📲 Credenziali {prov_name} inviate: conferma la notifica push sull'app o inserisci l'OTP.")
-            else:
-                if self.on_notify:
-                    self.on_notify(f"🔑 Finestra {prov_name} aperta: inserisci le credenziali e autorizza l'accesso.")
-
-            # Attesa approvazione 2FA + consenso (SAML attribute release)
-            consenso_sel = prov_sel.get("consenso", [
-                ("css", "button[name='confirm'], input[value*='Autorizza'], button[type='submit']"),
-                ("xpath", "//button[contains(., 'Autorizza') or contains(., 'Conferma') or contains(., 'Prosegui') or contains(., 'Acconsento')]"),
-            ])
-            for _ in range(max(1, wait_otp_sec // 5)):
-                time.sleep(5)
-                # Prova click automatico su eventuale schermata di consenso
-                self._find_and_click(driver, consenso_sel)
-                if self.is_autenticato(driver):
-                    self.save(driver)
-                    self.session_valid = True
-                    return driver
-
-            raise TimeoutError(f"Timeout nell'attesa approvazione SPID ({prov_name})")
-        finally:
-            self._riavvia_con_headless(prev)
+        raise TimeoutError(f"Timeout nell'attesa approvazione SPID ({prov_name})")
 
     # ---------------- login CIE ----------------
     def relogin_cie(self, username: str = "", password: str = "", mode: str = "app",
@@ -591,58 +580,53 @@ class SessionManager:
         from selenium.webdriver.common.by import By
         from core import selectors
 
-        prev = self.browser.settings.headless
-        self._riavvia_con_headless(False)
         driver = self.browser.start()
+        mode_lbl = "App CieID (Livello 2)" if mode == "app" else "Smartcard (Livello 3)"
+        if self.on_notify:
+            self.on_notify(f"🔑 Avvio accesso con CIE ({mode_lbl})...")
+        driver.get(selectors.LOGIN_SPID["url_accedi"])
+        time.sleep(4)
+        if self.is_autenticato(driver):
+            self.save(driver)
+            self.session_valid = True
+            return driver
+
+        # Submit form CIE su IdPC Regione Lombardia
         try:
-            mode_lbl = "App CieID (Livello 2)" if mode == "app" else "Smartcard (Livello 3)"
+            driver.execute_script(
+                "var f=document.querySelector('form[action*=\"AuthRequestCieService\"], .pulsante-cie form');"
+                "if(f){f.submit();return true;}"
+                "var c=document.querySelector('[cie-button], .pulsante-cie');if(c){c.click();return true;}"
+                "return false;"
+            )
+        except Exception as e:
+            log.warning("Click/submit CIE: %s", e)
+
+        time.sleep(5)
+
+        # Se ci troviamo sul portale Ministero dell'Interno (idserver.servizicie.interno.gov.it)
+        cie_sel = selectors.LOGIN_CIE
+        if username and password:
+            u_sel = cie_sel["username"]
+            p_sel = cie_sel["password"]
+            self._find_and_fill(driver, u_sel, username)
+            self._find_and_fill(driver, p_sel, password)
+            time.sleep(1)
+            self._find_and_click(driver, cie_sel["btn_prosegui"])
             if self.on_notify:
-                self.on_notify(f"🔑 Avvio accesso con CIE ({mode_lbl})...")
-            driver.get(selectors.LOGIN_SPID["url_accedi"])
-            time.sleep(4)
+                self.on_notify("📲 Credenziali CIE inviate: conferma la notifica nell'app CieID o inserisci l'OTP.")
+        else:
+            if self.on_notify:
+                self.on_notify(f"🔑 Schermata CIE aperta: completa l'autenticazione con l'app CieID (QR/notifica) o Smartcard.")
+
+        # Attesa approvazione e consenso
+        for _ in range(max(1, wait_otp_sec // 5)):
+            time.sleep(5)
+            # Eventuale consenso su pagina CIE / Regione
+            self._find_and_click(driver, cie_sel["consenso"])
             if self.is_autenticato(driver):
                 self.save(driver)
                 self.session_valid = True
                 return driver
 
-            # Submit form CIE su IdPC Regione Lombardia
-            try:
-                driver.execute_script(
-                    "var f=document.querySelector('form[action*=\"AuthRequestCieService\"], .pulsante-cie form');"
-                    "if(f){f.submit();return true;}"
-                    "var c=document.querySelector('[cie-button], .pulsante-cie');if(c){c.click();return true;}"
-                    "return false;"
-                )
-            except Exception as e:
-                log.warning("Click/submit CIE: %s", e)
-
-            time.sleep(5)
-
-            # Se ci troviamo sul portale Ministero dell'Interno (idserver.servizicie.interno.gov.it)
-            cie_sel = selectors.LOGIN_CIE
-            if username and password:
-                u_sel = cie_sel["username"]
-                p_sel = cie_sel["password"]
-                self._find_and_fill(driver, u_sel, username)
-                self._find_and_fill(driver, p_sel, password)
-                time.sleep(1)
-                self._find_and_click(driver, cie_sel["btn_prosegui"])
-                if self.on_notify:
-                    self.on_notify("📲 Credenziali CIE inviate: conferma la notifica nell'app CieID o inserisci l'OTP.")
-            else:
-                if self.on_notify:
-                    self.on_notify(f"🔑 Schermata CIE aperta: completa l'autenticazione con l'app CieID (QR/notifica) o Smartcard.")
-
-            # Attesa approvazione e consenso
-            for _ in range(max(1, wait_otp_sec // 5)):
-                time.sleep(5)
-                # Eventuale consenso su pagina CIE / Regione
-                self._find_and_click(driver, cie_sel["consenso"])
-                if self.is_autenticato(driver):
-                    self.save(driver)
-                    self.session_valid = True
-                    return driver
-
-            raise TimeoutError("Timeout nell'attesa autenticazione CIE (completa l'accesso con l'app CieID o Smartcard)")
-        finally:
-            self._riavvia_con_headless(prev)
+        raise TimeoutError("Timeout nell'attesa autenticazione CIE (completa l'accesso con l'app CieID o Smartcard)")

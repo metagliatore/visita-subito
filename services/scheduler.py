@@ -76,6 +76,7 @@ class Controller:
         self.login_retries = 0
         self.login_bloccato = False
         self.login_in_corso = False
+        self.polling_in_corso = False
         try:
             self.max_login_retries = int(os.environ.get("MAX_LOGIN_RETRIES", "3"))
         except Exception:  # noqa: BLE001
@@ -461,6 +462,8 @@ class Controller:
         # prossimo controllo programmato
         if getattr(self, "paused", False):
             lines.append("⏱ Stato polling: ⏸️ IN PAUSA (nessun controllo automatico. Usa /resume o /pause per riattivare)")
+        elif getattr(self, "polling_in_corso", False):
+            lines.append("⏱ Stato polling: 🔄 Controllo disponibilità in corso...")
         elif hasattr(self, "_next_poll_time"):
             rimanenti = int(self._next_poll_time - time.time())
             if rimanenti < 0:
@@ -708,45 +711,49 @@ class Controller:
         i flow rimanenti: il loop ricomincia subito (l'utente ha chiesto un
         nuovo controllo).
         """
-        lock = getattr(self, "_browser_lock", None) or threading.RLock()
-        with lock:
-            max_idle = self.cfg.settings.get("session", {}).get("max_idle_seconds", 21600)
-            sessione_scaduta = self.sess.is_expired(max_idle)
-            driver_ok = self.browser.driver is not None and self.sess.is_autenticato(self.browser.driver)
+        self.polling_in_corso = True
+        try:
+            lock = getattr(self, "_browser_lock", None) or threading.RLock()
+            with lock:
+                max_idle = self.cfg.settings.get("session", {}).get("max_idle_seconds", 21600)
+                sessione_scaduta = self.sess.is_expired(max_idle)
+                driver_ok = self.browser.driver is not None and self.sess.is_autenticato(self.browser.driver)
 
-            if sessione_scaduta or not self.sess.session_valid or not driver_ok:
-                self.sess.session_valid = False
-                auth_desc = getattr(self.auth_config, "describe", lambda: "SPID")() if hasattr(self, "auth_config") else "SPID"
-                if manual:
-                    self.bot.notify(f"🔍 Sessione non attiva o scaduta ({auth_desc}). Avvio rinnovo sessione...")
-                    if not self.assicura_sessione_attiva():
-                        self.bot.notify(f"❌ Polling interrotto: impossibile autenticare la sessione ({auth_desc}).")
-                        return
-                else:
-                    log.info("Sessione scaduta o non pronta (%s), provo ensure_session", auth_desc)
-                    if not self.ensure_session():
-                        log.info("Sessione ancora non pronta, salto polling automatico")
-                        return
+                if sessione_scaduta or not self.sess.session_valid or not driver_ok:
+                    self.sess.session_valid = False
+                    auth_desc = getattr(self.auth_config, "describe", lambda: "SPID")() if hasattr(self, "auth_config") else "SPID"
+                    if manual:
+                        self.bot.notify(f"🔍 Sessione non attiva o scaduta ({auth_desc}). Avvio rinnovo sessione...")
+                        if not self.assicura_sessione_attiva():
+                            self.bot.notify(f"❌ Polling interrotto: impossibile autenticare la sessione ({auth_desc}).")
+                            return
+                    else:
+                        log.info("Sessione scaduta o non pronta (%s), provo ensure_session", auth_desc)
+                        if not self.ensure_session():
+                            log.info("Sessione ancora non pronta, salto polling automatico")
+                            return
 
-            for f in list(self._flows):
-                # interruzione: /poll richiesto durante il giro -> esci subito
-                if self._force.is_set():
-                    log.info("Polling interrotto a metà: /poll richiesto dall'utente")
-                    break
-                log.info("Polling %s (%s)", f.mid, f.type)
-                try:
-                    f.poll_once(manual=manual)
-                except Exception as e:  # noqa: BLE001
-                    log.exception("Polling %s fallito: %s", f.mid, e)
-                    err_str = str(e).lower()
-                    if "login" in err_str or "autentica" in err_str or "sessione" in err_str:
-                        self.sess.session_valid = False
-                    if hasattr(self.browser, "is_alive") and not self.browser.is_alive():
-                        self.browser.stop()
-                # ricontrolla anche dopo un flow lungo (il /poll può essere arrivato)
-                if self._force.is_set():
-                    log.info("Polling interrotto:a fine %s: /poll richiesto dall'utente", f.mid)
-                    break
+                for f in list(self._flows):
+                    # interruzione: /poll richiesto durante il giro -> esci subito
+                    if self._force.is_set():
+                        log.info("Polling interrotto a metà: /poll richiesto dall'utente")
+                        break
+                    log.info("Polling %s (%s)", f.mid, f.type)
+                    try:
+                        f.poll_once(manual=manual)
+                    except Exception as e:  # noqa: BLE001
+                        log.exception("Polling %s fallito: %s", f.mid, e)
+                        err_str = str(e).lower()
+                        if "login" in err_str or "autentica" in err_str or "sessione" in err_str:
+                            self.sess.session_valid = False
+                        if hasattr(self.browser, "is_alive") and not self.browser.is_alive():
+                            self.browser.stop()
+                    # ricontrolla anche dopo un flow lungo (il /poll può essere arrivato)
+                    if self._force.is_set():
+                        log.info("Polling interrotto:a fine %s: /poll richiesto dall'utente", f.mid)
+                        break
+        finally:
+            self.polling_in_corso = False
 
     # ---- main ----
     def run(self, run_bot: bool = True):
