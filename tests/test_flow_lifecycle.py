@@ -68,3 +68,55 @@ def test_flow_request_approval_and_post_booking_prompt():
     second_call_buttons = bot.notify_buttons.call_args_list[1][0][1]
     assert any("postbook:stop:m1" in btn[1] for btn in second_call_buttons[0])
     assert any("postbook:continue:m1" in btn[1] for btn in second_call_buttons[0])
+
+
+def test_flow_rejection_adds_to_blacklist():
+    monitor = {"id": "m1", "type": "new", "ricetta": "VISITA CARDIOLOGICA", "criteri": {}, "nre": "0300A1"}
+    browser = MagicMock()
+    queue = MagicMock()
+    bot = MagicMock()
+    store = MagicMock()
+
+    flow = DummyFlow(monitor, browser, queue, bot, store)
+    slot = Slot(datetime=datetime(2026, 10, 25, 9, 30))
+
+    queue.create.return_value = "req_deny"
+    # Rifiuto da parte dell'utente
+    queue.wait_decision.return_value = {"cancelled": False, "decision": False, "extra": {"azione": "deny"}}
+    bot.notify_buttons.return_value = [("chat1", 123)]
+
+    res = flow._request_approval(slot)
+    assert "non confermata" in res
+    store.add_blacklist_entry.assert_called_once_with("m1", slot, nre="0300A1", data_ricetta="")
+
+
+def test_flow_poll_once_ignores_blacklisted_slots():
+    monitor = {"id": "m1", "type": "new", "criteri": {}}
+    browser = MagicMock()
+    queue = MagicMock()
+    bot = MagicMock()
+    store = MagicMock()
+
+    slot1 = Slot(datetime=datetime(2026, 10, 25, 9, 30))
+    slot2 = Slot(datetime=datetime(2026, 10, 26, 11, 0))
+
+    flow = DummyFlow(monitor, browser, queue, bot, store)
+    flow._is_autenticato = MagicMock(return_value=True)
+    flow.extract_slots = MagicMock(return_value=[slot1, slot2])
+
+    store.get_action.return_value = "idle"
+    store.seen_slots.return_value = set()
+    # slot1 è in blacklist!
+    store.get_blacklist_keys.return_value = {slot1.key}
+
+    queue.create.return_value = "req2"
+    queue.wait_decision.return_value = {"cancelled": False, "decision": True, "extra": {"azione": "approve"}}
+    flow.execute = MagicMock()
+
+    flow.poll_once(manual=False)
+
+    # Solo slot2 deve essere stato proposto, non slot1!
+    queue.create.assert_called_once()
+    payload = queue.create.call_args[0][1]
+    assert payload["slot"]["datetime"] == slot2.datetime
+

@@ -1,3 +1,4 @@
+import time
 import pytest
 from state.store import Store
 
@@ -60,3 +61,66 @@ def test_store_dynamic_monitors(tmp_path):
     store.add_monitor(mon)
     assert store.is_disabled("dyn-1") is False
     assert len(store.get_monitors()) == 1
+
+
+def test_store_blacklist(tmp_path):
+    store = Store(tmp_path / "state.json")
+
+    slot_dict = {
+        "key": "20261015T1030|provincia=MI",
+        "date_str": "15/10/2026",
+        "time_str": "10:30",
+        "extra": {
+            "azienda": "ASST Niguarda",
+            "sede": "Piazza Ospedale Maggiore 3",
+            "comune": "Milano",
+            "provincia": "MI",
+        }
+    }
+
+    entry = store.add_blacklist_entry("mon-1", slot_dict, nre="0300A123", data_ricetta="2026-05-10")
+    assert entry["slot_key"] == "20261015T1030|provincia=MI"
+    assert entry["azienda"] == "ASST Niguarda"
+    assert entry["nre"] == "0300A123"
+
+    # La slot_key deve essere presente anche in seen_slots
+    assert "20261015T1030|provincia=MI" in store.seen_slots("mon-1")
+
+    # get_blacklist
+    bl = store.get_blacklist("mon-1")
+    assert len(bl) == 1
+    assert bl[0]["id"] == entry["id"]
+
+    keys = store.get_blacklist_keys("mon-1")
+    assert keys == {"20261015T1030|provincia=MI"}
+
+    # Rimozione singola entry
+    removed = store.remove_blacklist_entry("mon-1", entry["id"])
+    assert removed is not None
+    assert removed["id"] == entry["id"]
+    assert len(store.get_blacklist("mon-1")) == 0
+    # Rimossa anche da seen_slots!
+    assert "20261015T1030|provincia=MI" not in store.seen_slots("mon-1")
+
+    # Svuota intera blacklist
+    entry1 = store.add_blacklist_entry("mon-1", slot_dict)
+    slot_dict2 = dict(slot_dict, key="20261022T1400", date_str="22/10/2026", time_str="14:00")
+    entry2 = store.add_blacklist_entry("mon-1", slot_dict2)
+    assert len(store.get_blacklist("mon-1")) == 2
+    assert "20261015T1030|provincia=MI" in store.seen_slots("mon-1")
+    assert "20261022T1400" in store.seen_slots("mon-1")
+
+    count = store.clear_blacklist("mon-1")
+    assert count == 2
+    assert len(store.get_blacklist("mon-1")) == 0
+    assert "20261015T1030|provincia=MI" not in store.seen_slots("mon-1")
+    assert "20261022T1400" not in store.seen_slots("mon-1")
+
+    # Verifica scadenza ricetta
+    # Aggiungi entry con data_ricetta di 2 anni fa
+    old_entry = store.add_blacklist_entry("mon-1", slot_dict, data_ricetta="2024-01-01")
+    assert old_entry["valid_until"] < time.time()
+    # get_blacklist() deve pulire le entry scadute
+    assert len(store.get_blacklist("mon-1")) == 0
+    assert slot_dict["key"] not in store.seen_slots("mon-1")
+

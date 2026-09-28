@@ -311,7 +311,7 @@ class Controller:
         self.store.set_preferenza("data_dal", data_dal)
         return True
 
-    def aggiungi_monitor(self, tipo: str, descrizione: str, nre: str = "", criteri: dict = None) -> str:
+    def aggiungi_monitor(self, tipo: str, descrizione: str, nre: str = "", criteri: dict = None, data_ricetta: str = "") -> str:
         """Aggiunge un monitor dinamico (nuova prenotazione o appuntamento).
 
         Ritorna l'id del monitor creato, oppure '' se fallisce.
@@ -331,7 +331,8 @@ class Controller:
         prog = len(self.store.get_monitors()) + 1
         mid = f"{tipo}-{parola}-{prog}"
         monitor = {"id": mid, "type": tipo, "enabled": True,
-                    "ricetta": descrizione, "nre": nre or "", "criteri": crit}
+                    "ricetta": descrizione, "nre": nre or "", "criteri": crit,
+                    "data_ricetta": data_ricetta or ""}
         self.store.add_monitor(monitor)
         self._flows.append(FLOW_TYPES[tipo](monitor, self.browser, self.queue, self.bot, self.store))
         return mid
@@ -407,6 +408,18 @@ class Controller:
     def monitors_attivi(self) -> list:
         """Ritorna i monitor attivi (dallo store) non disabilitati per lista/stop."""
         return [m for m in self.store.get_monitors() if not self.store.is_disabled(m.get("id", ""))]
+
+    def get_blacklist(self, monitor_id: str) -> list[dict]:
+        """Ritorna le voci in blacklist per il monitor specificato."""
+        return self.store.get_blacklist(monitor_id)
+
+    def rimuovi_da_blacklist(self, monitor_id: str, entry_id: str) -> dict | None:
+        """Rimuove una voce dalla blacklist consentendo al bot di riproporla."""
+        return self.store.remove_blacklist_entry(monitor_id, entry_id)
+
+    def svuota_blacklist(self, monitor_id: str) -> int:
+        """Cancella interamente la blacklist per un monitor."""
+        return self.store.clear_blacklist(monitor_id)
 
     def criteri_default(self) -> dict:
         prefs = self.store.get_preferenze()
