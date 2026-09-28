@@ -9,8 +9,3 @@ data/
 *.swp
 .DS_Store
 icloud
-.pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-

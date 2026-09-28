@@ -23,6 +23,7 @@ HELP_TEXT = (
     "\n🔎 <b>Operazioni</b>\n"
     "/start - scegli su cosa lavorare\n"
     "/monitora - crea un monitor (con wizard guidato: scelta, province, date)\n"
+    "/blacklist - consulta ed elimina disponibilità rifiutate per monitor attivo\n"
     "/stop - lista dei monitor e scelta di quello da fermare\n"
     "/status - stato monitor e sessione\n"
     "/poll - forza il controllo disponibilità\n"
@@ -428,9 +429,11 @@ class TelegramBot:
                 "⚠️ Non riesco a ricavare la prestazione da monitorare dall'elenco. "
                 "Riprova con /monitora e scegli la ricetta dall'elenco.")
             return
+        data_ricetta = target.get("data_ricetta") or ""
         mid = self.controller.aggiungi_monitor(
             tipo, desc, nre=nre,
-            criteri={"province": prov_list, "data_dal": data_dal, "data_a": data_a})
+            criteri={"province": prov_list, "data_dal": data_dal, "data_a": data_a},
+            data_ricetta=data_ricetta)
         self._wizard.pop(chat_id, None)
         q = update.callback_query
         if mid:
@@ -523,7 +526,7 @@ class TelegramBot:
                     self.controller.decide_request(req_id, approved, extra={"azione": azione})
                     await q.edit_message_text(
                         {"approve": "✅ Approvato: procedo con la prenotazione.",
-                         "deny": "❌ Richiesta rifiutata.",
+                         "deny": "❌ Richiesta rifiutata. La disponibilità è stata aggiunta alla blacklist (puoi gestirla con /blacklist).",
                          "anticipa": "↩️ Anticipo dell'appuntamento in corso...",
                          "posticipa": "↪️ Posticipo dell'appuntamento in corso...",
                          }.get(azione, "Azione registrata."))
@@ -575,6 +578,81 @@ class TelegramBot:
             if data == "stop:annulla":
                 await q.edit_message_text("Operazione annullata.")
                 return
+            # Gestione Blacklist (bl:...)
+            if data.startswith("bl:"):
+                parti = data.split(":")
+                azione_bl = parti[1]
+
+                if azione_bl == "list":
+                    await self._mostra_scelta_monitor_blacklist(q, is_edit=True)
+                    return
+
+                elif azione_bl == "close":
+                    await q.edit_message_text("Operazione blacklist terminata 👍")
+                    return
+
+                elif azione_bl == "pick":
+                    mid = parti[2]
+                    await self._mostra_dettaglio_blacklist(q, mid)
+                    return
+
+                elif azione_bl == "del":
+                    mid = parti[2]
+                    entry_id = parti[3]
+                    if self.controller:
+                        removed = self.controller.rimuovi_da_blacklist(mid, entry_id)
+                        if removed:
+                            d_t = f"{removed.get('date_str','')} {removed.get('time_str','')}".strip()
+                            await q.answer(f"✅ Rimosso {d_t} dalla blacklist!")
+                        else:
+                            await q.answer("Voce non trovata o già rimossa.")
+                    else:
+                        await q.answer("Controller non inizializzato.")
+                    await self._mostra_dettaglio_blacklist(q, mid)
+                    return
+
+                elif azione_bl == "clear_ask":
+                    mid = parti[2]
+                    if not self.controller:
+                        await q.answer("Controller non inizializzato.")
+                        return
+                    mon = next((m for m in self.controller.store.get_monitors() if m.get("id") == mid), None)
+                    if mon is None:
+                        mon = next((m for m in self.controller.cfg.active_monitors if m.get("id") == mid), None)
+                    nome = self.controller._nome_leggibile(mon or {"id": mid})
+                    entries = self.controller.get_blacklist(mid)
+                    testo = (
+                        f"⚠️ <b>Conferma cancellazione blacklist</b>\n\n"
+                        f"Sei sicuro di voler cancellare <b>tutte le {len(entries)} disponibilità</b> "
+                        f"rifiutate per <b>{self._esc(nome)}</b>?\n\n"
+                        f"<i>Tutte le date rifiutate potranno essere nuovamente valutate e proposte dal bot.</i>"
+                    )
+                    kb = [
+                        [InlineKeyboardButton("✅ Sì, cancella tutto", callback_data=f"bl:clear_do:{mid}")],
+                        [InlineKeyboardButton("❌ Annulla", callback_data=f"bl:pick:{mid}")],
+                    ]
+                    await q.edit_message_text(testo, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+                    return
+
+                elif azione_bl == "clear_do":
+                    mid = parti[2]
+                    if self.controller:
+                        count = self.controller.svuota_blacklist(mid)
+                        mon = next((m for m in self.controller.store.get_monitors() if m.get("id") == mid), None)
+                        if mon is None:
+                            mon = next((m for m in self.controller.cfg.active_monitors if m.get("id") == mid), None)
+                        nome = self.controller._nome_leggibile(mon or {"id": mid})
+                        testo = (
+                            f"✅ <b>Blacklist svuotata!</b>\n\n"
+                            f"Rimosse <b>{count} disponibilità</b> dalla blacklist per <b>{self._esc(nome)}</b>.\n"
+                            f"Tutte le date potranno essere nuovamente considerate durante i prossimi controlli."
+                        )
+                        kb = [
+                            [InlineKeyboardButton("🔙 Torna ai monitor", callback_data="bl:list")],
+                            [InlineKeyboardButton("❌ Chiudi", callback_data="bl:close")],
+                        ]
+                        await q.edit_message_text(testo, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+                    return
             if data == "mon:app":
                 app = self.controller.get_appuntamenti()
                 if app is None:
@@ -724,6 +802,131 @@ class TelegramBot:
         await update.message.reply_text(
             "🛑 Scegli un monitor da interrompere:",
             reply_markup=InlineKeyboardMarkup(kb))
+
+    async def _mostra_scelta_monitor_blacklist(self, update_or_query, is_edit: bool = False) -> None:
+        """Mostra la lista dei monitor attivi per scegliere quale blacklist consultare."""
+        if not self.controller:
+            text = "Controller non inizializzato."
+            if is_edit:
+                await update_or_query.edit_message_text(text)
+            else:
+                await update_or_query.reply_text(text)
+            return
+
+        monitors = self.controller.monitors_attivi()
+        if not monitors:
+            text = (
+                "ℹ️ <b>Nessun monitoraggio attualmente in corso.</b>\n\n"
+                "La blacklist può essere consultata solo se ci sono visite o appuntamenti attivi in monitoraggio.\n"
+                "Usa /monitora per avviare un nuovo monitoraggio."
+            )
+            if is_edit:
+                await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML)
+            else:
+                await update_or_query.reply_text(text, parse_mode=ParseMode.HTML)
+            return
+
+        kb = []
+        for m in monitors:
+            nome = self.controller._nome_leggibile(m)
+            bl_count = len(self.controller.get_blacklist(m.get("id", "")))
+            badge = f" ({bl_count} rifiutate)" if bl_count > 0 else ""
+            kb.append([InlineKeyboardButton(
+                f"🩺 {nome[:28]}{badge}",
+                callback_data=f"bl:pick:{m['id']}"
+            )])
+        kb.append([InlineKeyboardButton("❌ Chiudi", callback_data="bl:close")])
+
+        testo = (
+            "🚫 <b>Gestione Blacklist Appuntamenti</b>\n\n"
+            "Seleziona la visita in monitoraggio di cui vuoi consultare o modificare la blacklist delle disponibilità rifiutate:"
+        )
+        if is_edit:
+            await update_or_query.edit_message_text(testo, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+        else:
+            await update_or_query.reply_text(testo, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+
+    async def _mostra_dettaglio_blacklist(self, query, mid: str) -> None:
+        """Mostra le voci in blacklist per un monitor specifico, con pulsanti per eliminarle."""
+        if not self.controller:
+            await query.edit_message_text("Controller non inizializzato.")
+            return
+
+        mon = next((m for m in self.controller.store.get_monitors() if m.get("id") == mid), None)
+        if mon is None:
+            mon = next((m for m in self.controller.cfg.active_monitors if m.get("id") == mid), None)
+        nome = self.controller._nome_leggibile(mon or {"id": mid})
+
+        entries = self.controller.get_blacklist(mid)
+        if not entries:
+            testo = (
+                f"🚫 <b>Blacklist per {self._esc(nome)}</b>\n\n"
+                "La blacklist per questa visita è attualmente <b>vuota</b>.\n"
+                "Nessuna disponibilità è stata scartata finora."
+            )
+            kb = [
+                [InlineKeyboardButton("🔙 Torna ai monitor", callback_data="bl:list")],
+                [InlineKeyboardButton("❌ Chiudi", callback_data="bl:close")],
+            ]
+            await query.edit_message_text(testo, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+            return
+
+        lines = [
+            f"🚫 <b>Blacklist per {self._esc(nome)}</b>\n"
+            f"<i>Disponibilità rifiutate che il bot esclude automaticamente:</i>\n"
+        ]
+        import datetime as _dt
+        for i, e in enumerate(entries):
+            d_str = e.get("date_str", "")
+            t_str = e.get("time_str", "")
+            az = e.get("azienda", "")
+            sede = e.get("sede", "")
+            comune = e.get("comune", "")
+            riga = f"<b>{i + 1}) 🗓 {self._esc(d_str)} ore {self._esc(t_str)}</b>"
+            if az:
+                riga += f"\n   🏥 {self._esc(az)}"
+            luogo = []
+            if sede:
+                luogo.append(self._esc(sede))
+            if comune:
+                luogo.append(f"({self._esc(comune)})")
+            if luogo:
+                riga += f"\n   📍 {' · '.join(luogo)}"
+            rej = e.get("rejected_at")
+            if rej:
+                dt_rej = _dt.datetime.fromtimestamp(rej).strftime("%d/%m/%Y %H:%M")
+                riga += f"\n   ⏱ <i>Rifiutata il: {dt_rej}</i>"
+            lines.append(riga)
+
+        lines.append(
+            "\n💡 <i>La blacklist resta attiva per tutta la durata di validità della ricetta (1 anno). "
+            "Puoi eliminare singole voci per consentire al bot di riproporle, oppure cancellare l'intera blacklist.</i>"
+        )
+        testo = "\n".join(lines)
+
+        kb = []
+        for i, e in enumerate(entries):
+            d_label = f"{e.get('date_str', '')[-5:]} {e.get('time_str', '')}".strip()
+            kb.append([InlineKeyboardButton(
+                f"🗑 Elimina #{i + 1} ({d_label})",
+                callback_data=f"bl:del:{mid}:{e['id']}"
+            )])
+
+        kb.append([InlineKeyboardButton("💥 Cancella intera blacklist", callback_data=f"bl:clear_ask:{mid}")])
+        kb.append([
+            InlineKeyboardButton("🔙 Torna ai monitor", callback_data="bl:list"),
+            InlineKeyboardButton("❌ Chiudi", callback_data="bl:close"),
+        ])
+
+        await query.edit_message_text(testo, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+
+    async def _h_blacklist(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Comando /blacklist: consulta e gestisce le disponibilità rifiutate."""
+        if not self._autorizzato(update):
+            return
+        if self._risveglia_se_needed(update):
+            return
+        await self._mostra_scelta_monitor_blacklist(update.message, is_edit=False)
 
     async def _h_appuntamenti(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
@@ -1056,6 +1259,7 @@ class TelegramBot:
             commands = [
                 BotCommand("start", "Panoramica e benvenuto"),
                 BotCommand("monitora", "Crea un nuovo monitor (wizard guidato)"),
+                BotCommand("blacklist", "Visualizza ed elimina disponibilità rifiutate"),
                 BotCommand("status", "Stato dei monitor e sessione SPID"),
                 BotCommand("poll", "Forza controllo disponibilità adesso"),
                 BotCommand("pause", "Mette in pausa o riprende la ricerca automatica"),
@@ -1088,6 +1292,7 @@ class TelegramBot:
         self.app.add_handler(CommandHandler(["pause", "pause_unpause"], self._h_pause))
         self.app.add_handler(CommandHandler(["resume", "unpause"], self._h_resume))
         self.app.add_handler(CommandHandler("monitora", self._h_monitora))
+        self.app.add_handler(CommandHandler("blacklist", self._h_blacklist))
         self.app.add_handler(CommandHandler("stop", self._h_stop))
         self.app.add_handler(CommandHandler("help", self._h_help))
         # pulsanti inline (wizard /monitora e risposte)
