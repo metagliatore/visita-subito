@@ -334,4 +334,91 @@ def test_login_in_corso_guards():
     assert "in corso" in up.message.reply_text.call_args[0][0]
 
 
+def test_h_pause_and_resume():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot.controller.login_bloccato = False
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    up.message.reply_text = AsyncMock()
+    ctx = MagicMock()
+    ctx.args = []
+
+    # 1. /pause toggle -> da attivo a pausa
+    bot.controller.toggle_pause.return_value = True
+    asyncio.run(bot._h_pause(up, ctx))
+    bot.controller.toggle_pause.assert_called_once()
+    assert "messa in pausa" in up.message.reply_text.call_args[0][0]
+
+    # 2. /pause toggle -> da pausa a ripresa
+    bot.controller.toggle_pause.reset_mock()
+    bot.controller.toggle_pause.return_value = False
+    up.message.reply_text.reset_mock()
+    asyncio.run(bot._h_pause(up, ctx))
+    bot.controller.toggle_pause.assert_called_once()
+    assert "riattivata" in up.message.reply_text.call_args[0][0]
+
+    # 3. /resume quando era in pausa
+    bot.controller.paused = True
+    up.message.reply_text.reset_mock()
+    asyncio.run(bot._h_resume(up, ctx))
+    bot.controller.resume.assert_called_once()
+    assert "riattivata" in up.message.reply_text.call_args[0][0]
+
+    # 4. /resume quando è già attivo
+    bot.controller.paused = False
+    bot.controller.resume.reset_mock()
+    up.message.reply_text.reset_mock()
+    asyncio.run(bot._h_resume(up, ctx))
+    bot.controller.resume.assert_not_called()
+    assert "già attivo" in up.message.reply_text.call_args[0][0]
+
+
+def test_h_pause_with_args():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot.controller.login_bloccato = False
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    up.message.reply_text = AsyncMock()
+
+    # /pause resume
+    bot.controller.paused = True
+    ctx = MagicMock(args=["resume"])
+    asyncio.run(bot._h_pause(up, ctx))
+    bot.controller.resume.assert_called_once()
+    assert "riattivata" in up.message.reply_text.call_args[0][0]
+
+    # /pause pause
+    bot.controller.paused = False
+    ctx = MagicMock(args=["pause"])
+    up.message.reply_text.reset_mock()
+    asyncio.run(bot._h_pause(up, ctx))
+    bot.controller.pause.assert_called_once()
+    assert "messa in pausa" in up.message.reply_text.call_args[0][0]
+
+
+def test_h_echo_chat_pause_unpause_hyphen():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot.controller.login_bloccato = False
+    bot.controller.toggle_pause.return_value = True
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    up.message.text = "/pause-unpause"
+    up.message.reply_text = AsyncMock()
+    ctx = MagicMock()
+
+    asyncio.run(bot._h_echo_chat(up, ctx))
+    bot.controller.toggle_pause.assert_called_once()
+    assert "messa in pausa" in up.message.reply_text.call_args[0][0]
+
+
+
 
