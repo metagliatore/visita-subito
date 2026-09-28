@@ -26,6 +26,7 @@ HELP_TEXT = (
     "/stop - lista dei monitor e scelta di quello da fermare\n"
     "/status - stato monitor e sessione\n"
     "/poll - forza il controllo disponibilità\n"
+    "/pause - metti in pausa o riprendi la ricerca (/resume per riprendere)\n"
     "\n📋 <b>Informazioni</b>\n"
     "/ricette - elenca le ricette da prenotare\n"
     "/appuntamenti - elenca gli appuntamenti esistenti\n"
@@ -279,9 +280,9 @@ class TelegramBot:
 
         Ritorna True se abbiamo risvegliato (l'handler avvisa e avvia il login).
         """
-        if self.controller is None:
+        if getattr(self, "controller", None) is None:
             return False
-        if self.controller.login_bloccato:
+        if getattr(self.controller, "login_bloccato", False):
             import threading
             auth_desc = getattr(self.controller.auth_config, "describe", lambda: "Autenticazione")() if hasattr(self.controller, "auth_config") else "Autenticazione"
             self.notify(f"🔄 Tentativi di login sbloccati! Avvio un nuovo tentativo di accesso ({auth_desc})... controlla il dispositivo per approvare!")
@@ -867,9 +868,89 @@ class TelegramBot:
         if self.controller and getattr(self.controller, "login_in_corso", False) is True:
             await update.message.reply_text("🔄 Tentativo di accesso attualmente in corso. Controlla il telefono/dispositivo per completare l'autenticazione prima di forzare il controllo.")
             return
-        await update.message.reply_text("Avvio polling forzato...")
+        if self.controller and getattr(self.controller, "paused", False) is True:
+            await update.message.reply_text("Avvio controllo forzato (nota: il monitoraggio periodico è in pausa, usa /resume o /pause per riattivarlo)...")
+        else:
+            await update.message.reply_text("Avvio polling forzato...")
         if self.controller:
             self.controller.force_poll()
+
+    async def _h_pause(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._autorizzato(update):
+            return
+        if self._risveglia_se_needed(update):
+            return
+        if self.controller is None:
+            await update.message.reply_text("Controller non inizializzato.")
+            return
+
+        arg = (ctx.args[0].lower() if ctx.args else "").strip()
+        if arg in ("resume", "unpause", "off", "start", "riprendi", "via"):
+            if not getattr(self.controller, "paused", False):
+                await update.message.reply_text(
+                    "ℹ️ <b>Il monitoraggio automatico è già attivo!</b>\nUsa /pause per metterlo in pausa.",
+                    parse_mode=ParseMode.HTML)
+            else:
+                self.controller.resume()
+                await update.message.reply_text(
+                    "▶️ <b>Ricerca riattivata!</b>\n\n"
+                    "Il bot ha ripreso il controllo periodico automatico della disponibilità.\n"
+                    "<i>(È stato avviato un controllo immediato)</i>",
+                    parse_mode=ParseMode.HTML)
+            return
+
+        if arg in ("pause", "on", "stop", "ferma", "pausa"):
+            if getattr(self.controller, "paused", False):
+                await update.message.reply_text(
+                    "ℹ️ <b>Il monitoraggio automatico è già in pausa!</b>\nUsa /resume o /pause per riattivarlo.",
+                    parse_mode=ParseMode.HTML)
+            else:
+                self.controller.pause()
+                await update.message.reply_text(
+                    "⏸️ <b>Ricerca messa in pausa!</b>\n\n"
+                    "I controlli automatici periodici sono stati sospesi.\n"
+                    "• Per riprendere: usa <b>/resume</b> (oppure di nuovo <b>/pause</b>)\n"
+                    "• Per un controllo singolo manuale: usa <b>/poll</b>",
+                    parse_mode=ParseMode.HTML)
+            return
+
+        # Toggle (default per /pause o /pause_unpause senza argomenti)
+        is_now_paused = self.controller.toggle_pause()
+        if is_now_paused:
+            await update.message.reply_text(
+                "⏸️ <b>Ricerca messa in pausa!</b>\n\n"
+                "I controlli automatici periodici sono stati sospesi.\n"
+                "• Per riprendere: usa <b>/resume</b> (oppure di nuovo <b>/pause</b>)\n"
+                "• Per un controllo singolo manuale: usa <b>/poll</b>",
+                parse_mode=ParseMode.HTML)
+        else:
+            await update.message.reply_text(
+                "▶️ <b>Ricerca riattivata!</b>\n\n"
+                "Il bot ha ripreso il controllo periodico automatico della disponibilità.\n"
+                "<i>(È stato avviato un controllo immediato)</i>",
+                parse_mode=ParseMode.HTML)
+
+    async def _h_resume(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._autorizzato(update):
+            return
+        if self._risveglia_se_needed(update):
+            return
+        if self.controller is None:
+            await update.message.reply_text("Controller non inizializzato.")
+            return
+
+        if not getattr(self.controller, "paused", False):
+            await update.message.reply_text(
+                "ℹ️ <b>Il monitoraggio automatico è già attivo!</b>\nUsa /pause per metterlo in pausa.",
+                parse_mode=ParseMode.HTML)
+            return
+
+        self.controller.resume()
+        await update.message.reply_text(
+            "▶️ <b>Ricerca riattivata!</b>\n\n"
+            "Il bot ha ripreso il controllo periodico automatico della disponibilità.\n"
+            "<i>(È stato avviato un controllo immediato)</i>",
+            parse_mode=ParseMode.HTML)
 
     async def _h_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
@@ -883,7 +964,8 @@ class TelegramBot:
         if not self._autorizzato(update):
             return
 
-        text = (update.message.text or "").strip()
+        raw_text = update.message.text if (update.message and isinstance(update.message.text, str)) else ""
+        text = raw_text.strip()
 
         # 1. Se siamo in attesa dell'inserimento codice OTP
         if getattr(self, "_pending_otp", False) and self._otp_event is not None:
@@ -930,6 +1012,11 @@ class TelegramBot:
                 await update.message.reply_text(f"✅ Codice OTP ricevuto direttamente ({masked})! Procedo con l'accesso...")
                 return
 
+        # Se l'utente scrive /pause-unpause (il trattino non è riconosciuto come comando standard da Telegram)
+        if text and text.lower().startswith(("/pause-unpause", "pause-unpause")):
+            await self._h_pause(update, ctx)
+            return
+
         chat = update.effective_chat
         await update.message.reply_text(
             f"🤖 Bot attivo!\nChat ID: `{chat.id}`\nTipo: {chat.type}"
@@ -971,6 +1058,8 @@ class TelegramBot:
                 BotCommand("monitora", "Crea un nuovo monitor (wizard guidato)"),
                 BotCommand("status", "Stato dei monitor e sessione SPID"),
                 BotCommand("poll", "Forza controllo disponibilità adesso"),
+                BotCommand("pause", "Mette in pausa o riprende la ricerca automatica"),
+                BotCommand("resume", "Riprende la ricerca automatica"),
                 BotCommand("ricette", "Elenco delle ricette dematerializzate"),
                 BotCommand("appuntamenti", "Elenco degli appuntamenti già presi"),
                 BotCommand("stop", "Interrompi un monitor attivo"),
@@ -996,6 +1085,8 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("ricette", self._h_ricette))
         self.app.add_handler(CommandHandler("appuntamenti", self._h_appuntamenti))
         self.app.add_handler(CommandHandler("poll", self._h_poll))
+        self.app.add_handler(CommandHandler(["pause", "pause_unpause"], self._h_pause))
+        self.app.add_handler(CommandHandler(["resume", "unpause"], self._h_resume))
         self.app.add_handler(CommandHandler("monitora", self._h_monitora))
         self.app.add_handler(CommandHandler("stop", self._h_stop))
         self.app.add_handler(CommandHandler("help", self._h_help))

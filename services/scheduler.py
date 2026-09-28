@@ -80,6 +80,8 @@ class Controller:
             self.max_login_retries = int(os.environ.get("MAX_LOGIN_RETRIES", "3"))
         except Exception:  # noqa: BLE001
             self.max_login_retries = 3
+        # --- stato pausa polling ---
+        self.paused = bool(self.store.get_preferenze().get("polling_paused", False))
 
     def _build_flows(self):
         self._flows = []
@@ -264,6 +266,30 @@ class Controller:
         self._poll_manual = True
         self._force.set()
 
+    def pause(self) -> bool:
+        """Mette in pausa il polling automatico."""
+        self.paused = True
+        self.store.set_preferenza("polling_paused", True)
+        log.info("Polling automatico messo IN PAUSA")
+        return True
+
+    def resume(self) -> bool:
+        """Riprende il polling automatico."""
+        self.paused = False
+        self.store.set_preferenza("polling_paused", False)
+        log.info("Polling automatico RIPRESO")
+        self._force.set()
+        return True
+
+    def toggle_pause(self) -> bool:
+        """Alterna lo stato di pausa. Ritorna True se ora è in pausa, False se attivo."""
+        if getattr(self, "paused", False):
+            self.resume()
+            return False
+        else:
+            self.pause()
+            return True
+
     # ---- API di configurazione (per il bot) ----
     def lista_province(self) -> list:
         """Le province selezionabili (dal dropdown del portale)."""
@@ -433,7 +459,9 @@ class Controller:
             sess = "❌ Non attiva / fallita (invia /poll per riautenticare)"
         lines.append(f"🔐 Stato sessione: {sess}")
         # prossimo controllo programmato
-        if hasattr(self, "_next_poll_time"):
+        if getattr(self, "paused", False):
+            lines.append("⏱ Stato polling: ⏸️ IN PAUSA (nessun controllo automatico. Usa /resume o /pause per riattivare)")
+        elif hasattr(self, "_next_poll_time"):
             rimanenti = int(self._next_poll_time - time.time())
             if rimanenti < 0:
                 rimanenti = 0
@@ -646,8 +674,9 @@ class Controller:
         log.info("Polling attivo: tick ogni %s secondi (%s)", iv, "; env POLL_INTERVAL_SECONDS" if "POLL_INTERVAL_SECONDS" in os.environ else "config")
         self._next_poll_time = time.time() + iv
         self._poll_manual = False
-        # serve per forzare il primo giro subito (bootstrap, NON manuale)
-        self._force.set()
+        # serve per forzare il primo giro subito (bootstrap, NON manuale) solo se non in pausa
+        if not getattr(self, "paused", False):
+            self._force.set()
         while not self._stop.is_set():
             # attesa con polling ogni 1s per reagire subito a /poll
             atteso = 0.0
@@ -661,6 +690,10 @@ class Controller:
             self._force.clear()
             manual = self._poll_manual
             self._poll_manual = False
+            if getattr(self, "paused", False) and not manual:
+                log.debug("Polling in pausa: tick automatico saltato")
+                self._next_poll_time = time.time() + iv
+                continue
             self._run_poll(manual=manual)
             self._next_poll_time = time.time() + iv
 

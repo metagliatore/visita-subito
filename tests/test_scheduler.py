@@ -218,3 +218,54 @@ def test_build_flows_dedup_and_disabled():
     assert ctrl._flows[0].type == "reschedule"
 
 
+def test_controller_pause_resume_toggle():
+    import threading
+    ctrl = MagicMock()
+    ctrl.paused = False
+    ctrl.store = MagicMock()
+    ctrl._force = threading.Event()
+    ctrl.pause = lambda: Controller.pause(ctrl)
+    ctrl.resume = lambda: Controller.resume(ctrl)
+    ctrl.toggle_pause = lambda: Controller.toggle_pause(ctrl)
+
+    # Test pause
+    assert ctrl.pause() is True
+    assert ctrl.paused is True
+    ctrl.store.set_preferenza.assert_called_with("polling_paused", True)
+
+    # Test resume
+    assert ctrl.resume() is True
+    assert ctrl.paused is False
+    ctrl.store.set_preferenza.assert_called_with("polling_paused", False)
+    assert ctrl._force.is_set()
+
+    # Test toggle: da False diventa True
+    ctrl._force.clear()
+    is_paused = ctrl.toggle_pause()
+    assert is_paused is True
+    assert ctrl.paused is True
+
+    # Test toggle: da True diventa False
+    is_paused = ctrl.toggle_pause()
+    assert is_paused is False
+    assert ctrl.paused is False
+    assert ctrl._force.is_set()
+
+
+def test_status_text_paused():
+    ctrl = MagicMock()
+    ctrl._flows = []
+    ctrl.cfg.settings = {"session": {"max_idle_seconds": 3600}}
+    ctrl.store.get_monitors.return_value = []
+    ctrl._nome_leggibile = Controller._nome_leggibile
+    ctrl.login_bloccato = False
+    ctrl.login_in_corso = False
+    ctrl.sess.session_valid = True
+    ctrl.sess.is_expired.return_value = False
+
+    ctrl.paused = True
+    text = Controller.status_text(ctrl)
+    assert "⏸️ IN PAUSA" in text
+    assert "/resume" in text
+
+
