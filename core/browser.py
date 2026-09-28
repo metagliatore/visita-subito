@@ -45,9 +45,25 @@ class Browser:
         o.add_experimental_option("excludeSwitches", ["enable-automation"])
         return o
 
-    def start(self) -> webdriver.Chrome:
-        if self.driver is not None:
-            return self.driver
+    def is_alive(self) -> bool:
+        """Verifica se il driver è attivo e risponde al WebDriver."""
+        if self.driver is None:
+            return False
+        try:
+            _ = self.driver.current_window_handle
+            return True
+        except Exception:
+            return False
+
+    def start(self, force_restart: bool = False) -> webdriver.Chrome:
+        if not force_restart and self.driver is not None:
+            if self.is_alive():
+                return self.driver
+            log.warning("Driver Chrome non più reattivo o terminato: riavvio istanza pulita")
+            self.stop()
+        elif force_restart and self.driver is not None:
+            self.stop()
+
         log.info("Avvio Chrome (headless=%s)", self.settings.headless)
         self.driver = webdriver.Chrome(options=self._options())
         t = self.settings.timeouts or {}
@@ -63,6 +79,19 @@ class Browser:
                 log.debug("quit err: %s", e)
             finally:
                 self.driver = None
+
+    def restart(self) -> webdriver.Chrome:
+        """Forza il riavvio completo del browser."""
+        self.stop()
+        return self.start()
+
+    def set_headless(self, headless: bool) -> None:
+        """Cambia la modalità headless riavviando il driver se necessario."""
+        if self.settings.headless != headless:
+            self.settings.headless = headless
+            if self.driver is not None:
+                log.info("Cambio modalità headless=%s -> riavvio browser", headless)
+                self.stop()
 
     def wait(self, timeout: float = 15):
         return WebDriverWait(self.driver, timeout)

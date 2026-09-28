@@ -729,6 +729,9 @@ class TelegramBot:
             return
         if self._risveglia_se_needed(update):
             return
+        if self.controller and getattr(self.controller, "login_in_corso", False) is True:
+            await update.message.reply_text("🔄 Tentativo di accesso attualmente in corso. Controlla il telefono/dispositivo per completare l'autenticazione prima di procedere.")
+            return
         if self.controller is None:
             await update.message.reply_text("Controller non inizializzato.")
             return
@@ -785,6 +788,9 @@ class TelegramBot:
         if not self._autorizzato(update):
             return
         if self._risveglia_se_needed(update):
+            return
+        if self.controller and getattr(self.controller, "login_in_corso", False) is True:
+            await update.message.reply_text("🔄 Tentativo di accesso attualmente in corso. Controlla il telefono/dispositivo per completare l'autenticazione prima di procedere.")
             return
         if self.controller is None:
             await update.message.reply_text("Controller non inizializzato.")
@@ -857,6 +863,9 @@ class TelegramBot:
         if not self._autorizzato(update):
             return
         if self._risveglia_se_needed(update):
+            return
+        if self.controller and getattr(self.controller, "login_in_corso", False) is True:
+            await update.message.reply_text("🔄 Tentativo di accesso attualmente in corso. Controlla il telefono/dispositivo per completare l'autenticazione prima di forzare il controllo.")
             return
         await update.message.reply_text("Avvio polling forzato...")
         if self.controller:

@@ -67,6 +67,7 @@ class Controller:
         self._stop = threading.Event()
         self._force = threading.Event()
         self._login_lock = threading.Lock()
+        self._browser_lock = threading.RLock()
         from core.auth import AuthConfig, get_auth_provider
         self.auth_config = AuthConfig.from_settings_and_env(cfg.settings)
         self.auth_provider = get_auth_provider(self.auth_config)
@@ -118,85 +119,90 @@ class Controller:
         from selenium.webdriver.common.by import By
         if not self.assicura_sessione_attiva():
             return None
-        driver = self.browser.start()
-        # naviga SEMPRE a prenotaonline/riservata (stato home della SPA)
-        driver.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
-        time.sleep(4)
-        if not self.sess.is_autenticato(driver):
-            log.warning("get_appuntamenti: sessione non valida o reindirizzata al login")
-            self.sess.session_valid = False
-            return None
-        # clicca Gestisci Prenotazioni -> 'I miei appuntamenti'
+        lock = getattr(self, "_browser_lock", None) or threading.RLock()
+        lock.acquire()
         try:
-            el = driver.find_element(By.CSS_SELECTOR, "a[ng-click*='clickGestisciAppuntamenti']")
-            driver.execute_script("arguments[0].click();", el)
+            driver = self.browser.start()
+            # naviga SEMPRE a prenotaonline/riservata (stato home della SPA)
+            driver.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
             time.sleep(4)
-        except Exception as e:  # noqa: BLE001
-            log.warning("get_appuntamenti: click Gestisci: %s", e)
-        # chiudi eventuale modale info
-        try:
-            driver.execute_script("var b=document.querySelector('button[ng-click*=messaggiCtrl]');if(b)b.click();")
-        except Exception:  # noqa: BLE001
-            pass
-        time.sleep(2)
-        self._dump_pagina_per_debug("appuntamenti", driver)
-        html = driver.page_source
+            if not self.sess.is_autenticato(driver):
+                log.warning("get_appuntamenti: sessione non valida o reindirizzata al login")
+                self.sess.session_valid = False
+                return None
+            # clicca Gestisci Prenotazioni -> 'I miei appuntamenti'
+            try:
+                el = driver.find_element(By.CSS_SELECTOR, "a[ng-click*='clickGestisciAppuntamenti']")
+                driver.execute_script("arguments[0].click();", el)
+                time.sleep(4)
+            except Exception as e:  # noqa: BLE001
+                log.warning("get_appuntamenti: click Gestisci: %s", e)
+            # chiudi eventuale modale info
+            try:
+                driver.execute_script("var b=document.querySelector('button[ng-click*=messaggiCtrl]');if(b)b.click();")
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(2)
+            self._dump_pagina_per_debug("appuntamenti", driver)
+            html = driver.page_source
 
-        CARD_START = re.compile(r"<li[^>]*app-unificato[^>]*>", re.I)
-        FIELD_PAIR = re.compile(
-            r"<div[^>]*appuntamento-prenotato-field-title[^>]*>\s*<span>([^<]*)</span>\s*</div>\s*"
-            r"<div[^>]*appuntamento-prenotato-field-value[^>]*>\s*<span[^>]*>([^<]*)</span>",
-            re.S)
-        LI_VAL = re.compile(r"<li[^>]*>([^<]+)</li>", re.I)
+            CARD_START = re.compile(r"<li[^>]*app-unificato[^>]*>", re.I)
+            FIELD_PAIR = re.compile(
+                r"<div[^>]*appuntamento-prenotato-field-title[^>]*>\s*<span>([^<]*)</span>\s*</div>\s*"
+                r"<div[^>]*appuntamento-prenotato-field-value[^>]*>\s*<span[^>]*>([^<]*)</span>",
+                re.S)
+            LI_VAL = re.compile(r"<li[^>]*>([^<]+)</li>", re.I)
 
-        def _valori(card, attr):
-            m = re.search(r"<ul[^>]*valori=\"%s\"[^>]*>(.*?)</ul>" % re.escape(attr),
-                          card, re.S)
-            if not m:
-                return []
+            def _valori(card, attr):
+                m = re.search(r"<ul[^>]*valori=\"%s\"[^>]*>(.*?)</ul>" % re.escape(attr),
+                              card, re.S)
+                if not m:
+                    return []
+                out = []
+                for lm in LI_VAL.finditer(m.group(1)):
+                    v = lm.group(1).strip()
+                    if not v:
+                        continue
+                    low = v.lower()
+                    if "vedi tutte" in low or "chiudi" in low:
+                        continue
+                    out.append(v)
+                return out
+
+            def _campi(card):
+                campi = {}
+                for m in FIELD_PAIR.finditer(card):
+                    label = re.sub(r"[\s:]+$", "", m.group(1)).strip()
+                    val = m.group(2).strip()
+                    if label and val:
+                        campi[label] = val
+                return campi
+
+            starts = [m.start() for m in CARD_START.finditer(html)]
             out = []
-            for lm in LI_VAL.finditer(m.group(1)):
-                v = lm.group(1).strip()
-                if not v:
-                    continue
-                low = v.lower()
-                if "vedi tutte" in low or "chiudi" in low:
-                    continue
-                out.append(v)
+            for idx, s in enumerate(starts):
+                e = starts[idx + 1] if idx + 1 < len(starts) else min(len(html), s + 80000)
+                card = html[s:e]
+                campi = _campi(card)
+                pres = _valori(card, "appuntamentoUnificatoCtrl.prestazioni")
+                cod = _valori(card, "appuntamentoUnificatoCtrl.codici_prenotazione")
+                prestazione = ", ".join(pres)[:80]
+                entry = {
+                    "prestazione": prestazione,
+                    "data_ora": campi.get("Data e ora", ""),
+                    "codice": cod[0] if cod else "",
+                    "azienda": campi.get("Azienda", ""),
+                    "presentarsi_in": campi.get("Presentarsi in", ""),
+                    "comune": campi.get("Comune", ""),
+                    "indirizzo": campi.get("Indirizzo", ""),
+                    "cap": campi.get("CAP", ""),
+                }
+                if not (entry["codice"] or entry["data_ora"] or prestazione):
+                    continue  # card vuota/placeholder non renderizzata
+                out.append(entry)
             return out
-
-        def _campi(card):
-            campi = {}
-            for m in FIELD_PAIR.finditer(card):
-                label = re.sub(r"[\s:]+$", "", m.group(1)).strip()
-                val = m.group(2).strip()
-                if label and val:
-                    campi[label] = val
-            return campi
-
-        starts = [m.start() for m in CARD_START.finditer(html)]
-        out = []
-        for idx, s in enumerate(starts):
-            e = starts[idx + 1] if idx + 1 < len(starts) else min(len(html), s + 80000)
-            card = html[s:e]
-            campi = _campi(card)
-            pres = _valori(card, "appuntamentoUnificatoCtrl.prestazioni")
-            cod = _valori(card, "appuntamentoUnificatoCtrl.codici_prenotazione")
-            prestazione = ", ".join(pres)[:80]
-            entry = {
-                "prestazione": prestazione,
-                "data_ora": campi.get("Data e ora", ""),
-                "codice": cod[0] if cod else "",
-                "azienda": campi.get("Azienda", ""),
-                "presentarsi_in": campi.get("Presentarsi in", ""),
-                "comune": campi.get("Comune", ""),
-                "indirizzo": campi.get("Indirizzo", ""),
-                "cap": campi.get("CAP", ""),
-            }
-            if not (entry["codice"] or entry["data_ora"] or prestazione):
-                continue  # card vuota/placeholder non renderizzata
-            out.append(entry)
-        return out
+        finally:
+            lock.release()
 
     def _dump_pagina_per_debug(self, name, driver):
         """Salva un dump della pagina corrente per debug (solo se il file non esiste già)."""
@@ -217,31 +223,36 @@ class Controller:
         from selenium.webdriver.common.by import By
         if not self.assicura_sessione_attiva():
             return None
-        driver = self.browser.start()
-        # naviga SEMPRE alla pagina ricette
-        driver.get(selectors.RICETTE["url"])
-        time.sleep(4)
-        if not self.sess.is_autenticato(driver):
-            log.warning("get_ricette: sessione non valida o reindirizzata al login")
-            self.sess.session_valid = False
-            return None
-        # ELIMINA I FILTRI: così compaiono TUTTE le ricette (non solo vecchie/parziali)
+        lock = getattr(self, "_browser_lock", None) or threading.RLock()
+        lock.acquire()
         try:
-            driver.execute_script(
-                "var l=document.getElementById('eliminaFiltriLink');"
-                "if(l){l.click();return true}return false;", )
-            # fallback: chiama la funzione JS se il link non è un id
-            driver.execute_script("try{eliminaFiltri()}catch(e){}")
-            time.sleep(3)
-        except Exception as e:  # noqa: BLE001
-            log.warning("elimina filtri ricette: %s", e)
-        try:
-            with open("data/study/ricette_live.html", "w", encoding="utf-8") as f:
-                f.write(driver.page_source)
-        except Exception:  # noqa: BLE001
-            pass
-        html = driver.page_source
-        return parse_ricette(html)
+            driver = self.browser.start()
+            # naviga SEMPRE alla pagina ricette
+            driver.get(selectors.RICETTE["url"])
+            time.sleep(4)
+            if not self.sess.is_autenticato(driver):
+                log.warning("get_ricette: sessione non valida o reindirizzata al login")
+                self.sess.session_valid = False
+                return None
+            # ELIMINA I FILTRI: così compaiono TUTTE le ricette (non solo vecchie/parziali)
+            try:
+                driver.execute_script(
+                    "var l=document.getElementById('eliminaFiltriLink');"
+                    "if(l){l.click();return true}return false;", )
+                # fallback: chiama la funzione JS se il link non è un id
+                driver.execute_script("try{eliminaFiltri()}catch(e){}")
+                time.sleep(3)
+            except Exception as e:  # noqa: BLE001
+                log.warning("elimina filtri ricette: %s", e)
+            try:
+                with open("data/study/ricette_live.html", "w", encoding="utf-8") as f:
+                    f.write(driver.page_source)
+            except Exception:  # noqa: BLE001
+                pass
+            html = driver.page_source
+            return parse_ricette(html)
+        finally:
+            lock.release()
 
     def decide_request(self, req_id: str, approved: bool, extra: dict = None):
         self.queue.decide(req_id, approved, extra)
@@ -491,6 +502,8 @@ class Controller:
             if self.login_bloccato:
                 return None
             try:
+                if hasattr(self.browser, "is_alive") and not self.browser.is_alive():
+                    self.browser.stop()
                 driver = self.browser.start()
                 max_idle = self.cfg.settings.get("session", {}).get("max_idle_seconds", 21600)
                 if self.sess.is_expired(max_idle):
@@ -530,6 +543,8 @@ class Controller:
             except Exception as e:  # noqa: BLE001
                 log.warning("ensure_session: %s -> login", e)
                 self.sess.session_valid = False
+                if hasattr(self.browser, "is_alive") and not self.browser.is_alive():
+                    self.browser.stop()
                 if self._avvia_login():
                     self.login_retries = 0
                     self.sess.session_valid = True
@@ -551,10 +566,20 @@ class Controller:
 
     def risveglia(self) -> bool:
         """Riavvio login dopo blocco: resetta il contatore e prova subito."""
-        self.login_bloccato = False
-        self.login_retries = 0
-        log.info("Risveglio da comando: riprovo il login")
-        return self._avvia_login()
+        lock = getattr(self, "_login_lock", None) or threading.Lock()
+        with lock:
+            self.login_bloccato = False
+            self.login_retries = 0
+            log.info("Risveglio da comando: riprovo il login")
+            if hasattr(self, "browser") and hasattr(self.browser, "is_alive") and not self.browser.is_alive():
+                self.browser.stop()
+            ok = self._avvia_login()
+            if ok:
+                if hasattr(self, "_force"):
+                    self._force.set()
+            else:
+                self._incrementa_retry()
+            return ok
 
     def _avvia_login(self) -> bool:
         """Avvia il login secondo la modalità configurata (SPID Sielte, altri SPID, CIE, Manuale)."""
@@ -590,6 +615,14 @@ class Controller:
     def _keep_alive_loop(self):
         ka = self.cfg.settings.get("session", {}).get("keep_alive_seconds", 900)
         while not self._stop.wait(ka):
+            if not getattr(self.sess, "session_valid", False):
+                continue
+            acquired = False
+            if hasattr(self, "_browser_lock"):
+                acquired = self._browser_lock.acquire(timeout=5)
+                if not acquired:
+                    log.debug("keep-alive: browser occupato, rinvio tick")
+                    continue
             try:
                 if self.browser.driver is not None and self.sess.session_valid:
                     ok = self.sess.keep_alive(self.browser.driver, selectors.LOGIN_SPID["url_accedi"])
@@ -599,6 +632,11 @@ class Controller:
             except Exception as e:  # noqa: BLE001
                 log.warning("keep-alive loop: %s", e)
                 self.sess.session_valid = False
+                if hasattr(self.browser, "is_alive") and not self.browser.is_alive():
+                    self.browser.stop()
+            finally:
+                if acquired:
+                    self._browser_lock.release()
 
     # ---- polling loop ----
     def _poll_loop(self):
@@ -637,41 +675,45 @@ class Controller:
         i flow rimanenti: il loop ricomincia subito (l'utente ha chiesto un
         nuovo controllo).
         """
-        max_idle = self.cfg.settings.get("session", {}).get("max_idle_seconds", 21600)
-        sessione_scaduta = self.sess.is_expired(max_idle)
-        driver_ok = self.browser.driver is not None and self.sess.is_autenticato(self.browser.driver)
+        lock = getattr(self, "_browser_lock", None) or threading.RLock()
+        with lock:
+            max_idle = self.cfg.settings.get("session", {}).get("max_idle_seconds", 21600)
+            sessione_scaduta = self.sess.is_expired(max_idle)
+            driver_ok = self.browser.driver is not None and self.sess.is_autenticato(self.browser.driver)
 
-        if sessione_scaduta or not self.sess.session_valid or not driver_ok:
-            self.sess.session_valid = False
-            auth_desc = getattr(self.auth_config, "describe", lambda: "SPID")() if hasattr(self, "auth_config") else "SPID"
-            if manual:
-                self.bot.notify(f"🔍 Sessione non attiva o scaduta ({auth_desc}). Avvio rinnovo sessione...")
-                if not self.assicura_sessione_attiva():
-                    self.bot.notify(f"❌ Polling interrotto: impossibile autenticare la sessione ({auth_desc}).")
-                    return
-            else:
-                log.info("Sessione scaduta o non pronta (%s), provo ensure_session", auth_desc)
-                if not self.ensure_session():
-                    log.info("Sessione ancora non pronta, salto polling automatico")
-                    return
+            if sessione_scaduta or not self.sess.session_valid or not driver_ok:
+                self.sess.session_valid = False
+                auth_desc = getattr(self.auth_config, "describe", lambda: "SPID")() if hasattr(self, "auth_config") else "SPID"
+                if manual:
+                    self.bot.notify(f"🔍 Sessione non attiva o scaduta ({auth_desc}). Avvio rinnovo sessione...")
+                    if not self.assicura_sessione_attiva():
+                        self.bot.notify(f"❌ Polling interrotto: impossibile autenticare la sessione ({auth_desc}).")
+                        return
+                else:
+                    log.info("Sessione scaduta o non pronta (%s), provo ensure_session", auth_desc)
+                    if not self.ensure_session():
+                        log.info("Sessione ancora non pronta, salto polling automatico")
+                        return
 
-        for f in list(self._flows):
-            # interruzione: /poll richiesto durante il giro -> esci subito
-            if self._force.is_set():
-                log.info("Polling interrotto a metà: /poll richiesto dall'utente")
-                break
-            log.info("Polling %s (%s)", f.mid, f.type)
-            try:
-                f.poll_once(manual=manual)
-            except Exception as e:  # noqa: BLE001
-                log.exception("Polling %s fallito: %s", f.mid, e)
-                err_str = str(e).lower()
-                if "login" in err_str or "autentica" in err_str or "sessione" in err_str:
-                    self.sess.session_valid = False
-            # ricontrolla anche dopo un flow lungo (il /poll può essere arrivato)
-            if self._force.is_set():
-                log.info("Polling interrotto:a fine %s: /poll richiesto dall'utente", f.mid)
-                break
+            for f in list(self._flows):
+                # interruzione: /poll richiesto durante il giro -> esci subito
+                if self._force.is_set():
+                    log.info("Polling interrotto a metà: /poll richiesto dall'utente")
+                    break
+                log.info("Polling %s (%s)", f.mid, f.type)
+                try:
+                    f.poll_once(manual=manual)
+                except Exception as e:  # noqa: BLE001
+                    log.exception("Polling %s fallito: %s", f.mid, e)
+                    err_str = str(e).lower()
+                    if "login" in err_str or "autentica" in err_str or "sessione" in err_str:
+                        self.sess.session_valid = False
+                    if hasattr(self.browser, "is_alive") and not self.browser.is_alive():
+                        self.browser.stop()
+                # ricontrolla anche dopo un flow lungo (il /poll può essere arrivato)
+                if self._force.is_set():
+                    log.info("Polling interrotto:a fine %s: /poll richiesto dall'utente", f.mid)
+                    break
 
     # ---- main ----
     def run(self, run_bot: bool = True):

@@ -90,16 +90,8 @@ class SessionManager:
 
     def _riavvia_con_headless(self, headless: bool) -> None:
         """Se un driver e' gia' attivo ma con modalita' headless diversa,
-        lo chiude per farne ripartire Chrome con la modalita' richiesta.
-        (Browser.start() riusa il driver esistente: senza questo check un
-        driver headless non verrebbe mai sostituito da uno visibile o viceversa)."""
-        d = self.browser.driver
-        if d is None:
-            return
-        if self.browser.settings.headless == headless:
-            return
-        log.info("riavvio Chrome: headless %s -> %s", self.browser.settings.headless, headless)
-        self.browser.stop()
+        lo chiude per farne ripartire Chrome con la modalita' richiesta."""
+        self.browser.set_headless(headless)
 
     # ---------------- azioni ----------------
     def relogin_manual(self, url: str) -> webdriver.Chrome:
@@ -111,7 +103,6 @@ class SessionManager:
         un timeout, domanda comunque conferma manuale.
         """
         prev = self.browser.settings.headless
-        self.browser.settings.headless = False  # forza visibile
         self._riavvia_con_headless(False)
         try:
             driver = self.browser.start()
@@ -121,7 +112,7 @@ class SessionManager:
             self.session_valid = True
             return driver
         finally:
-            self.browser.settings.headless = prev
+            self._riavvia_con_headless(prev)
 
     def _attendi_login_manuale(self, driver, timeout_s: int = 600) -> None:
         """Attende (con polling ogni 5s) che il login manuale sia completato,
@@ -180,6 +171,9 @@ class SessionManager:
         except Exception as e:  # noqa: BLE001
             self.session_valid = False
             log.warning("keep-alive fallito: %s", e)
+            if not self.browser.is_alive():
+                log.warning("keep-alive: browser non risponde, arresto il driver")
+                self.browser.stop()
             return False
 
     # ---------------- helper SielteID ----------------
@@ -345,7 +339,6 @@ class SessionManager:
         from core import selectors
 
         prev = self.browser.settings.headless
-        self.browser.settings.headless = False  # serve la finestra per l'OTP
         self._riavvia_con_headless(False)
         driver = self.browser.start()
         try:
@@ -416,7 +409,8 @@ class SessionManager:
 
             # Se non ancora autenticati, la notifica iniziale non è bastata: avvia fallback
             log.info("Login da notifica non completato: avvio fallback (invia notifica / immetti otp)")
-            while time.time() < deadline:
+            abs_deadline = t0 + 600  # Limite massimo assoluto di 10 minuti per la sessione interattiva
+            while time.time() < deadline and time.time() < abs_deadline:
                 self._clicca_consenso_sielte(driver)
                 if self.is_autenticato(driver):
                     self.save(driver)
@@ -428,10 +422,12 @@ class SessionManager:
 
                 if scelta == "notify":
                     log.info("Scelta fallback utente: invia notifica di nuovo")
+                    # Quando l'utente chiede un nuovo invio push, estendiamo la deadline
+                    deadline = max(deadline, min(abs_deadline, time.time() + 65))
                     if self.on_notify:
                         self.on_notify("📲 Nuova notifica push SielteID inviata: controlla il telefono!")
                     self._invia_notifica_sielte(driver)
-                    push_wait_until = min(deadline, time.time() + 35)
+                    push_wait_until = min(deadline, time.time() + 45)
                     while time.time() < push_wait_until:
                         time.sleep(4)
                         self._clicca_consenso_sielte(driver)
@@ -442,6 +438,7 @@ class SessionManager:
 
                 elif scelta == "otp":
                     log.info("Scelta fallback utente: immetti codice OTP")
+                    deadline = max(deadline, min(abs_deadline, time.time() + 130))
                     self._attiva_otp_sielte(driver)
                     time.sleep(2)
                     successo = self._chiedi_e_inserisci_otp(driver, auth_callback)
@@ -459,7 +456,7 @@ class SessionManager:
 
             raise TimeoutError("Timeout nell'attesa approvazione SielteID (approva la notifica o inserisci l'OTP!)")
         finally:
-            self.browser.settings.headless = prev
+            self._riavvia_con_headless(prev)
 
     # ---------------- helper selettori ----------------
     def _find_and_fill(self, driver, sel_list, value: str) -> bool:
@@ -515,7 +512,6 @@ class SessionManager:
         prov_name = provider_key.capitalize()
 
         prev = self.browser.settings.headless
-        self.browser.settings.headless = False
         self._riavvia_con_headless(False)
         driver = self.browser.start()
         try:
@@ -582,7 +578,7 @@ class SessionManager:
 
             raise TimeoutError(f"Timeout nell'attesa approvazione SPID ({prov_name})")
         finally:
-            self.browser.settings.headless = prev
+            self._riavvia_con_headless(prev)
 
     # ---------------- login CIE ----------------
     def relogin_cie(self, username: str = "", password: str = "", mode: str = "app",
@@ -596,7 +592,6 @@ class SessionManager:
         from core import selectors
 
         prev = self.browser.settings.headless
-        self.browser.settings.headless = False
         self._riavvia_con_headless(False)
         driver = self.browser.start()
         try:
@@ -650,4 +645,4 @@ class SessionManager:
 
             raise TimeoutError("Timeout nell'attesa autenticazione CIE (completa l'accesso con l'app CieID o Smartcard)")
         finally:
-            self.browser.settings.headless = prev
+            self._riavvia_con_headless(prev)

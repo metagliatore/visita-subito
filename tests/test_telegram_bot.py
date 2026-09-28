@@ -305,3 +305,33 @@ def test_echo_chat_text_choices_during_fallback():
     assert bot._auth_event.is_set()
 
 
+def test_login_in_corso_guards():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot.controller.login_bloccato = False
+    bot.controller.login_in_corso = True
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    up.message.reply_text = AsyncMock()
+
+    # /poll should warn and not trigger force_poll
+    asyncio.run(bot._h_poll(up, MagicMock()))
+    bot.controller.force_poll.assert_not_called()
+    assert "in corso" in up.message.reply_text.call_args[0][0]
+
+    # /appuntamenti should warn and not call get_appuntamenti
+    up.message.reply_text.reset_mock()
+    asyncio.run(bot._h_appuntamenti(up, MagicMock()))
+    bot.controller.get_appuntamenti.assert_not_called()
+    assert "in corso" in up.message.reply_text.call_args[0][0]
+
+    # /ricette should warn and not call get_ricette
+    up.message.reply_text.reset_mock()
+    asyncio.run(bot._h_ricette(up, MagicMock()))
+    bot.controller.get_ricette.assert_not_called()
+    assert "in corso" in up.message.reply_text.call_args[0][0]
+
+
+
