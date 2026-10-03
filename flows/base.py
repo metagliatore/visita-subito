@@ -427,9 +427,10 @@ class Flow:
                 self.bot.notify(f"⚠️ Controllo non riuscito per {self.mid}: {e}")
             raise
 
-        # filtra per evitare di riproporre slot già visti
+        # filtra per evitare di riproporre slot già visti o in blacklist
         seen = self.store.seen_slots(self.mid)
-        fresh = [s for s in slots if s.key not in seen]
+        bl_keys = self.store.get_blacklist_keys(self.mid) if hasattr(self.store, "get_blacklist_keys") else set()
+        fresh = [s for s in slots if s.key not in seen and s.key not in bl_keys]
 
         match = best_match(fresh, self.criteri)
         if not match:
@@ -517,6 +518,13 @@ class Flow:
             if scaduta and inviati:
                 testo = f"{msg}\n\n⏳ Proposta scaduta: il tempo per rispondere è terminato, la disponibilità potrebbe non essere più valida."
                 self.bot.edit_message(testo, inviati)
+            else:
+                # Rifiuto esplicito dell'utente: aggiungi lo slot alla blacklist
+                if hasattr(self.store, "add_blacklist_entry"):
+                    nre = (self.monitor.get("nre") or "").strip()
+                    data_ricetta = (self.monitor.get("data_ricetta") or "").strip()
+                    self.store.add_blacklist_entry(self.mid, slot, nre=nre, data_ricetta=data_ricetta)
+                    log.info("[%s] Aggiunto slot %s alla blacklist", self.mid, getattr(slot, "key", str(slot)))
             return f"Disponibilità {slot} non confermata."
 
         # approvata -> esegui l'azione reale
