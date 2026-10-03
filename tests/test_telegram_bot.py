@@ -420,5 +420,113 @@ def test_h_echo_chat_pause_unpause_hyphen():
     assert "messa in pausa" in up.message.reply_text.call_args[0][0]
 
 
+def test_h_blacklist_no_monitors():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot.controller.login_bloccato = False
+    bot.controller.monitors_attivi.return_value = []
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    up.message.reply_text = AsyncMock()
+
+    asyncio.run(bot._h_blacklist(up, MagicMock()))
+    up.message.reply_text.assert_awaited_once()
+    msg = up.message.reply_text.call_args[0][0]
+    assert "Nessun monitoraggio attualmente in corso" in msg
+
+
+def test_h_blacklist_with_monitors():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot.controller.login_bloccato = False
+    bot.controller.monitors_attivi.return_value = [{"id": "m1", "ricetta": "VISITA CARDIOLOGICA"}]
+    bot.controller._nome_leggibile.return_value = "VISITA CARDIOLOGICA [prenotazione]"
+    bot.controller.get_blacklist.return_value = []
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    up.message.reply_text = AsyncMock()
+
+    asyncio.run(bot._h_blacklist(up, MagicMock()))
+    up.message.reply_text.assert_awaited_once()
+    kb = up.message.reply_text.call_args[1]["reply_markup"]
+    assert any("bl:pick:m1" in btn.callback_data for row in kb.inline_keyboard for btn in row)
+
+
+def test_blacklist_callbacks():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot.controller.store = MagicMock()
+    bot.controller.store.get_monitors.return_value = [{"id": "m1", "ricetta": "VISITA CARDIOLOGICA"}]
+    bot.controller._nome_leggibile.return_value = "VISITA CARDIOLOGICA"
+
+    sample_entry = {
+        "id": "e1",
+        "date_str": "15/10/2026",
+        "time_str": "10:30",
+        "azienda": "ASST Niguarda",
+        "sede": "Piazza Ospedale Maggiore",
+        "comune": "Milano",
+        "rejected_at": 1727500000.0,
+    }
+
+    # 1. bl:pick:m1 con blacklist non vuota
+    bot.controller.get_blacklist.return_value = [sample_entry]
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    q = up.callback_query
+    q.data = "bl:pick:m1"
+    q.edit_message_text = AsyncMock()
+    q.answer = AsyncMock()
+
+    asyncio.run(bot._h_callback(up, MagicMock()))
+    q.edit_message_text.assert_awaited_once()
+    txt = q.edit_message_text.call_args[0][0]
+    assert "15/10/2026 ore 10:30" in txt
+    assert "ASST Niguarda" in txt
+    kb = q.edit_message_text.call_args[1]["reply_markup"]
+    assert any("bl:del:m1:e1" in btn.callback_data for row in kb.inline_keyboard for btn in row)
+    assert any("bl:clear_ask:m1" in btn.callback_data for row in kb.inline_keyboard for btn in row)
+
+    # 2. bl:clear_ask:m1
+    q.reset_mock()
+    q.data = "bl:clear_ask:m1"
+    asyncio.run(bot._h_callback(up, MagicMock()))
+    q.edit_message_text.assert_awaited_once()
+    txt = q.edit_message_text.call_args[0][0]
+    assert "Conferma cancellazione" in txt
+    kb = q.edit_message_text.call_args[1]["reply_markup"]
+    assert any("bl:clear_do:m1" in btn.callback_data for row in kb.inline_keyboard for btn in row)
+
+    # 3. bl:clear_do:m1
+    q.reset_mock()
+    q.data = "bl:clear_do:m1"
+    bot.controller.svuota_blacklist.return_value = 1
+    asyncio.run(bot._h_callback(up, MagicMock()))
+    bot.controller.svuota_blacklist.assert_called_once_with("m1")
+    q.edit_message_text.assert_awaited_once()
+    assert "svuotata" in q.edit_message_text.call_args[0][0].lower()
+
+    # 4. bl:del:m1:e1
+    q.reset_mock()
+    q.data = "bl:del:m1:e1"
+    bot.controller.rimuovi_da_blacklist.return_value = sample_entry
+    bot.controller.get_blacklist.return_value = []
+    asyncio.run(bot._h_callback(up, MagicMock()))
+    bot.controller.rimuovi_da_blacklist.assert_called_once_with("m1", "e1")
+    q.answer.assert_awaited_once()
+    assert "vuota" in q.edit_message_text.call_args[0][0].lower()
+
+    # 5. bl:close
+    q.reset_mock()
+    q.data = "bl:close"
+    asyncio.run(bot._h_callback(up, MagicMock()))
+    q.edit_message_text.assert_awaited_once_with("Operazione blacklist terminata 👍")
+
+
 
 
