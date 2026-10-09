@@ -528,5 +528,52 @@ def test_blacklist_callbacks():
     q.edit_message_text.assert_awaited_once_with("Operazione blacklist terminata 👍")
 
 
+def test_telegram_notify_in_running_event_loop():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot._send = AsyncMock()
+
+    async def run_in_loop():
+        bot.notify("test message")
+        await asyncio.sleep(0.01)
+
+    asyncio.run(run_in_loop())
+    bot._send.assert_awaited_once_with("test message")
+
+
+def test_h_status_when_login_bloccato():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot.controller.login_bloccato = True
+    bot.controller.status_text.return_value = "Stato mock"
+    bot.notify = MagicMock()
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    up.message.reply_text = AsyncMock()
+
+    asyncio.run(bot._h_status(up, MagicMock()))
+    assert bot.controller.login_bloccato is False
+    up.message.reply_text.assert_awaited_once()
+    reply_msg = up.message.reply_text.call_args[0][0]
+    assert "Login sbloccato e riavviato" in reply_msg
+    assert "Stato mock" in reply_msg
+
+
+def test_h_poll_when_login_bloccato():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot.controller.login_bloccato = True
+    bot.notify = MagicMock()
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    up.message.reply_text = AsyncMock()
+
+    asyncio.run(bot._h_poll(up, MagicMock()))
+    assert bot.controller.login_bloccato is False
+    up.message.reply_text.assert_awaited_once()
+    assert "Tentativi di login sbloccati" in up.message.reply_text.call_args[0][0]
+
+
 
 

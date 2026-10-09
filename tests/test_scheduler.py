@@ -286,4 +286,41 @@ def test_status_text_polling_in_corso():
     assert "🔄 Controllo disponibilità in corso..." in text
 
 
+def test_ensure_session_force_login_and_reset_blocchi():
+    ctrl = MagicMock()
+    ctrl.login_bloccato = True
+    ctrl.login_retries = 3
+    ctrl._browser_lock = MagicMock()
+    ctrl._login_lock = MagicMock()
+    ctrl.browser = MagicMock()
+    ctrl.browser.start.return_value = MagicMock()
+    ctrl.browser.driver = ctrl.browser.start.return_value
+    ctrl._avvia_login.return_value = True
+
+    res = Controller.ensure_session(ctrl, force_login=True, reset_blocchi=True)
+    assert res == ctrl.browser.driver
+    assert ctrl.login_bloccato is False
+    assert ctrl.login_retries == 0
+    ctrl._avvia_login.assert_called_once()
+
+
+def test_risveglia_sets_poll_manual():
+    ctrl = MagicMock()
+    ctrl.login_bloccato = True
+    ctrl.login_retries = 3
+    ctrl.login_in_corso = False
+    ctrl._browser_lock = MagicMock()
+    ctrl._login_lock = MagicMock()
+    ctrl._avvia_login.return_value = True
+    ctrl._force = MagicMock()
+    ctrl._poll_manual = False
+
+    res = Controller.risveglia(ctrl, manual_poll=True)
+    assert res is True
+    assert ctrl.login_bloccato is False
+    assert ctrl.login_retries == 0
+    assert ctrl._poll_manual is True
+    ctrl._force.set.assert_called_once()
+
+
 

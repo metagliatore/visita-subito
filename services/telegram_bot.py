@@ -73,13 +73,24 @@ class TelegramBot:
                     log.error("invio TG a %s fallito: %s", cid, e)
 
     def notify(self, text: str) -> None:
-        """Callback sincrona da flussi/poller (crea un loop ad-hoc)."""
+        """Callback sincrona/asincrona da flussi/poller o handler (gestisce loop attivi)."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and loop.is_running():
+            asyncio.create_task(self._send(text))
+            return
+
         try:
             asyncio.run(self._send(text))
         except RuntimeError:
             loop = asyncio.new_event_loop()
-            loop.run_until_complete(self._send(text))
-            loop.close()
+            try:
+                loop.run_until_complete(self._send(text))
+            finally:
+                loop.close()
         except Exception as e:  # noqa: BLE001
             log.error("notify TG fallita: %s", e)
 
@@ -276,7 +287,7 @@ class TelegramBot:
                 .replace(">", "&gt;")
                 .replace('"', "&quot;"))
 
-    def _risveglia_se_needed(self, update) -> bool:
+    def _risveglia_se_needed(self, update=None) -> bool:
         """Se il login è bloccato, un qualunque comando lo risveglia e riprova.
 
         Ritorna True se abbiamo risvegliato (l'handler avvisa e avvia il login).
@@ -285,6 +296,8 @@ class TelegramBot:
             return False
         if getattr(self.controller, "login_bloccato", False):
             import threading
+            self.controller.login_bloccato = False
+            self.controller.login_retries = 0
             auth_desc = getattr(self.controller.auth_config, "describe", lambda: "Autenticazione")() if hasattr(self.controller, "auth_config") else "Autenticazione"
             self.notify(f"🔄 Tentativi di login sbloccati! Avvio un nuovo tentativo di accesso ({auth_desc})... controlla il dispositivo per approvare!")
             threading.Thread(target=self.controller.risveglia, daemon=True).start()
@@ -296,8 +309,7 @@ class TelegramBot:
         if not self._autorizzato(update):
             await update.message.reply_text("Bot non disponibile.")
             return
-        if self._risveglia_se_needed(update):
-            return
+        self._risveglia_se_needed(update)
         await update.message.reply_text(
             "👋 Benvenuto! Scegli su cosa vuoi lavorare:\n\n"
             "• /ricette — su una RICETTA da prenotare (nuove disponibilità)\n"
@@ -450,8 +462,7 @@ class TelegramBot:
     async def _h_monitora(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
             return
-        if self._risveglia_se_needed(update):
-            return
+        self._risveglia_se_needed(update)
         if self.controller is None:
             await update.message.reply_text("Controller non inizializzato.")
             return
@@ -777,8 +788,7 @@ class TelegramBot:
     async def _h_stop(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
             return
-        if self._risveglia_se_needed(update):
-            return
+        self._risveglia_se_needed(update)
         if self.controller is None:
             await update.message.reply_text("Controller non inizializzato.")
             return
@@ -924,15 +934,13 @@ class TelegramBot:
         """Comando /blacklist: consulta e gestisce le disponibilità rifiutate."""
         if not self._autorizzato(update):
             return
-        if self._risveglia_se_needed(update):
-            return
+        self._risveglia_se_needed(update)
         await self._mostra_scelta_monitor_blacklist(update.message, is_edit=False)
 
     async def _h_appuntamenti(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
             return
-        if self._risveglia_se_needed(update):
-            return
+        self._risveglia_se_needed(update)
         if self.controller and getattr(self.controller, "login_in_corso", False) is True:
             await update.message.reply_text("🔄 Tentativo di accesso attualmente in corso. Controlla il telefono/dispositivo per completare l'autenticazione prima di procedere.")
             return
@@ -991,8 +999,7 @@ class TelegramBot:
     async def _h_ricette(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
             return
-        if self._risveglia_se_needed(update):
-            return
+        self._risveglia_se_needed(update)
         if self.controller and getattr(self.controller, "login_in_corso", False) is True:
             await update.message.reply_text("🔄 Tentativo di accesso attualmente in corso. Controlla il telefono/dispositivo per completare l'autenticazione prima di procedere.")
             return
@@ -1055,21 +1062,24 @@ class TelegramBot:
     async def _h_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
             return
-        if self._risveglia_se_needed(update):
-            return
+        was_blocked = self._risveglia_se_needed(update)
         if self.controller:
             text = self.controller.status_text()
         else:
             text = "Controller non inizializzato."
+        if was_blocked:
+            text = "🔄 Login sbloccato e riavviato!\n\n" + text
         await update.message.reply_text(text)
 
     async def _h_poll(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
             return
-        if self._risveglia_se_needed(update):
-            return
         if self.controller and getattr(self.controller, "login_in_corso", False) is True:
             await update.message.reply_text("🔄 Tentativo di accesso attualmente in corso. Controlla il telefono/dispositivo per completare l'autenticazione prima di forzare il controllo.")
+            return
+        was_blocked = self._risveglia_se_needed(update)
+        if was_blocked:
+            await update.message.reply_text("🔄 Tentativi di login sbloccati! Eseguo l'accesso e procederò con il controllo...")
             return
         if self.controller and getattr(self.controller, "paused", False) is True:
             await update.message.reply_text("Avvio controllo forzato (nota: il monitoraggio periodico è in pausa, usa /resume o /pause per riattivarlo)...")
@@ -1081,8 +1091,7 @@ class TelegramBot:
     async def _h_pause(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
             return
-        if self._risveglia_se_needed(update):
-            return
+        self._risveglia_se_needed(update)
         if self.controller is None:
             await update.message.reply_text("Controller non inizializzato.")
             return
@@ -1136,8 +1145,7 @@ class TelegramBot:
     async def _h_resume(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
             return
-        if self._risveglia_se_needed(update):
-            return
+        self._risveglia_se_needed(update)
         if self.controller is None:
             await update.message.reply_text("Controller non inizializzato.")
             return
@@ -1158,8 +1166,7 @@ class TelegramBot:
     async def _h_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
             return
-        if self._risveglia_se_needed(update):
-            return
+        self._risveglia_se_needed(update)
         await update.message.reply_text(HELP_TEXT)
 
     async def _h_echo_chat(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

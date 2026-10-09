@@ -58,8 +58,14 @@ def test_needs_login(tmp_path):
 def test_invalidate(tmp_path):
     sm = SessionManager(browser=None, cookie_dir=tmp_path)
     sm.session_valid = True
+    (tmp_path / "cookies.pkl").write_bytes(b"dummy")
+    (tmp_path / "meta.json").write_text("{}", encoding="utf-8")
+
     sm.invalidate()
     assert sm.session_valid is False
+    assert not (tmp_path / "cookies.pkl").exists()
+    assert not (tmp_path / "meta.json").exists()
+    assert sm.needs_login() is True
 
 
 def test_save_and_load_cookies(tmp_path):

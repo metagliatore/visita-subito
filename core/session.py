@@ -152,8 +152,18 @@ class SessionManager:
 
 
     def invalidate(self) -> None:
-        """Marca la sessione come non valida/scaduta."""
+        """Marca la sessione come non valida/scaduta e rimuove i cookie su disco."""
         self.session_valid = False
+        try:
+            if hasattr(self, "cookie_file") and self.cookie_file.exists():
+                self.cookie_file.unlink()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if hasattr(self, "meta_file") and self.meta_file.exists():
+                self.meta_file.unlink()
+        except Exception:  # noqa: BLE001
+            pass
 
     def keep_alive(self, driver: webdriver.Chrome, url: str) -> bool:
         """Tocca una pagina del portale per mantenere viva la sessione."""

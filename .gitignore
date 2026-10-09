@@ -9,3 +9,5 @@ data/
 *.swp
 .DS_Store
 icloud
+.coverage
+.pytest_cache/

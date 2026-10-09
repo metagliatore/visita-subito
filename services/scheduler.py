@@ -102,12 +102,12 @@ class Controller:
             self._flows.append(cls(m, self.browser, self.queue, self.bot, self.store))
 
     # ---- API per il bot ----
-    def assicura_sessione_attiva(self) -> bool:
+    def assicura_sessione_attiva(self, force_login: bool = False, reset_blocchi: bool = True) -> bool:
         """Assicura una sessione autenticata prima dei comandi che toccano il portale.
 
         Ritorna True se autenticato (o dopo nuovo login).
         """
-        driver = self.ensure_session()
+        driver = self.ensure_session(force_login=force_login, reset_blocchi=reset_blocchi)
         return driver is not None and self.sess.session_valid
 
     def get_appuntamenti(self) -> list | None:
@@ -532,71 +532,87 @@ class Controller:
         return "\n".join(lines)
 
     # ---- bootstrap sessione ----
-    def ensure_session(self):
+    def ensure_session(self, force_login: bool = False, reset_blocchi: bool = False):
         """Assicura una sessione autenticata.
 
-        Se i cookie non bastano, fa il login SielteID con un numero MASSIMO di
+        Se i cookie non bastano o force_login=True, fa il login con un numero MASSIMO di
         tentativi (MAX_LOGIN_RETRIES, default 3). Se supera i retry ferma i
         tentativi e resta in ascolto (un comando Telegram lo risveglia).
         """
+        if reset_blocchi:
+            self.login_bloccato = False
+            self.login_retries = 0
+
         if self.login_bloccato:
             log.info("Login bloccato (max retry raggiunto): serve un comando per risvegliare")
             return None
-        with self._login_lock:
-            if self.login_bloccato:
-                return None
-            try:
-                if hasattr(self.browser, "is_alive") and not self.browser.is_alive():
-                    self.browser.stop()
-                driver = self.browser.start()
-                max_idle = self.cfg.settings.get("session", {}).get("max_idle_seconds", 21600)
-                if self.sess.is_expired(max_idle):
-                    log.info("Sessione scaduta per inattività (max_idle=%ds) -> invalido sessione", max_idle)
-                    self.sess.session_valid = False
 
-                if self.sess.session_valid and self.sess.is_autenticato(driver):
-                    log.info("Sessione già attiva: %s", driver.current_url[:60])
-                    self.login_retries = 0
-                    return driver
+        b_lock = getattr(self, "_browser_lock", None) or threading.RLock()
+        l_lock = getattr(self, "_login_lock", None) or threading.Lock()
+        with b_lock:
+            with l_lock:
+                if self.login_bloccato:
+                    return None
+                try:
+                    if hasattr(self.browser, "is_alive") and not self.browser.is_alive():
+                        self.browser.stop()
+                    driver = self.browser.start()
+                    max_idle = self.cfg.settings.get("session", {}).get("max_idle_seconds", 21600)
+                    if self.sess.is_expired(max_idle):
+                        log.info("Sessione scaduta per inattività (max_idle=%ds) -> invalido sessione", max_idle)
+                        self.sess.session_valid = False
 
-                if not self.sess.needs_login() and not self.sess.is_expired(max_idle):
-                    driver.get("https://www.fascicolosanitario.regione.lombardia.it")
-                    time.sleep(2)
-                    self.sess.load_cookies(driver)
-                    driver.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
-                    time.sleep(3)
-                    if self.sess.is_autenticato(driver):
-                        log.info("Sessione da cookie OK: %s", driver.current_url[:60])
-                        self.sess.session_valid = True
+                    if not force_login and self.sess.session_valid and self.sess.is_autenticato(driver):
+                        log.info("Sessione già attiva: %s", driver.current_url[:60])
                         self.login_retries = 0
                         return driver
-                    else:
-                        log.info("Cookie scaduti o non sufficienti -> avvio login")
-                else:
-                    log.info("Nessuna sessione valida salvata o cookie scaduti -> avvio login")
 
-                self.sess.session_valid = False
-                if self._avvia_login():
-                    self.login_retries = 0
-                    self.sess.session_valid = True
-                    return self.browser.driver
-                else:
+                    if not force_login and not self.sess.needs_login() and not self.sess.is_expired(max_idle) and self.sess.session_valid:
+                        driver.get("https://www.fascicolosanitario.regione.lombardia.it")
+                        time.sleep(2)
+                        self.sess.load_cookies(driver)
+                        driver.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
+                        time.sleep(3)
+                        has_login_button = False
+                        try:
+                            from selenium.webdriver.common.by import By
+                            btns = driver.find_elements(By.CSS_SELECTOR, "[spid-idp-button], a.button-spid, .pulsante-spid, button[ng-click*='login']")
+                            has_login_button = bool(btns and any(b.is_displayed() for b in btns))
+                        except Exception:  # noqa: BLE001
+                            pass
+
+                        if self.sess.is_autenticato(driver) and not has_login_button:
+                            log.info("Sessione da cookie OK: %s", driver.current_url[:60])
+                            self.sess.session_valid = True
+                            self.login_retries = 0
+                            return driver
+                        else:
+                            log.info("Cookie scaduti o non sufficienti -> avvio login")
+                    else:
+                        log.info("Nessuna sessione valida salvata o cookie scaduti o force_login -> avvio login")
+
                     self.sess.session_valid = False
-                    self._incrementa_retry()
-                    return None
-            except Exception as e:  # noqa: BLE001
-                log.warning("ensure_session: %s -> login", e)
-                self.sess.session_valid = False
-                if hasattr(self.browser, "is_alive") and not self.browser.is_alive():
-                    self.browser.stop()
-                if self._avvia_login():
-                    self.login_retries = 0
-                    self.sess.session_valid = True
-                    return self.browser.driver
-                else:
+                    if self._avvia_login():
+                        self.login_retries = 0
+                        self.sess.session_valid = True
+                        return self.browser.driver
+                    else:
+                        self.sess.session_valid = False
+                        self._incrementa_retry()
+                        return None
+                except Exception as e:  # noqa: BLE001
+                    log.warning("ensure_session: %s -> login", e)
                     self.sess.session_valid = False
-                    self._incrementa_retry()
-                    return None
+                    if hasattr(self.browser, "is_alive") and not self.browser.is_alive():
+                        self.browser.stop()
+                    if self._avvia_login():
+                        self.login_retries = 0
+                        self.sess.session_valid = True
+                        return self.browser.driver
+                    else:
+                        self.sess.session_valid = False
+                        self._incrementa_retry()
+                        return None
 
     def _incrementa_retry(self):
         self.login_retries += 1
@@ -608,22 +624,29 @@ class Controller:
                 "(es. /status o /poll) per riprovare il login.")
             log.warning("MAX_LOGIN_RETRIES raggiunto (%s): login bloccato", self.max_login_retries)
 
-    def risveglia(self) -> bool:
+    def risveglia(self, manual_poll: bool = True) -> bool:
         """Riavvio login dopo blocco: resetta il contatore e prova subito."""
-        lock = getattr(self, "_login_lock", None) or threading.Lock()
-        with lock:
-            self.login_bloccato = False
-            self.login_retries = 0
-            log.info("Risveglio da comando: riprovo il login")
-            if hasattr(self, "browser") and hasattr(self.browser, "is_alive") and not self.browser.is_alive():
-                self.browser.stop()
-            ok = self._avvia_login()
-            if ok:
-                if hasattr(self, "_force"):
-                    self._force.set()
-            else:
-                self._incrementa_retry()
-            return ok
+        b_lock = getattr(self, "_browser_lock", None) or threading.RLock()
+        l_lock = getattr(self, "_login_lock", None) or threading.Lock()
+        with b_lock:
+            with l_lock:
+                if getattr(self, "login_in_corso", False) is True:
+                    log.info("Login già in corso, risveglia non avvia un altro login concorrente")
+                    return False
+                self.login_bloccato = False
+                self.login_retries = 0
+                log.info("Risveglio da comando: riprovo il login")
+                if hasattr(self, "browser") and hasattr(self.browser, "is_alive") and not self.browser.is_alive():
+                    self.browser.stop()
+                ok = self._avvia_login()
+                if ok:
+                    if manual_poll:
+                        self._poll_manual = True
+                    if hasattr(self, "_force"):
+                        self._force.set()
+                else:
+                    self._incrementa_retry()
+                return ok
 
     def _avvia_login(self) -> bool:
         """Avvia il login secondo la modalità configurata (SPID Sielte, altri SPID, CIE, Manuale)."""
@@ -653,6 +676,11 @@ class Controller:
             log.warning("login fallito: %s", e)
             desc = getattr(self.auth_config, "describe", lambda: "Autenticazione")()
             self.bot.notify(f"❌ Login fallito ({desc}): {e}")
+            if hasattr(self, "browser") and hasattr(self.browser, "stop"):
+                try:
+                    self.browser.stop()
+                except Exception:  # noqa: BLE001
+                    pass
             return False
 
     # ---- keep-alive loop ----
@@ -737,7 +765,7 @@ class Controller:
                     auth_desc = getattr(self.auth_config, "describe", lambda: "SPID")() if hasattr(self, "auth_config") else "SPID"
                     if manual:
                         self.bot.notify(f"🔍 Sessione non attiva o scaduta ({auth_desc}). Avvio rinnovo sessione...")
-                        if not self.assicura_sessione_attiva():
+                        if not self.assicura_sessione_attiva(force_login=True, reset_blocchi=True):
                             self.bot.notify(f"❌ Polling interrotto: impossibile autenticare la sessione ({auth_desc}).")
                             return
                     else:
@@ -759,6 +787,8 @@ class Controller:
                         err_str = str(e).lower()
                         if "login" in err_str or "autentica" in err_str or "sessione" in err_str:
                             self.sess.session_valid = False
+                            if hasattr(self.sess, "invalidate"):
+                                self.sess.invalidate()
                         if hasattr(self.browser, "is_alive") and not self.browser.is_alive():
                             self.browser.stop()
                     # ricontrolla anche dopo un flow lungo (il /poll può essere arrivato)
