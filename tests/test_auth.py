@@ -155,6 +155,19 @@ def test_cie_provider_login():
     mock_sess.relogin_cie.assert_called_once_with(username="CF12345", password="PWD", mode="app")
 
 
+def test_cie_provider_login_with_callbacks():
+    mock_sess = MagicMock()
+    mock_sess.on_notify = None
+    mock_browser = MagicMock()
+    mock_notify = MagicMock()
+    mock_auth_cb = MagicMock()
+
+    p_cie = CieAuthProvider(mode="app", username="CF12345", password="PWD")
+    p_cie.login(mock_sess, mock_browser, notify_cb=mock_notify, auth_callback=mock_auth_cb)
+    mock_sess.relogin_cie.assert_called_once_with(username="CF12345", password="PWD", mode="app", auth_callback=mock_auth_cb)
+    assert mock_sess.on_notify == mock_notify
+
+
 def test_sielte_provider_login_with_credentials():
     provider = SielteSpidAuthProvider(username="USER123", password="PWD")
     mock_sess = MagicMock()

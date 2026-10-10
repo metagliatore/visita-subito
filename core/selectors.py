@@ -33,21 +33,98 @@ LOGIN_SPID = {
 # ------------------------------------------------------------------
 LOGIN_CIE = {
     "url_landing": "https://idserver.servizicie.interno.gov.it/idp/login/livello2",
+    "url_matcher": "idserver.servizicie.interno.gov.it",
     "btn_entra_cie": [
         ("css", "form[action*='AuthRequestCieService']"),
         ("css", ".pulsante-cie form"),
         ("css", ".pulsante-cie"),
+        ("css", "a.button-cie"),
         ("css", "[cie-button]"),
+        ("css", "#cie-btn"),
+        ("xpath", "//a[contains(@href, 'cie') or contains(@href, 'CIE') or contains(@href, 'Cie')]"),
+        ("xpath", "//button[contains(., 'CIE') or contains(., 'Carta')]"),
     ],
-    "form": [("id", "loginUP")],
-    "username": [("id", "username"), ("name", "username")],
-    "password": [("id", "password"), ("name", "password")],
-    "btn_prosegui": [("css", "form#loginUP button[type='submit']"), ("css", "button[type='submit']")],
+    # Selezione modalità su idserver (Livello 1/2 credenziali vs smartphone/QR vs computer)
+    "btn_credenziali": [
+        ("css", "a[href*='livello2']"),
+        ("css", "a[href*='credenziali']"),
+        ("css", "button[id*='credenziali']"),
+        ("xpath", "//a[contains(., 'credenziali') or contains(., 'Livello 1 e 2') or contains(., 'Entra con credenziali')]"),
+        ("xpath", "//button[contains(., 'credenziali') or contains(., 'Livello 1 e 2') or contains(., 'Entra con credenziali')]"),
+    ],
+    "btn_smartphone": [
+        ("css", "a[href*='login/app']"),
+        ("xpath", "//a[contains(., 'smartphone') or contains(., 'CieID')]"),
+        ("xpath", "//button[contains(., 'smartphone') or contains(., 'CieID')]"),
+    ],
+    "btn_computer": [
+        ("xpath", "//a[contains(., 'computer') or contains(., 'Smart') or contains(., 'smartcard')]"),
+        ("xpath", "//button[contains(., 'computer') or contains(., 'Smart') or contains(., 'smartcard')]"),
+    ],
+    # Form credenziali Livello 1 e 2
+    "form": [("id", "loginUP"), ("css", "form#loginUP"), ("css", "form[action*='login']")],
+    "username": [
+        ("id", "username"),
+        ("name", "username"),
+        ("name", "codiceFiscale"),
+        ("id", "codiceFiscale"),
+        ("name", "j_username"),
+    ],
+    "password": [
+        ("id", "password"),
+        ("name", "password"),
+        ("name", "j_password"),
+        ("css", "input[type='password']"),
+    ],
+    "btn_prosegui": [
+        ("css", "form#loginUP button[type='submit']"),
+        ("css", "button[type='submit']"),
+        ("css", "input[type='submit']"),
+        ("id", "prosegui"),
+        ("xpath", "//button[contains(., 'Procedi') or contains(., 'Prosegui') or contains(., 'Entra')]"),
+    ],
     "link_app_cie": [("css", "a[href*='login/app']")],
+    # Secondo fattore: OTP (SMS o app)
+    "otp": [
+        ("id", "otp"),
+        ("name", "otp"),
+        ("id", "codiceOtp"),
+        ("name", "codiceOtp"),
+        ("name", "smsOtp"),
+        ("css", "input[autocomplete='one-time-code']"),
+        ("css", "input[type='number']:not(#username)"),
+        ("css", "input[type='tel']:not(#username)"),
+    ],
+    "btn_otp": [
+        ("css", "button[type='submit']"),
+        ("css", "input[type='submit']"),
+        ("id", "confermaOtp"),
+        ("xpath", "//button[contains(., 'Verifica') or contains(., 'Conferma') or contains(., 'Invia') or contains(., 'Procedi')]"),
+    ],
+    "btn_richiedi_sms_otp": [
+        ("xpath", "//*[contains(., 'Ricevi codice via SMS') or contains(., 'Invia OTP via SMS') or contains(., 'SMS')]"),
+    ],
+    # QR Code per app CieID
+    "qr_code": [
+        ("css", "#qrcode img"),
+        ("css", ".qr-code img"),
+        ("css", "img[src*='qr']"),
+        ("css", "img[src*='QR']"),
+        ("css", "img.qrcode"),
+        ("css", "#qrcode canvas"),
+        ("css", ".qr-code canvas"),
+    ],
+    # Notifica push in attesa
+    "push_waiting": [
+        ("xpath", "//*[contains(., 'notifica') and (contains(., 'inviata') or contains(., 'apri') or contains(., 'CieID'))]"),
+    ],
+    # Schermata consenso trasmissione dati (IdP CIE o Regione)
     "consenso": [
         ("css", "button[name='confirm']"),
+        ("css", "button[name='_eventId_proceed']"),
         ("css", "button[type='submit']"),
-        ("xpath", "//button[contains(., 'Autorizza') or contains(., 'Acconsento') or contains(., 'Prosegui')]"),
+        ("xpath", "//button[contains(., 'Autorizza') or contains(., 'Acconsento') or contains(., 'Conferma') or contains(., 'Prosegui')]"),
+        ("xpath", "//input[@type='submit' and (contains(@value, 'Autorizza') or contains(@value, 'Acconsento') or contains(@value, 'Conferma'))]"),
     ],
 }
 

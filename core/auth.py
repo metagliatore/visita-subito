@@ -226,6 +226,8 @@ class CieAuthProvider(BaseAuthProvider):
         self.password = password
 
     def login(self, session_manager, browser, notify_cb=None, auth_callback=None, **kwargs) -> webdriver.Chrome:
+        if notify_cb and not getattr(session_manager, "on_notify", None):
+            session_manager.on_notify = notify_cb
         kw = {"username": self.username, "password": self.password, "mode": self.mode}
         if auth_callback is not None:
             kw["auth_callback"] = auth_callback

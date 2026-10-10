@@ -494,6 +494,73 @@ class SessionManager:
                 continue
         return False
 
+    def _find_element(self, driver, sel_list):
+        """Ritorna il primo WebElement visibile trovato nella lista di selettori, o None."""
+        from selenium.webdriver.common.by import By
+        BY_MAP = {"id": By.ID, "name": By.NAME, "css": By.CSS_SELECTOR, "xpath": By.XPATH}
+        for strat, val in sel_list:
+            by = BY_MAP.get(strat, By.CSS_SELECTOR)
+            try:
+                el = driver.find_element(by, val)
+                if el and el.is_displayed():
+                    return el
+            except Exception:
+                continue
+        return None
+
+    def _chiedi_e_inserisci_otp_cie(self, driver: webdriver.Chrome, auth_callback=None) -> bool:
+        """Chiede il codice OTP CIE all'utente, lo compila e ne attende la verifica."""
+        prompt_txt = "🔢 Inserisci il codice OTP ricevuto via SMS o generato dall'app CieID:"
+        code = None
+        if auth_callback:
+            try:
+                code = auth_callback("ask_otp", prompt=prompt_txt)
+            except Exception as e:
+                log.warning("auth_callback ask_otp CIE: %s", e)
+        if not code and self.on_otp_prompt:
+            try:
+                code = self.on_otp_prompt(prompt_txt)
+            except Exception as e:
+                log.warning("on_otp_prompt CIE: %s", e)
+
+        # Fallback console se su TTY
+        if not code:
+            import sys
+            if sys.stdin.isatty():
+                try:
+                    print(f"\n[CIE Livello 2] {prompt_txt} ", end="", flush=True)
+                    code = sys.stdin.readline().strip()
+                except Exception:
+                    pass
+
+        if not code:
+            log.warning("Nessun codice OTP CIE fornito.")
+            return False
+
+        clean_code = str(code).replace(" ", "").replace("-", "").strip()
+        log.info("Inserimento codice OTP CIE nel browser...")
+        if self.on_notify:
+            self.on_notify("⏳ Inserisco il codice OTP CIE nel portale...")
+
+        from core import selectors
+        cie_sel = selectors.LOGIN_CIE
+        self._find_and_fill(driver, cie_sel["otp"], clean_code)
+        time.sleep(1)
+        self._find_and_click(driver, cie_sel["btn_otp"])
+
+        for _ in range(3):
+            time.sleep(3)
+            self._find_and_click(driver, cie_sel["consenso"])
+            if self.is_autenticato(driver):
+                return True
+
+        if not self.is_autenticato(driver):
+            if self.on_notify:
+                self.on_notify("❌ Codice OTP CIE non valido o autenticazione non riuscita.")
+            return False
+
+        return True
+
     # ---------------- login SPID multi-provider ----------------
     def relogin_spid(self, provider_key: str, username: str = "", password: str = "",
                       wait_otp_sec: int = 180, auth_callback=None) -> webdriver.Chrome:
@@ -583,17 +650,26 @@ class SessionManager:
     def relogin_cie(self, username: str = "", password: str = "", mode: str = "app",
                      wait_otp_sec: int = 180, auth_callback=None) -> webdriver.Chrome:
         """Accesso tramite CIE (Carta di Identità Elettronica).
-        Naviga all'IdPC, preme 'Entra con CIE' verso il portale del Ministero dell'Interno.
-        Se fornite credenziali (CIE/CF + password), le compila ed effettua il submit (Livello 2),
-        altrimenti lascia la finestra aperta per QR Code / App CieID o Smartcard.
+        Supporta:
+          - Livello 2: credenziali (Codice Fiscale / Numero CIE + password) + 2FA
+            (notifica push app CieID, codice OTP via SMS o app, QR Code).
+          - Livello 3: smartcard NFC con lettore o software CIE.
+        Include interazione Telegram per fallback OTP e screenshot QR Code.
         """
         from selenium.webdriver.common.by import By
         from core import selectors
 
         driver = self.browser.start()
-        mode_lbl = "App CieID (Livello 2)" if mode == "app" else "Smartcard (Livello 3)"
+        mode_str = (mode or "app").lower()
+        mode_lbl = {
+            "app": "App CieID / Credenziali (Livello 2)",
+            "credenziali": "Credenziali Livello 2 (SMS / App)",
+            "smartcard": "Smartcard / NFC (Livello 3)",
+        }.get(mode_str, f"CIE ({mode})")
+
         if self.on_notify:
             self.on_notify(f"🔑 Avvio accesso con CIE ({mode_lbl})...")
+
         driver.get(selectors.LOGIN_SPID["url_accedi"])
         time.sleep(4)
         if self.is_autenticato(driver):
@@ -603,40 +679,143 @@ class SessionManager:
 
         # Submit form CIE su IdPC Regione Lombardia
         try:
-            driver.execute_script(
+            submitted = driver.execute_script(
                 "var f=document.querySelector('form[action*=\"AuthRequestCieService\"], .pulsante-cie form');"
                 "if(f){f.submit();return true;}"
-                "var c=document.querySelector('[cie-button], .pulsante-cie');if(c){c.click();return true;}"
+                "var c=document.querySelector('[cie-button], .pulsante-cie, a.button-cie, #cie-btn, a[href*=\"cie\"], a[href*=\"CIE\"], a[href*=\"Cie\"]');"
+                "if(c){c.click();return true;}"
                 "return false;"
             )
+            if not submitted:
+                self._find_and_click(driver, selectors.LOGIN_CIE["btn_entra_cie"])
         except Exception as e:
-            log.warning("Click/submit CIE: %s", e)
+            log.warning("Click/submit CIE su IdPC Lombardia: %s", e)
 
-        time.sleep(5)
+        time.sleep(4)
 
-        # Se ci troviamo sul portale Ministero dell'Interno (idserver.servizicie.interno.gov.it)
         cie_sel = selectors.LOGIN_CIE
-        if username and password:
-            u_sel = cie_sel["username"]
-            p_sel = cie_sel["password"]
-            self._find_and_fill(driver, u_sel, username)
-            self._find_and_fill(driver, p_sel, password)
-            time.sleep(1)
-            self._find_and_click(driver, cie_sel["btn_prosegui"])
-            if self.on_notify:
-                self.on_notify("📲 Credenziali CIE inviate: conferma la notifica nell'app CieID o inserisci l'OTP.")
-        else:
-            if self.on_notify:
-                self.on_notify(f"🔑 Schermata CIE aperta: completa l'autenticazione con l'app CieID (QR/notifica) o Smartcard.")
 
-        # Attesa approvazione e consenso
-        for _ in range(max(1, wait_otp_sec // 5)):
-            time.sleep(5)
-            # Eventuale consenso su pagina CIE / Regione
+        # Attesa atterraggio su IdP CIE o autenticazione
+        for _ in range(5):
+            if self.is_autenticato(driver):
+                self.save(driver)
+                self.session_valid = True
+                return driver
+            if cie_sel.get("url_matcher", "idserver.servizicie.interno.gov.it") in (driver.current_url or ""):
+                break
+            time.sleep(2)
+
+        # Gestione credenziali Livello 1/2
+        if username and password:
+            # Se la pagina mostra prima la selezione modalità, apri la sezione credenziali
+            if not self._find_element(driver, cie_sel["username"]):
+                log.info("Campi credenziali CIE non visibili subito: provo selettori 'btn_credenziali'")
+                self._find_and_click(driver, cie_sel["btn_credenziali"])
+                time.sleep(2)
+
+            filled_u = self._find_and_fill(driver, cie_sel["username"], username)
+            filled_p = self._find_and_fill(driver, cie_sel["password"], password)
+            if filled_u and filled_p:
+                time.sleep(1)
+                self._find_and_click(driver, cie_sel["btn_prosegui"])
+                time.sleep(3)
+                if self.on_notify:
+                    self.on_notify("📲 Credenziali CIE inviate: verifica la notifica nell'app CieID o inserisci l'OTP.")
+            else:
+                log.warning("Campi credenziali CIE non trovati.")
+                if self.on_notify:
+                    self.on_notify("⚠️ Impossibile compilare automaticamente le credenziali CIE.")
+        else:
+            if mode_str == "smartcard":
+                self._find_and_click(driver, cie_sel["btn_computer"])
+                if self.on_notify:
+                    self.on_notify("💳 Modalità Smartcard (Livello 3): inserisci la CIE nel lettore NFC o completa la lettura con il software CIE.")
+            else:
+                self._find_and_click(driver, cie_sel["btn_smartphone"])
+                if self.on_notify:
+                    self.on_notify("🔑 Schermata CIE aperta: completa l'autenticazione con l'app CieID (QR/notifica) o Smartcard.")
+
+        # Loop attesa 2FA, QR, OTP, approvazione e consenso
+        t0 = time.time()
+        deadline = t0 + wait_otp_sec
+        abs_deadline = t0 + 600  # Max 10 minuti per interazione umana
+        qr_sent = False
+        last_fallback_prompt = 0
+
+        while time.time() < deadline and time.time() < abs_deadline:
+            # Prova click consenso
             self._find_and_click(driver, cie_sel["consenso"])
             if self.is_autenticato(driver):
                 self.save(driver)
                 self.session_valid = True
                 return driver
+
+            # Verifica se è comparso il campo OTP
+            if self._find_element(driver, cie_sel["otp"]):
+                log.info("Rilevato campo OTP CIE sul portale")
+                deadline = max(deadline, min(abs_deadline, time.time() + 130))
+                successo = self._chiedi_e_inserisci_otp_cie(driver, auth_callback)
+                if successo and self.is_autenticato(driver):
+                    self.save(driver)
+                    self.session_valid = True
+                    return driver
+
+            # Verifica se è comparso un QR code da scansionare
+            if not qr_sent and mode_str != "smartcard":
+                qr_el = self._find_element(driver, cie_sel["qr_code"])
+                if qr_el:
+                    log.info("Rilevato QR code CIE a schermo")
+                    qr_sent = True
+                    qr_path = "data/cie_qr.png"
+                    try:
+                        from pathlib import Path
+                        Path(qr_path).parent.mkdir(parents=True, exist_ok=True)
+                        qr_el.screenshot(qr_path)
+                        if auth_callback:
+                            auth_callback("send_file", path=qr_path,
+                                          caption="📲 Scansiona questo QR Code con l'app CieID per completare l'accesso.")
+                        elif self.on_notify:
+                            self.on_notify("📲 QR Code CIE visualizzato: scansionalo con l'app CieID sul tuo smartphone.")
+                    except Exception as e:
+                        log.warning("Cattura screenshot QR CIE: %s", e)
+                        if self.on_notify:
+                            self.on_notify("📲 QR Code CIE visualizzato: scansionalo con l'app CieID sul tuo smartphone.")
+
+            # Se in attesa notifica push e sono passati più di 35 secondi dal submit
+            if (username and password and auth_callback and
+                    (time.time() - t0 > 35) and (time.time() - last_fallback_prompt > 60)):
+                log.info("Notifica CIE non ancora approvata: propongo fallback interattivo Telegram")
+                prompt_msg = (
+                    "⚠️ <b>Accesso CIE (Livello 2)</b>\n"
+                    "La notifica nell'app CieID non è stata ancora approvata.\n\n"
+                    "Come vuoi procedere?"
+                )
+                scelta = None
+                try:
+                    scelta = auth_callback("ask_action", prompt=prompt_msg)
+                    last_fallback_prompt = time.time()
+                except Exception as e:
+                    log.warning("auth_callback ask_action CIE: %s", e)
+
+                if scelta == "otp":
+                    log.info("Scelta fallback CIE: utente richiede immissione OTP")
+                    self._find_and_click(driver, cie_sel["btn_richiedi_sms_otp"])
+                    time.sleep(2)
+                    deadline = max(deadline, min(abs_deadline, time.time() + 130))
+                    successo = self._chiedi_e_inserisci_otp_cie(driver, auth_callback)
+                    if successo and self.is_autenticato(driver):
+                        self.save(driver)
+                        self.session_valid = True
+                        return driver
+                elif scelta == "notify":
+                    log.info("Scelta fallback CIE: attendo notifica")
+                    deadline = max(deadline, min(abs_deadline, time.time() + 65))
+                    if self.on_notify:
+                        self.on_notify("📲 Attendo l'approvazione nell'app CieID: controlla il telefono!")
+                elif scelta == "cancel":
+                    log.info("Login CIE annullato dall'utente.")
+                    raise RuntimeError("Login CIE annullato dall'utente.")
+
+            time.sleep(4)
 
         raise TimeoutError("Timeout nell'attesa autenticazione CIE (completa l'accesso con l'app CieID o Smartcard)")

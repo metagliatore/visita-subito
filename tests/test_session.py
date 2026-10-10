@@ -293,4 +293,189 @@ def test_relogin_sielte_preserves_browser_and_headless_mode(tmp_path, monkeypatc
     mock_browser.set_headless.assert_not_called()
 
 
+def test_relogin_cie_livello2_credentials_success(tmp_path, monkeypatch):
+    mock_browser = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_browser.start.return_value = mock_driver
+    mock_driver.current_url = "https://idserver.servizicie.interno.gov.it/idp/login/livello2"
+
+    sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
+    auth_state = [False, False, True]
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: auth_state.pop(0) if auth_state else True)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    filled_fields = {}
+
+    def mock_fill(d, sel, val):
+        filled_fields[sel[0][1]] = val
+        return True
+
+    clicked_buttons = []
+
+    def mock_click(d, sel):
+        clicked_buttons.append(sel[0][1] if sel else "")
+        return True
+
+    monkeypatch.setattr(sm, "_find_and_fill", mock_fill)
+    monkeypatch.setattr(sm, "_find_and_click", mock_click)
+
+    driver = sm.relogin_cie(username="RSSMRA80A01H501U", password="Password123!", mode="app", wait_otp_sec=30)
+    assert driver == mock_driver
+    assert sm.session_valid is True
+    assert filled_fields.get("username") == "RSSMRA80A01H501U"
+    assert filled_fields.get("password") == "Password123!"
+
+
+def test_relogin_cie_livello2_otp_prompt(tmp_path, monkeypatch):
+    mock_browser = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_browser.start.return_value = mock_driver
+    mock_driver.current_url = "https://idserver.servizicie.interno.gov.it/idp/login/livello2"
+
+    sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    auth_state = [False, False, False, True]
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: auth_state.pop(0) if auth_state else True)
+
+    mock_otp_el = MagicMock()
+
+    def mock_find_element(d, sel):
+        from core import selectors
+        if sel == selectors.LOGIN_CIE["otp"]:
+            return mock_otp_el
+        return None
+
+    monkeypatch.setattr(sm, "_find_element", mock_find_element)
+
+    filled_fields = {}
+    monkeypatch.setattr(sm, "_find_and_fill", lambda d, sel, val: filled_fields.__setitem__(sel[0][1], val) or True)
+    monkeypatch.setattr(sm, "_find_and_click", lambda d, sel: True)
+
+    auth_cb = MagicMock(return_value="987654")
+
+    driver = sm.relogin_cie(username="CF123", password="PWD", mode="app", wait_otp_sec=30, auth_callback=auth_cb)
+    assert driver == mock_driver
+    assert sm.session_valid is True
+    auth_cb.assert_called_with("ask_otp", prompt="🔢 Inserisci il codice OTP ricevuto via SMS o generato dall'app CieID:")
+    assert filled_fields.get("otp") == "987654"
+
+
+def test_relogin_cie_qr_code_send_file(tmp_path, monkeypatch):
+    mock_browser = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_browser.start.return_value = mock_driver
+    mock_driver.current_url = "https://idserver.servizicie.interno.gov.it/idp/login/livello2"
+
+    sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    auth_state = [False, False, False, True]
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: auth_state.pop(0) if auth_state else True)
+
+    mock_qr_el = MagicMock()
+
+    def mock_find_element(d, sel):
+        from core import selectors
+        if sel == selectors.LOGIN_CIE["qr_code"]:
+            return mock_qr_el
+        return None
+
+    monkeypatch.setattr(sm, "_find_element", mock_find_element)
+    monkeypatch.setattr(sm, "_find_and_click", lambda d, sel: True)
+
+    auth_cb = MagicMock()
+
+    driver = sm.relogin_cie(username="", password="", mode="app", wait_otp_sec=30, auth_callback=auth_cb)
+    assert driver == mock_driver
+    assert sm.session_valid is True
+    mock_qr_el.screenshot.assert_called_once_with("data/cie_qr.png")
+    auth_cb.assert_called_with("send_file", path="data/cie_qr.png",
+                               caption="📲 Scansiona questo QR Code con l'app CieID per completare l'accesso.")
+
+
+def test_relogin_cie_push_fallback_to_otp(tmp_path, monkeypatch):
+    mock_browser = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_browser.start.return_value = mock_driver
+    mock_driver.current_url = "https://idserver.servizicie.interno.gov.it/idp/login/livello2"
+
+    sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
+
+    clock = [1000.0]
+    monkeypatch.setattr("time.time", lambda: clock[0])
+    monkeypatch.setattr("time.sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+    monkeypatch.setattr(sm, "_find_element", lambda d, s: None)
+    monkeypatch.setattr(sm, "_find_and_fill", lambda d, s, v: True)
+    monkeypatch.setattr(sm, "_find_and_click", lambda d, s: True)
+
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: clock[0] > 1050)
+
+    auth_cb = MagicMock()
+
+    def mock_cb(action, **kw):
+        if action == "ask_action":
+            return "otp"
+        elif action == "ask_otp":
+            return "112233"
+        return None
+
+    auth_cb.side_effect = mock_cb
+
+    driver = sm.relogin_cie(username="CF123", password="PWD", mode="app", wait_otp_sec=60, auth_callback=auth_cb)
+    assert driver == mock_driver
+    assert sm.session_valid is True
+
+
+def test_relogin_cie_push_fallback_cancel(tmp_path, monkeypatch):
+    mock_browser = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_browser.start.return_value = mock_driver
+    mock_driver.current_url = "https://idserver.servizicie.interno.gov.it/idp/login/livello2"
+
+    sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
+
+    clock = [1000.0]
+    monkeypatch.setattr("time.time", lambda: clock[0])
+    monkeypatch.setattr("time.sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: False)
+    monkeypatch.setattr(sm, "_find_element", lambda d, s: None)
+    monkeypatch.setattr(sm, "_find_and_fill", lambda d, s, v: True)
+    monkeypatch.setattr(sm, "_find_and_click", lambda d, s: True)
+
+    auth_cb = MagicMock(return_value="cancel")
+
+    with pytest.raises(RuntimeError, match="annullato dall'utente"):
+        sm.relogin_cie(username="CF123", password="PWD", mode="app", wait_otp_sec=60, auth_callback=auth_cb)
+
+
+def test_relogin_cie_smartcard_mode(tmp_path, monkeypatch):
+    mock_browser = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_browser.start.return_value = mock_driver
+    mock_driver.current_url = "https://idserver.servizicie.interno.gov.it/idp/login/livello2"
+
+    sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    auth_state = [False, False, True]
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: auth_state.pop(0) if auth_state else True)
+
+    clicked = []
+    monkeypatch.setattr(sm, "_find_and_click", lambda d, s: clicked.append(s) or True)
+
+    driver = sm.relogin_cie(username="", password="", mode="smartcard", wait_otp_sec=30)
+    assert driver == mock_driver
+    assert sm.session_valid is True
+    from core import selectors
+    assert any(selectors.LOGIN_CIE["btn_computer"] == c for c in clicked)
+
+
+
 
