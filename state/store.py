@@ -254,6 +254,12 @@ class Store:
         if monitor["id"] in disabled:
             disabled = [m for m in disabled if m != monitor["id"]]
             self.data["_disabled_monitors"] = disabled
+        # se il monitor era precedentemente marcato done o done_pending_choice,
+        # la riattivazione/creazione deve ripristinare action_state a idle
+        entry = self.data.setdefault(monitor["id"], {})
+        if entry.get("action_state") in ("done", "done_pending_choice"):
+            entry["action_state"] = "idle"
+            entry["action_detail"] = "monitor aggiunto/riattivato"
         self._flush()
 
     def remove_monitor(self, monitor_id: str) -> None:

@@ -442,10 +442,12 @@ class TelegramBot:
                 "Riprova con /monitora e scegli la ricetta dall'elenco.")
             return
         data_ricetta = target.get("data_ricetta") or ""
+        data_attuale = target.get("data_ora") or ""
         mid = self.controller.aggiungi_monitor(
             tipo, desc, nre=nre,
             criteri={"province": prov_list, "data_dal": data_dal, "data_a": data_a},
-            data_ricetta=data_ricetta)
+            data_ricetta=data_ricetta,
+            data_attuale=data_attuale)
         self._wizard.pop(chat_id, None)
         q = update.callback_query
         if mid:

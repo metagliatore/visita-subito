@@ -95,8 +95,13 @@ class Controller:
             if self.store.is_disabled(m["id"]):
                 continue
             # se la ricetta è già stata prenotata o è di tipo reschedule, usa RescheduleFlow
-            if self.store.is_prenotato(m["id"]) or m.get("type") == "reschedule":
+            is_reschedule = self.store.is_prenotato(m["id"]) or m.get("type") == "reschedule"
+            if is_reschedule:
                 cls = RescheduleFlow
+                # Se un monitor reschedule attivo è rimasto in stato 'done', riarmalo a 'idle'
+                if self.store.get_action(m["id"]) == "done":
+                    log.info("[%s] Riarmo monitor reschedule all'avvio: stato da done a idle", m["id"])
+                    self.store.mark_action(m["id"], "idle", "riarmo all'avvio")
             else:
                 cls = FLOW_TYPES.get(m.get("type", "new"), NewBookingFlow)
             self._flows.append(cls(m, self.browser, self.queue, self.bot, self.store))
@@ -311,7 +316,7 @@ class Controller:
         self.store.set_preferenza("data_dal", data_dal)
         return True
 
-    def aggiungi_monitor(self, tipo: str, descrizione: str, nre: str = "", criteri: dict = None, data_ricetta: str = "") -> str:
+    def aggiungi_monitor(self, tipo: str, descrizione: str, nre: str = "", criteri: dict = None, data_ricetta: str = "", data_attuale: str = "") -> str:
         """Aggiunge un monitor dinamico (nuova prenotazione o appuntamento).
 
         Ritorna l'id del monitor creato, oppure '' se fallisce.
@@ -330,10 +335,17 @@ class Controller:
             parola = tipo
         prog = len(self.store.get_monitors()) + 1
         mid = f"{tipo}-{parola}-{prog}"
+        data_att = data_attuale or crit.get("data_a", "")
         monitor = {"id": mid, "type": tipo, "enabled": True,
                     "ricetta": descrizione, "nre": nre or "", "criteri": crit,
                     "data_ricetta": data_ricetta or ""}
+        if data_att:
+            monitor["data_attuale"] = data_att
         self.store.add_monitor(monitor)
+        self.store.mark_action(mid, "idle", "monitor creato")
+        if tipo == "reschedule" and data_att:
+            self.store.record_prenotazione(mid, nre, data_att, {"prestazione": descrizione})
+            self.store.mark_action(mid, "idle", "monitor reschedule pronto")
         self._flows.append(FLOW_TYPES[tipo](monitor, self.browser, self.queue, self.bot, self.store))
         return mid
 
@@ -349,16 +361,18 @@ class Controller:
         codice = pren.get("codice") or ""
         data_ora = pren.get("data_ora") or ""
 
-        if not self.store.is_prenotato(monitor_id) and not data_ora:
-            log.warning("[%s] Impossibile convertire in reschedule: nessuna prenotazione registrata nello store", monitor_id)
-            return False
-
         # Trova il monitor configurato
         mon = next((m for m in self.store.get_monitors() if m.get("id") == monitor_id), None)
         if mon is None:
             mon = next((m for m in self.cfg.active_monitors if m.get("id") == monitor_id), None)
             if mon is not None:
                 mon = dict(mon)
+
+        is_already_reschedule = (mon is not None and mon.get("type") == "reschedule")
+
+        if not self.store.is_prenotato(monitor_id) and not data_ora and not is_already_reschedule:
+            log.warning("[%s] Impossibile convertire in reschedule: nessuna prenotazione registrata nello store", monitor_id)
+            return False
 
         if mon is None:
             info = pren.get("info", {})
@@ -368,6 +382,13 @@ class Controller:
                 "ricetta": info.get("prestazione", monitor_id),
                 "criteri": self.criteri_default(),
             }
+
+        if not data_ora and is_already_reschedule:
+            data_ora = mon.get("data_attuale") or (mon.get("criteri", {}) or {}).get("data_a", "")
+            if not codice:
+                codice = mon.get("nre") or mon.get("codice_appuntamento") or ""
+            if data_ora:
+                self.store.record_prenotazione(monitor_id, codice, data_ora, {"prestazione": mon.get("ricetta", monitor_id)})
 
         # Aggiorna a tipo reschedule
         mon["type"] = "reschedule"
@@ -499,13 +520,22 @@ class Controller:
                 mon = {"ricetta": f.monitor.get("ricetta", ""), "criteri": f.monitor.get("criteri", {}), "type": f.type}
             nome = self._nome_leggibile(mon)
             stato = self.store.get_action(f.mid)
-            stato_txt = {
-                "idle": "in attesa di novità",
-                "done": "completato (prenotato)",
-                "done_pending_choice": "prenotato (in attesa scelta: ferma o prova ad anticipare)",
-                "prenotato": "prenotato",
-                "pending": "in attesa conferma",
-            }.get(stato, stato)
+            if f.type == "reschedule":
+                stato_txt = {
+                    "idle": "in attesa di novità (anticipo)",
+                    "done": "completato (spostato)",
+                    "done_pending_choice": "spostato (in attesa scelta: ferma o prova ad anticipare)",
+                    "prenotato": "in attesa di novità (anticipo)",
+                    "pending": "in attesa conferma",
+                }.get(stato, stato)
+            else:
+                stato_txt = {
+                    "idle": "in attesa di novità",
+                    "done": "completato (prenotato)",
+                    "done_pending_choice": "prenotato (in attesa scelta: ferma o prova ad anticipare)",
+                    "prenotato": "prenotato",
+                    "pending": "in attesa conferma",
+                }.get(stato, stato)
             crit = mon.get("criteri", {}) if isinstance(mon, dict) else {}
             riga = f"\n• {nome}"
             # ricetta reale (la riga "nome" potrebbe essere generica, es. 'monitor')

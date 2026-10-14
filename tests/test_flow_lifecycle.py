@@ -31,12 +31,36 @@ def test_flow_poll_once_skips_when_done():
     assert res == ""
     # Non deve chiamare nè browser nè bot se la visita è già prenotata
     bot.notify.assert_not_called()
+    bot.notify_buttons.assert_not_called()
 
-    # In caso di poll manuale, notifica lo stato all'utente
+    # In caso di poll manuale, notifica lo stato all'utente con pulsanti per decidere
     res_man = flow.poll_once(manual=True)
     assert res_man == ""
-    bot.notify.assert_called_once()
-    assert "risulta già prenotata" in bot.notify.call_args[0][0]
+    assert bot.notify_buttons.called or bot.notify.called
+    msg = bot.notify_buttons.call_args[0][0] if bot.notify_buttons.called else bot.notify.call_args[0][0]
+    assert "risulta già prenotata" in msg
+
+
+def test_reschedule_flow_poll_once_rearms_when_done():
+    monitor = {"id": "reschedule-visita-1", "type": "reschedule", "criteri": {}}
+    browser = MagicMock()
+    queue = MagicMock()
+    bot = MagicMock()
+    store = MagicMock()
+    # Simula monitor reschedule che si ritrova in stato 'done'
+    store.get_action.return_value = "done"
+
+    flow = DummyFlow(monitor, browser, queue, bot, store)
+    flow.type = "reschedule"
+    flow._is_autenticato = MagicMock(return_value=True)
+    flow.load_page = MagicMock()
+    flow.extract_slots = MagicMock(return_value=[])
+
+    res = flow.poll_once(manual=False)
+    # Deve aver riarmato lo stato ad 'idle' e proseguito con load_page
+    store.mark_action.assert_called_with("reschedule-visita-1", "idle", "riarmo monitor reschedule")
+    flow.load_page.assert_called_once()
+    flow.extract_slots.assert_called_once()
 
 
 def test_flow_request_approval_and_post_booking_prompt():

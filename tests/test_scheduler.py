@@ -199,12 +199,38 @@ def test_converti_in_reschedule_fails_when_no_booking():
     ctrl = MagicMock()
     ctrl.store.get_prenotazione.return_value = {"codice": "", "data_ora": "", "info": {}}
     ctrl.store.is_prenotato.return_value = False
+    ctrl.store.get_monitors.return_value = []
+    ctrl.cfg.active_monitors = []
 
     ok = Controller.converti_in_reschedule(ctrl, "m_ghost")
     assert ok is False
     ctrl.store.add_monitor.assert_not_called()
 
 
+def test_converti_in_reschedule_succeeds_on_existing_reschedule_monitor():
+    ctrl = MagicMock()
+    ctrl.store.get_prenotazione.return_value = {"codice": "", "data_ora": "", "info": {}}
+    ctrl.store.is_prenotato.return_value = False
+    existing_mon = {
+        "id": "reschedule-visita-1",
+        "type": "reschedule",
+        "ricetta": "VISITA UROLOGICA",
+        "data_attuale": "15/11/2026 10:00",
+        "criteri": {"data_a": "15/11/2026"},
+    }
+    ctrl.store.get_monitors.return_value = [existing_mon]
+    ctrl.cfg.active_monitors = []
+    ctrl._flows = [MagicMock(mid="reschedule-visita-1")]
+
+    ok = Controller.converti_in_reschedule(ctrl, "reschedule-visita-1")
+    assert ok is True
+    ctrl.store.add_monitor.assert_called_once()
+    saved_mon = ctrl.store.add_monitor.call_args[0][0]
+    assert saved_mon["type"] == "reschedule"
+    assert saved_mon["data_attuale"] == "15/11/2026 10:00"
+    ctrl.store.mark_action.assert_called_once_with(
+        "reschedule-visita-1", "idle", "convertito a reschedule (data 15/11/2026 10:00)"
+    )
 
 
 def test_build_flows_dedup_and_disabled():
@@ -220,6 +246,7 @@ def test_build_flows_dedup_and_disabled():
     # m2 risulta disabilitato
     ctrl.store.is_disabled.side_effect = lambda mid: mid == "m2"
     ctrl.store.is_prenotato.return_value = False
+    ctrl.store.get_action.return_value = "done"
 
     Controller._build_flows(ctrl)
 
@@ -227,6 +254,8 @@ def test_build_flows_dedup_and_disabled():
     assert len(ctrl._flows) == 1
     assert ctrl._flows[0].mid == "m1"
     assert ctrl._flows[0].type == "reschedule"
+    # m1 era 'done', deve essere stato riarmato ad 'idle'
+    ctrl.store.mark_action.assert_called_once_with("m1", "idle", "riarmo all'avvio")
 
 
 def test_controller_pause_resume_toggle():

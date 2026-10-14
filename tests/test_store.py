@@ -57,10 +57,11 @@ def test_store_dynamic_monitors(tmp_path):
     assert store.is_disabled("dyn-1") is True
     assert store.get_action("dyn-1") == "done"
 
-    # Se riaggiunto, non deve più risultare disabilitato
+    # Se riaggiunto, non deve più risultare disabilitato e l'action_state deve tornare a idle
     store.add_monitor(mon)
     assert store.is_disabled("dyn-1") is False
     assert len(store.get_monitors()) == 1
+    assert store.get_action("dyn-1") == "idle"
 
 
 def test_store_blacklist(tmp_path):

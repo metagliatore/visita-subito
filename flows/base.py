@@ -630,15 +630,45 @@ class Flow:
         """
         # Se la visita è già stata prenotata ed è completata o in attesa di scelta, non fare polling a vuoto
         action_state = self.store.get_action(self.mid)
+        if self.type == "reschedule" and action_state == "done":
+            log.info(
+                "[%s] Monitor reschedule attivo con action_state=done: ripristino a idle per proseguire il monitoraggio anticipo",
+                self.mid,
+            )
+            self.store.mark_action(self.mid, "idle", "riarmo monitor reschedule")
+            action_state = "idle"
+
         if action_state in ("done", "done_pending_choice"):
             log.info("[%s] Visita già prenotata (action_state=%s): salto il controllo", self.mid, action_state)
             if manual:
                 pren = self.store.get_prenotazione(self.mid)
-                d_str = pren.get("data_ora") or ""
-                self.bot.notify(
-                    f"ℹ️ {self.mid} risulta già prenotata ({d_str}). "
-                    f"Usa i pulsanti della conferma per fermare o continuare a monitorare (prova ad anticipare)."
+                d_str = (
+                    pren.get("data_ora")
+                    or self.monitor.get("data_attuale")
+                    or (self.criteri or {}).get("data_a")
+                    or ""
                 )
+                data_info = f" ({d_str})" if d_str else ""
+                if action_state == "done_pending_choice":
+                    msg = (
+                        f"ℹ️ {self.mid} risulta già prenotata{data_info}.\n\n"
+                        f"Cosa desideri fare con il monitoraggio per questa visita?\n\n"
+                        f"• 🛑 <b>Ferma monitoraggio</b>: interrompe i controlli (l'appuntamento confermato rimane attivo).\n"
+                        f"• 🔄 <b>Continua a monitorare (prova ad anticipare)</b>: continua la ricerca automatica cercando esclusivamente date migliori."
+                    )
+                    righe = [[
+                        ("🛑 Ferma monitoraggio", f"postbook:stop:{self.mid}"),
+                        ("🔄 Continua a monitorare (prova ad anticipare)", f"postbook:continue:{self.mid}"),
+                    ]]
+                    if hasattr(self.bot, "notify_buttons"):
+                        self.bot.notify_buttons(msg, righe)
+                    else:
+                        self.bot.notify(msg)
+                else:
+                    self.bot.notify(
+                        f"ℹ️ {self.mid} risulta già prenotata{data_info} e il monitoraggio è completato. "
+                        f"Usa /monitora per avviare una nuova ricerca se desideri."
+                    )
             return ""
 
         if not self._is_autenticato():
