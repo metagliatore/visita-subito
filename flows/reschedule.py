@@ -419,12 +419,38 @@ class RescheduleFlow(Flow):
         if chk is not None and not chk.is_selected():
             self._click_el(chk)
             time.sleep(1)
+
+        from services.appuntamento import parse_conferma
+        info = parse_conferma(self.driver.page_source)
+        info.data_ora = f"{slot.date_str} - {slot.time_str}" or info.data_ora
+        if not info.prestazione:
+            info.prestazione = self.monitor.get("ricetta", self._appuntamento)
+
         conf = self._find(self.po["modal_conferma_prenota"]["btn_conferma"])
         if conf is not None and not conf.get_attribute("disabled"):
             self._click_el(conf)
-        time.sleep(3)
-        # 3) estrai info dalla schermata/modale e invia riepilogo + ICS
-        self._invia_riepilogo_dopo_modifica(slot)
+        elif conf is not None:
+            raise RuntimeError("Bottone 'Conferma' disabilitato (lettura non presa visione)")
+        else:
+            raise RuntimeError("Bottone 'Conferma' non trovato nella modale di conferma")
+
+        # 3) Controllo rigoroso conferma dal portale
+        ok_conf, cod, err_conf = self._attendi_conferma_prenotazione(timeout_s=30)
+        if not ok_conf:
+            raise RuntimeError(f"Riprogrammazione non riuscita dal portale: {err_conf}")
+        info.codice = cod or info.codice or ""
+
+        # 4) Controllo finale di riscontro su 'I miei appuntamenti'
+        log.info("[%s] Controllo finale di riscontro in 'I miei appuntamenti'...", self.mid)
+        riscontro_ok = self._verifica_riscontro_miei_appuntamenti(slot, codice=info.codice)
+        if not riscontro_ok:
+            raise RuntimeError(
+                f"Riscontro fallito: l'appuntamento riprogrammato {slot.date_str} {slot.time_str} (cod: {info.codice or 'n/d'}) "
+                f"non risulta presente nella sezione 'I miei appuntamenti'"
+            )
+
+        # 5) Invio riepilogo + ICS + salvataggio nello store
+        self._invia_riepilogo_dopo_modifica(slot, info=info)
         log.info("flow B: riprogrammazione (%s) confermata %s", azione, slot)
 
     def _trova_bottone_slot(self, slot):
@@ -459,15 +485,16 @@ class RescheduleFlow(Flow):
                 return b
         return None
 
-    def _invia_riepilogo_dopo_modifica(self, slot):
+    def _invia_riepilogo_dopo_modifica(self, slot, info=None):
         """Estrae e invia luogo+note dell'appuntamento confermato (+ ICS)."""
         from services.appuntamento import parse_conferma, parse_successo
         from services.calendar import write_ics
-        info = parse_conferma(self.driver.page_source)
-        info.data_ora = f"{slot.date_str} - {slot.time_str}" or info.data_ora
-        if not info.prestazione:
-            info.prestazione = self.monitor.get("ricetta", "")
-        info.codice = parse_successo(self.driver.page_source) or ""
+        if info is None:
+            info = parse_conferma(self.driver.page_source)
+            info.data_ora = f"{slot.date_str} - {slot.time_str}" or info.data_ora
+            if not info.prestazione:
+                info.prestazione = self.monitor.get("ricetta", "")
+            info.codice = parse_successo(self.driver.page_source) or ""
         # invia riepilogo con luogo e note
         import html as _html
         e = _html.escape

@@ -349,6 +349,10 @@ class Controller:
         codice = pren.get("codice") or ""
         data_ora = pren.get("data_ora") or ""
 
+        if not self.store.is_prenotato(monitor_id) and not data_ora:
+            log.warning("[%s] Impossibile convertire in reschedule: nessuna prenotazione registrata nello store", monitor_id)
+            return False
+
         # Trova il monitor configurato
         mon = next((m for m in self.store.get_monitors() if m.get("id") == monitor_id), None)
         if mon is None:

@@ -195,6 +195,17 @@ def test_converti_in_reschedule_tightens_existing_data_a():
     assert saved_mon2["criteri"]["data_a"] == "01/10/2026"
 
 
+def test_converti_in_reschedule_fails_when_no_booking():
+    ctrl = MagicMock()
+    ctrl.store.get_prenotazione.return_value = {"codice": "", "data_ora": "", "info": {}}
+    ctrl.store.is_prenotato.return_value = False
+
+    ok = Controller.converti_in_reschedule(ctrl, "m_ghost")
+    assert ok is False
+    ctrl.store.add_monitor.assert_not_called()
+
+
+
 
 def test_build_flows_dedup_and_disabled():
     ctrl = MagicMock()

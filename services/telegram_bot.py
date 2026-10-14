@@ -572,7 +572,7 @@ class TelegramBot:
                             parse_mode=ParseMode.HTML,
                         )
                     else:
-                        await q.edit_message_text(f"⚠️ Impossibile aggiornare il monitor {self._esc(mid)}.")
+                        await q.edit_message_text(f"⚠️ Impossibile aggiornare il monitor {self._esc(mid)}: nessuna prenotazione valida registrata.")
                     return
             # calendario inline (seleziona data)
             if (data or "").startswith("cal:"):

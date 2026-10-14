@@ -505,11 +505,25 @@ class NewBookingFlow(Flow):
             self._click_el(conf)
         elif conf is not None:
             raise RuntimeError("Bottone 'Conferma' disabilitato (lettura non presa visione)")
-        time.sleep(3)
-        # codice prenotazione dalla schermata di successo
-        cod = parse_successo(self.driver.page_source)
-        info.codice = cod or ""
-        # --- memorizza la prenotazione nello store (ricetta ora è un appuntamento) ---
+        else:
+            raise RuntimeError("Bottone 'Conferma' non trovato nella modale di conferma")
+
+        # 4) Controllo rigoroso conferma dal portale
+        ok_conf, cod, err_conf = self._attendi_conferma_prenotazione(timeout_s=30)
+        if not ok_conf:
+            raise RuntimeError(f"Conferma prenotazione non riuscita: {err_conf}")
+        info.codice = cod or info.codice or ""
+
+        # 5) Controllo finale di riscontro su 'I miei appuntamenti'
+        log.info("[%s] Controllo finale di riscontro in 'I miei appuntamenti'...", self.mid)
+        riscontro_ok = self._verifica_riscontro_miei_appuntamenti(slot, codice=info.codice)
+        if not riscontro_ok:
+            raise RuntimeError(
+                f"Riscontro fallito: la prenotazione {slot.date_str} {slot.time_str} (cod: {info.codice or 'n/d'}) "
+                f"non risulta presente nella sezione 'I miei appuntamenti'"
+            )
+
+        # 6) Prenotazione verificata con successo -> salvataggio e notifiche
         try:
             self.store.record_prenotazione(
                 self.mid, info.codice or "",

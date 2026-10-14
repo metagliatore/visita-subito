@@ -403,6 +403,223 @@ class Flow:
         except Exception as e:  # noqa: BLE001
             log.debug("[%s] Impossibile salvare dump di debug %s: %s", self.mid, name, e)
 
+    def _attendi_conferma_prenotazione(self, timeout_s: int = 30) -> tuple[bool, str, str]:
+        """Attende attivamente la conferma della prenotazione dopo il click su 'Conferma'.
+
+        Ritorna una tupla: (successo: bool, codice_prenotazione: str, messaggio_errore: str).
+        - Riconosce schermata di successo (appuntamentoConfermatoCtrl, success-feedback-title,
+          testo 'Prenotazione effettuata con successo', 'Appuntamento prenotato', codice prenotazione).
+        - Riconosce modali o alert di errore (es. slot scaduto / non più disponibile, errore di rete, ecc.).
+        """
+        import time
+        from services.appuntamento import parse_successo
+
+        d = getattr(self, "driver", None)
+        if d is None:
+            return False, "", "Browser driver non disponibile"
+
+        for sec in range(max(1, timeout_s)):
+            if not self._is_autenticato():
+                return False, "", "Sessione scaduta o reindirizzato a login durante la conferma"
+
+            # 1. Controlla modali o alert di errore dal portale
+            err_msg = ""
+            try:
+                err_msg = d.execute_script("""
+                    // Modali aperte/visibili
+                    var modals = document.querySelectorAll(".modal.in, .modal.show, div[uib-modal-window]");
+                    for (var i = 0; i < modals.length; i++) {
+                        var m = modals[i];
+                        if (m.offsetWidth > 0 || m.offsetHeight > 0 || window.getComputedStyle(m).display !== 'none') {
+                            var body = m.querySelector(".modal-body, .modal-content") || m;
+                            var t = (body.textContent || "").replace(/\\s+/g, ' ').trim();
+                            var low = t.toLowerCase();
+                            if (low.includes("non più disponibile") ||
+                                low.includes("non e' piu' disponibile") ||
+                                low.includes("non andata a buon fine") ||
+                                low.includes("si è verificato un errore") ||
+                                low.includes("si e' verificato un errore") ||
+                                low.includes("si è verificato un problema") ||
+                                low.includes("si e' verificato un problema") ||
+                                low.includes("impossibile procedere") ||
+                                low.includes("impossibile confermare") ||
+                                (low.includes("attenzione") && (low.includes("errore") || low.includes("disponibil"))) ||
+                                low.includes("errore durante")) {
+                                return t;
+                            }
+                        }
+                    }
+                    // Alert visibili
+                    var alerts = document.querySelectorAll(".alert-danger, #initError");
+                    for (var j = 0; j < alerts.length; j++) {
+                        var a = alerts[j];
+                        if (a.offsetWidth > 0 && a.offsetHeight > 0 && window.getComputedStyle(a).display !== 'none') {
+                            var at = (a.textContent || "").replace(/\\s+/g, ' ').trim();
+                            if (at) return at;
+                        }
+                    }
+                    return "";
+                """) or ""
+            except Exception:
+                pass
+
+            if isinstance(err_msg, str) and err_msg.strip():
+                log.error("[%s] Errore riscontrato dal portale durante la conferma: %s", self.mid, err_msg)
+                self._salva_debug_dump("debug_conferma_errore")
+                return False, "", err_msg.strip()
+
+            # 2. Controlla schermata di successo
+            html = ""
+            try:
+                html = d.page_source or ""
+            except Exception:
+                pass
+
+            cod = parse_successo(html)
+            has_success_el = False
+            try:
+                has_success_el = bool(d.execute_script("""
+                    return !!(
+                        document.querySelector("[ng-controller*='appuntamentoConfermatoCtrl']") ||
+                        document.querySelector(".success-feedback-title") ||
+                        document.querySelector("#conferma-appuntamenti") ||
+                        document.querySelector("appuntamento-confermato")
+                    );
+                """))
+            except Exception:
+                pass
+
+            if cod or has_success_el or ("Prenotazione effettuata con successo" in html) or ("Appuntamento prenotato" in html and "appuntamentoConfermatoCtrl" in html):
+                log.info("[%s] Prenotazione confermata a video! Codice: %s (in %ds)", self.mid, cod or "(non visibile)", sec)
+                return True, cod or "", ""
+
+            time.sleep(1)
+
+        log.warning("[%s] Timeout attesa conferma prenotazione dopo %ds", self.mid, timeout_s)
+        self._salva_debug_dump("debug_conferma_timeout")
+        return False, "", f"Timeout dopo {timeout_s}s: nessuna schermata di conferma o codice prenotazione apparso"
+
+    def _verifica_riscontro_miei_appuntamenti(self, slot, codice: str = "", timeout_s: int = 30) -> bool:
+        """Verifica nella sezione 'I miei appuntamenti' che la prenotazione esista realmente."""
+        d = getattr(self, "driver", None)
+        if d is None:
+            return False
+
+        log.info("[%s] Inizio riscontro su 'I miei appuntamenti' per slot %s %s (codice: %s)",
+                 self.mid, slot.date_str, slot.time_str, codice or "n/d")
+        try:
+            self._riduci_tab_a_una()
+            d.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
+            time.sleep(3)
+            if not self._is_autenticato():
+                log.warning("[%s] Sessione non autenticata durante riscontro", self.mid)
+                return False
+
+            # Clicca 'Gestisci Prenotazioni'
+            opened = False
+            try:
+                opened = d.execute_script("""
+                    var a = document.querySelector("a[ng-click*='clickGestisciAppuntamenti']") ||
+                            document.querySelector("a[ng-click*='clickGestisci']");
+                    if (a) { a.click(); return true; }
+                    return false;
+                """)
+            except Exception:
+                pass
+            if not opened:
+                self._click_by_or(
+                    selectors.RESCHEDULE.get("menu_gestisci", []),
+                    "menu gestisci appuntamenti"
+                )
+
+            time.sleep(1)
+            # Chiudi modali residui e switch al tab 'I miei appuntamenti'
+            try:
+                d.execute_script("""
+                    var b = document.querySelector("button[ng-click*='messaggiCtrl']");
+                    if (b) b.click();
+                    var tab = document.querySelector("a[ng-click*='typeTabAppuntamenti']") ||
+                              document.querySelector("a[aria_controls='i_tuoi_appuntamenti']");
+                    if (tab && !tab.closest('li.active')) tab.click();
+                """)
+            except Exception:
+                pass
+
+            # Prepara termini di ricerca
+            ric = (self.monitor.get("ricetta") or "").strip().lower()
+            nre = (self.monitor.get("nre") or "").strip().lower()
+            cod = codice.strip().lower() if codice else ""
+            target_data = slot.date_str.strip()  # es. "04/06/2027"
+
+            # Polling attivo per le card
+            for sec in range(max(1, timeout_s)):
+                if not self._is_autenticato():
+                    log.warning("[%s] Sessione persa durante polling riscontro", self.mid)
+                    return False
+                try:
+                    d.execute_script("var b=document.querySelector('button[ng-click*=messaggiCtrl]');if(b)b.click();")
+                except Exception:
+                    pass
+
+                # Estrai il testo delle card presenti
+                cards_data = []
+                try:
+                    cards_data = d.execute_script("""
+                        var cards = document.querySelectorAll(
+                            "li[app-unificato], .app-unificato, .appuntamento, [ng-repeat*='listaRicetteAppuntamentiCtrl']"
+                        );
+                        return Array.from(cards).map(function(c) {
+                            return (c.textContent || '').replace(/\\s+/g, ' ').trim();
+                        });
+                    """) or []
+                except Exception:
+                    pass
+
+                page_text = ""
+                try:
+                    page_text = d.page_source.lower()
+                except Exception:
+                    pass
+
+                # Match per codice prenotazione (se disponibile)
+                if cod and (cod in page_text or any(cod in c.lower() for c in cards_data)):
+                    log.info("[%s] Riscontro OK: codice %s trovato tra gli appuntamenti (dopo %ds)",
+                             self.mid, cod, sec)
+                    return True
+
+                # Match per data slot e prestazione/ricetta
+                for card_txt in cards_data:
+                    c_low = card_txt.lower()
+                    if target_data in card_txt:
+                        if nre and nre in c_low:
+                            log.info("[%s] Riscontro OK: data %s e NRE %s trovati (dopo %ds)",
+                                     self.mid, target_data, nre, sec)
+                            return True
+                        if ric:
+                            import re as _re
+                            parole_ricetta = [w for w in _re.findall(r"\b[a-zA-Z]{4,}\b", ric)
+                                              if w not in ("senza", "con", "della", "delle", "degli", "visita")]
+                            if any(w in c_low for w in parole_ricetta):
+                                log.info("[%s] Riscontro OK: data %s e prestazione matching trovati (dopo %ds)",
+                                         self.mid, target_data, sec)
+                                return True
+                        # Se non c'è ricetta specifica o se la data matcha la card
+                        log.info("[%s] Riscontro OK: data %s trovata tra le card (dopo %ds)",
+                                 self.mid, target_data, sec)
+                        return True
+
+                time.sleep(1)
+
+            # Timeout riscontro
+            log.warning("[%s] Riscontro fallito dopo %ds: appuntamento per %s non trovato in 'I miei appuntamenti'",
+                        self.mid, timeout_s, target_data)
+            self._salva_debug_dump("debug_riscontro_non_trovato")
+            return False
+        except Exception as e:
+            log.warning("[%s] Errore durante la verifica riscontro appuntamenti: %s", self.mid, e)
+            self._salva_debug_dump("debug_riscontro_errore")
+            return False
+
     # ---- pipeline condivisa ----
     def poll_once(self, manual: bool = False) -> str:
         """Esegue un ciclo di controllo. Ritorna un messaggio di esito (o '').
@@ -557,7 +774,11 @@ class Flow:
             return "ok"
         except Exception as e:  # noqa: BLE001
             log.exception("[%s] esecuzione fallita", self.mid)
-            self.bot.notify(f"❌ Errore durante la prenotazione: {e}")
+            self.store.mark_action(self.mid, "idle", f"fallita prenotazione: {e}")
+            self.bot.notify(
+                f"❌ <b>Prenotazione non riuscita</b> per <b>{self.mid}</b>:\n{e}\n\n"
+                f"ℹ️ Il monitoraggio rimane attivo e continuerà a cercare nuove date disponibili."
+            )
             return "errore"
 
     def _chiedi_post_prenotazione(self, slot) -> None:
