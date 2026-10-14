@@ -13,8 +13,13 @@ auth:
     otp_mode: "notifica"  # "notifica" (push app) oppure "otp" (SMS/app)
 
   cie:
-    # Modalità CIE: "app" (CieID / QR Code) oppure "smartcard" (lettore NFC)
+    # Modalità CIE:
+    #   - "app": App CieID con credenziali Livello 2 (CF/CIE + password) o QR Code a schermo
+    #   - "smartcard": Livello 3 (richiede lettore NFC e smartcard fisica)
     mode: "app"
+    # Credenziali Livello 2 (opzionali in settings.yaml o via CIE_USERNAME / CIE_PASSWORD in .env):
+    # username: ""  # Codice Fiscale o Numero CIE (es. CA00000AA)
+    # password: ""  # Password delle credenziali CIE
 
 browser:
   # Percorso del binario Chrome. Vuoto => usa lo Selenium Manager default.

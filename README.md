@@ -5,7 +5,7 @@ Bot automatizzato che controlla periodicamente le disponibilità per visite ed e
 > [!IMPORTANT]
 > **Compatibilità e limitazioni attuali**:
 > - **Portale regionale**: al momento questo progetto supporta **esclusivamente il portale del Fascicolo Sanitario di Regione Lombardia** (`https://www.fascicolosanitario.regione.lombardia.it`).
-> - **Provider SPID**: è attualmente implementato e supportato **un solo provider SPID, ovvero SielteID** (il provider personale utilizzato dall'autore), con approvazione push via app mobile. Gli altri provider (PosteID, Lepida, Aruba, TIM, Namirial, ecc.) o l'accesso CIE non sono al momento implementati nel flusso di login automatico.
+> - **Autenticazione**: sono supportati l'accesso tramite **SPID** (attualmente testato con SielteID via notifica push o OTP) e l'accesso tramite **CIE (Carta d'Identità Elettronica)** (Livello 2 con credenziali/app CieID o scansione diretta del QR Code inviato su Telegram). Gli altri provider SPID non sono al momento implementati nel flusso di login automatico.
 
 ---
 
@@ -14,7 +14,7 @@ Bot automatizzato che controlla periodicamente le disponibilità per visite ed e
 - **Monitoraggio nuove prenotazioni (Flow A)**: ricerca disponibilità a partire da ricette dematerializzate (NRE) prescritte e non ancora prenotate.
 - **Anticipo / spostamento appuntamenti (Flow B)**: monitora visite già fissate per trovare date precedenti (anticipo) o più comode all'interno di un intervallo temporale desiderato.
 - **Wizard interattivo su Telegram**: creazione guidata dei monitor direttamente dalla chat con selezione di ricetta/appuntamento, scelta multi-provincia e calendario inline per l'intervallo date.
-- **Gestione sessione SPID**: keep-alive automatico della sessione e rinnovo intelligente tramite SielteID con notifica push sul telefono.
+- **Gestione sessione SPID / CIE**: keep-alive automatico della sessione e rinnovo intelligente tramite SielteID o CIE (Livello 2 / QR Code) con supporto interattivo su Telegram.
 - **Richiesta di approvazione a 2 vie**: quando viene trovato uno slot che soddisfa i criteri, il bot invia un messaggio con pulsanti inline (*Conferma* / *Rifiuta*) con timeout configurabile prima di bloccare la prenotazione.
 - **Completamente Dockerizzato**: pronto per l'esecuzione 24/7 in background con server X virtuale (`Xvfb`) e volumi persistenti per cookie e stato.
 
@@ -43,7 +43,7 @@ Il modo più semplice e affidabile per eseguire il monitor è tramite **Docker C
 
 ### 1. Prerequisiti
 - **Docker** e **Docker Compose** installati (su Linux, Windows con WSL2 o macOS).
-- Credenziali SPID **SielteID** (l'unico provider attualmente supportato) con l'app mobile Sielte installata sullo smartphone per autorizzare le notifiche push.
+- Credenziali **SPID** (provider SielteID con notifica push) oppure **CIE (Carta d'Identità Elettronica)** con app CieID per approvazione push, OTP o scansione QR Code su Telegram.
 
 ### 2. Configurazione del Bot Telegram
 Prima di avviare l'applicazione, è necessario creare il proprio bot Telegram personale:
@@ -77,10 +77,19 @@ TG_TOKEN=123456789:ABCdefGHIjklMNOpqrSTUvwxYZ
 TG_CHAT_ID=123456789
 TG_CHAT_ID_SECONDARY=
 
-# SPID (SielteID)
-SIELTE_USERNAME=il_tuo_username
-SIELTE_PASSWORD=la_tua_password
-SIELTE_OTP_MODE=notifica
+# Metodo di autenticazione: spid oppure cie
+AUTH_METHOD=spid
+
+# --- Se AUTH_METHOD=spid (SielteID) ---
+SPID_PROVIDER=sielte
+SPID_USERNAME=il_tuo_username
+SPID_PASSWORD=la_tua_password
+SPID_OTP_MODE=notifica
+
+# --- Se AUTH_METHOD=cie (Carta d'Identità Elettronica) ---
+# CIE_MODE=app
+# CIE_USERNAME=codice_fiscale_o_numero_cie
+# CIE_PASSWORD=la_tua_password
 
 # Scheduler & timeouts
 POLL_INTERVAL_SECONDS=300
@@ -95,12 +104,13 @@ Avvia il container in background:
 docker compose up -d
 ```
 
-### 5. Primo Accesso SPID
+### 5. Primo Accesso SPID / CIE
 Alla prima esecuzione:
-1. Il container si avvia e naviga automaticamente verso il portale di autenticazione SielteID.
-2. Riceverai un messaggio su Telegram: `📲 Sto per inviare la notifica SielteID: prepara il telefono e approvala appena arriva!`.
-3. Apri l'app **SielteID** sul tuo smartphone e approva la richiesta push entro 3 minuti.
-4. I cookie di sessione verranno salvati automaticamente nel volume persistente `./data/cookies/cookies.pkl`. Da questo momento in poi il monitor rimarrà attivo autonomamente.
+1. Il container si avvia e naviga automaticamente verso il portale di autenticazione.
+2. In base alla modalità scelta in `AUTH_METHOD`:
+   - **SPID (SielteID)**: riceverai un messaggio su Telegram (`📲 Sto per inviare la notifica SielteID...`). Apri l'app **SielteID** sul tuo smartphone e approva la richiesta push entro 3 minuti.
+   - **CIE**: il bot supporta l'accesso Livello 2 (credenziali + notifica/codice OTP su app CieID) oppure invia direttamente lo screenshot del **QR Code** su Telegram da inquadrare con l'app CieID.
+3. I cookie di sessione verranno salvati automaticamente nel volume persistente `./data/cookies/cookies.pkl`. Da questo momento in poi il monitor rimarrà attivo autonomamente.
 
 ### 6. Gestione del container
 - **Visualizzare i log in tempo reale**:
@@ -136,7 +146,7 @@ Una volta avviato, tutte le operazioni si gestiscono comodamente dalla chat con 
 | `/start` | Messaggio di benvenuto e scorciatoie principali. |
 | `/monitora` | **Wizard guidato**: seleziona se monitorare una nuova ricetta o un appuntamento esistente, scegli le province di ricerca e imposta l'intervallo temporale tramite calendario interattivo. |
 | `/stop` | Mostra i monitor attivi e permette di interromperne uno con un click. |
-| `/status` | Visualizza lo stato di tutti i monitor attivi, lo stato della sessione SPID e il tempo rimanente al prossimo controllo. |
+| `/status` | Visualizza lo stato di tutti i monitor attivi, lo stato della sessione SPID/CIE e il tempo rimanente al prossimo controllo. |
 | `/poll` | Forza un giro di verifica immediato delle disponibilità senza attendere l'intervallo schedulato. |
 | `/ricette` | Mostra le ricette dematerializzate più recenti presenti sul fascicolo (con stato e pulsante per scaricare il PDF promemoria). |
 | `/appuntamenti` | Mostra l'elenco degli appuntamenti già prenotati con data, struttura sanitaria, indirizzo e link rapido a Google Maps. |
@@ -188,7 +198,7 @@ pytest
 │   ├── browser.py        # Wrapper Selenium Chrome (gestione headless/display)
 │   ├── config.py         # Caricamento e merge configurazioni YAML + env
 │   ├── selectors.py      # Mappatura selettori CSS/XPath del portale regionale
-│   └── session.py        # Gestione sessione SPID, salvataggio cookie, login Sielte
+│   └── session.py        # Gestione sessione SPID/CIE, salvataggio cookie, login Sielte/CIE
 ├── flows/
 │   ├── base.py           # Classe base per i flussi di ricerca
 │   ├── new_booking.py    # Flusso A: prenotazione nuova ricetta
