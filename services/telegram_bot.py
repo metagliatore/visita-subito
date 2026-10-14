@@ -27,6 +27,7 @@ HELP_TEXT = (
     "/stop - lista dei monitor e scelta di quello da fermare\n"
     "/status - stato monitor e sessione\n"
     "/poll - forza il controllo disponibilità\n"
+    "/anticipa - cerca date precedenti per un appuntamento già prenotato\n"
     "/pause - metti in pausa o riprendi la ricerca (/resume per riprendere)\n"
     "\n📋 <b>Informazioni</b>\n"
     "/ricette - elenca le ricette da prenotare\n"
@@ -581,6 +582,26 @@ class TelegramBot:
                     else:
                         await q.edit_message_text(f"⚠️ Impossibile aggiornare il monitor {self._esc(mid)}: nessuna prenotazione valida registrata.")
                     return
+            # selezione monitor da anticipare
+            if data.startswith("anticipa:pick:"):
+                mid = data.split(":", 2)[2]
+                if not self.controller:
+                    await q.answer("Controller non inizializzato.")
+                    return
+                ok = self.controller.converti_in_reschedule(mid)
+                if ok:
+                    pren = self.controller.store.get_prenotazione(mid)
+                    d_str = pren.get("data_ora") or ""
+                    data_info = f"\n📌 Appuntamento attuale: <b>{self._esc(d_str)}</b>" if d_str else ""
+                    await q.edit_message_text(
+                        f"🔄 <b>Ricerca anticipo attivata per {self._esc(mid)}!</b>{data_info}\n\n"
+                        f"Il bot continuerà a verificare automaticamente per provare ad anticipare la visita.",
+                        parse_mode=ParseMode.HTML,
+                    )
+                    self.controller.force_poll()
+                else:
+                    await q.edit_message_text(f"⚠️ Impossibile aggiornare il monitor {self._esc(mid)}: nessuna prenotazione valida registrata.")
+                return
             # calendario inline (seleziona data)
             if (data or "").startswith("cal:"):
                 await self._h_cal(update, chat_id)
@@ -1102,6 +1123,66 @@ class TelegramBot:
         if self.controller:
             self.controller.force_poll()
 
+    async def _h_anticipa(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._autorizzato(update):
+            return
+        self._risveglia_se_needed(update)
+        if self.controller is None:
+            await update.message.reply_text("Controller non inizializzato.")
+            return
+
+        # 1. Se fornito ID esplicito come argomento
+        if ctx.args:
+            mid = ctx.args[0]
+            ok = self.controller.converti_in_reschedule(mid)
+            if ok:
+                pren = self.controller.store.get_prenotazione(mid)
+                d_str = pren.get("data_ora") or ""
+                data_info = f"\n📌 Appuntamento attuale: <b>{self._esc(d_str)}</b>" if d_str else ""
+                await update.message.reply_text(
+                    f"🔄 <b>Ricerca anticipo attivata per {self._esc(mid)}!</b>{data_info}\n\n"
+                    f"Il bot continuerà a verificare automaticamente per provare ad anticipare la visita.",
+                    parse_mode=ParseMode.HTML,
+                )
+                self.controller.force_poll()
+            else:
+                await update.message.reply_text(f"⚠️ Impossibile attivare l'anticipo per {self._esc(mid)}: monitor non trovato o nessuna prenotazione valida registrata.")
+            return
+
+        # 2. Senza argomenti: se c'è un solo monitor attivo, usalo direttamente
+        monitors = self.controller.monitors_attivi()
+        if not monitors:
+            await update.message.reply_text("Nessun monitor attivo.")
+            return
+
+        if len(monitors) == 1:
+            mid = monitors[0]["id"]
+            ok = self.controller.converti_in_reschedule(mid)
+            if ok:
+                pren = self.controller.store.get_prenotazione(mid)
+                d_str = pren.get("data_ora") or ""
+                data_info = f"\n📌 Appuntamento attuale: <b>{self._esc(d_str)}</b>" if d_str else ""
+                await update.message.reply_text(
+                    f"🔄 <b>Ricerca anticipo attivata per {self._esc(mid)}!</b>{data_info}\n\n"
+                    f"Il bot continuerà a verificare automaticamente per provare ad anticipare la visita.",
+                    parse_mode=ParseMode.HTML,
+                )
+                self.controller.force_poll()
+            else:
+                await update.message.reply_text(f"⚠️ Impossibile attivare l'anticipo per {self._esc(mid)}: nessuna prenotazione valida registrata.")
+            return
+
+        # 3. Più monitor attivi: mostra bottoni di selezione
+        kb = [[InlineKeyboardButton(
+            f"{m.get('ricetta','')[:28]} [{m.get('type','')}]",
+            callback_data=f"anticipa:pick:{m['id']}")] for m in monitors]
+        kb.append([InlineKeyboardButton("❌ Annulla", callback_data="stop:annulla")])
+        await update.message.reply_text(
+            "🔄 Scegli per quale visita cercare un <b>anticipo</b>:",
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode=ParseMode.HTML,
+        )
+
     async def _h_pause(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
             return
@@ -1283,6 +1364,7 @@ class TelegramBot:
                 BotCommand("blacklist", "Visualizza ed elimina disponibilità rifiutate"),
                 BotCommand("status", "Stato dei monitor e sessione SPID"),
                 BotCommand("poll", "Forza controllo disponibilità adesso"),
+                BotCommand("anticipa", "Cerca date precedenti per visita prenotata"),
                 BotCommand("pause", "Mette in pausa o riprende la ricerca automatica"),
                 BotCommand("resume", "Riprende la ricerca automatica"),
                 BotCommand("ricette", "Elenco delle ricette dematerializzate"),
@@ -1310,6 +1392,7 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("ricette", self._h_ricette))
         self.app.add_handler(CommandHandler("appuntamenti", self._h_appuntamenti))
         self.app.add_handler(CommandHandler("poll", self._h_poll))
+        self.app.add_handler(CommandHandler("anticipa", self._h_anticipa))
         self.app.add_handler(CommandHandler(["pause", "pause_unpause"], self._h_pause))
         self.app.add_handler(CommandHandler(["resume", "unpause"], self._h_resume))
         self.app.add_handler(CommandHandler("monitora", self._h_monitora))

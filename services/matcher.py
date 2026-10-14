@@ -135,6 +135,41 @@ def match_slot(slot: Slot, criteri: dict) -> tuple[bool, str]:
     if al and sd > al:
         return False, f"dopo il range ({slot.date_str})"
 
+    # ---- verifica miglioramento per anticipo appuntamento attuale ----
+    data_att_raw = criteri.get("data_attuale")
+    if data_att_raw:
+        def _parse_data_e_ora(val):
+            import re
+            if not val:
+                return None, None
+            if hasattr(val, "date") and hasattr(val, "time"):
+                t = val.time()
+                return val.date(), f"{t.hour:02d}:{t.minute:02d}"
+            if hasattr(val, "date"):
+                return val.date(), None
+            raw = str(val).strip()
+            d_match = re.search(r"(\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})", raw)
+            d_obj = None
+            if d_match:
+                ds = d_match.group(1)
+                for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+                    try:
+                        d_obj = _dt.strptime(ds, fmt).date()
+                        break
+                    except Exception:
+                        pass
+            t_match = re.search(r"\b(\d{1,2}:\d{2})\b", raw)
+            t_str = _norm_time(t_match.group(1)) if t_match else None
+            return d_obj, t_str
+
+        cur_date, cur_time = _parse_data_e_ora(data_att_raw)
+        if cur_date:
+            if sd > cur_date:
+                return False, f"dopo l'appuntamento attuale ({slot.date_str} > {cur_date.strftime('%d/%m/%Y')})"
+            if sd == cur_date and cur_time:
+                if slot.time_str >= cur_time:
+                    return False, f"stesso giorno dell'appuntamento attuale ma orario non migliorativo ({slot.time_str} >= {cur_time})"
+
     if wd in escludi:
         return False, f"giorno escluso ({wd})"
     if preferiti and wd not in preferiti:

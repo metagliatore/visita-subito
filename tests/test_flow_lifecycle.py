@@ -519,5 +519,57 @@ def test_new_booking_flow_apri_ricetta_normalizes_nre():
     assert nre_arg == "0300a1112223334"
 
 
+def test_reschedule_flow_poll_once_unblocks_done_or_pending_choice():
+    from flows.reschedule import RescheduleFlow
+    store = MagicMock()
+    # Simula monitor reschedule con action_state 'done' (precedentemente bloccato)
+    store.get_action.return_value = "done"
+    store.get_prenotazione.return_value = {"data_ora": "25/10/2026 10:00"}
+
+    flow = RescheduleFlow(
+        {"id": "res-1", "ricetta": "VISITA UROLOGICA", "type": "reschedule"},
+        MagicMock(), MagicMock(), MagicMock(), store
+    )
+    flow._is_autenticato = MagicMock(return_value=True)
+    flow.load_page = MagicMock()
+    flow._cambia_provincia_e_ricerca = MagicMock(return_value={"stato": "risultati", "provincia": ""})
+    flow.check_availability = MagicMock(return_value=[])
+
+    # Esegui poll_once sia automatico che manuale
+    flow.poll_once(manual=False)
+
+    # Verifica che sia stato riarmato a idle per consentire la continuazione del monitoraggio
+    store.mark_action.assert_called_with("res-1", "idle", "riarmo monitor reschedule")
+    flow.load_page.assert_called_once()
+
+
+def test_new_booking_flow_poll_once_manual_auto_promotes_done_pending_choice():
+    from flows.new_booking import NewBookingFlow
+    store = MagicMock()
+    store.get_action.return_value = "done_pending_choice"
+    store.get_prenotazione.return_value = {"data_ora": "25/10/2026 10:00"}
+    bot = MagicMock()
+
+    flow = NewBookingFlow(
+        {"id": "new-1", "ricetta": "VISITA DERMATOLOGICA", "type": "new", "criteri": {}},
+        MagicMock(), MagicMock(), bot, store
+    )
+    flow._is_autenticato = MagicMock(return_value=True)
+    flow.load_page = MagicMock()
+    flow._cambia_provincia_e_ricerca = MagicMock(return_value={"stato": "risultati", "provincia": ""})
+    flow.check_availability = MagicMock(return_value=[])
+
+    # Un poll manuale su monitor in attesa scelta deve promuovere automaticamente a reschedule
+    flow.poll_once(manual=True)
+
+    assert flow.type == "reschedule"
+    assert flow.monitor["type"] == "reschedule"
+    assert flow.criteri["data_attuale"] == "25/10/2026 10:00"
+    store.mark_action.assert_called_with("new-1", "idle", "promosso a reschedule da /poll manuale")
+    bot.notify.assert_called()
+    assert any("anticipare" in call[0][0] for call in bot.notify.call_args_list)
+
+
+
 
 

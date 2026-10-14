@@ -341,6 +341,8 @@ class Controller:
                     "data_ricetta": data_ricetta or ""}
         if data_att:
             monitor["data_attuale"] = data_att
+            if tipo == "reschedule" or data_attuale:
+                crit["data_attuale"] = data_att
         self.store.add_monitor(monitor)
         self.store.mark_action(mid, "idle", "monitor creato")
         if tipo == "reschedule" and data_att:
@@ -405,6 +407,7 @@ class Controller:
             mon["codice_appuntamento"] = codice
         if data_ora:
             mon["data_attuale"] = data_ora
+            mon.setdefault("criteri", {})["data_attuale"] = data_ora
             # Se la visita è fissata per una certa data, imposta data_a alla data prenotata
             # per cercare esclusivamente date migliorative (anticipo)
             try:
@@ -827,11 +830,17 @@ class Controller:
                             log.info("Sessione ancora non pronta, salto polling automatico")
                             return
 
-                for f in list(self._flows):
+                for i, f in enumerate(list(self._flows)):
                     # interruzione: /poll richiesto durante il giro -> esci subito
                     if self._force.is_set():
                         log.info("Polling interrotto a metà: /poll richiesto dall'utente")
                         break
+                    # Sincronizza il flusso se il tipo monitor è variato nello store (es. promozione a reschedule)
+                    mon_stored = next((m for m in self.store.get_monitors() if m.get("id") == f.mid), None)
+                    if mon_stored and mon_stored.get("type") and mon_stored.get("type") != f.type and mon_stored.get("type") in FLOW_TYPES:
+                        log.info("[%s] Tipo monitor variato nello store (%s -> %s): ricreo il flusso", f.mid, f.type, mon_stored["type"])
+                        f = FLOW_TYPES[mon_stored["type"]](mon_stored, self.browser, self.queue, self.bot, self.store)
+                        self._flows[i] = f
                     log.info("Polling %s (%s)", f.mid, f.type)
                     try:
                         f.poll_once(manual=manual)

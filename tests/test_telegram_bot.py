@@ -629,6 +629,108 @@ def test_h_ricette_status_icon_prenotabile_vs_prenotata():
     assert "💊 Farmaco" in msg_list
 
 
+@pytest.mark.asyncio
+async def test_h_anticipa_with_arg():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot("dummy", "123")
+    ctrl = MagicMock()
+    ctrl.converti_in_reschedule.return_value = True
+    ctrl.store.get_prenotazione.return_value = {"data_ora": "25/10/2026 10:00"}
+    bot.controller = ctrl
+
+    up = MagicMock()
+    up.effective_chat.id = 123
+    up.message.reply_text = AsyncMock()
+
+    ctx = MagicMock()
+    ctx.args = ["m-1"]
+
+    await bot._h_anticipa(up, ctx)
+
+    ctrl.converti_in_reschedule.assert_called_once_with("m-1")
+    ctrl.force_poll.assert_called_once()
+    up.message.reply_text.assert_called_once()
+    assert "Ricerca anticipo attivata" in up.message.reply_text.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_h_anticipa_single_monitor():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot("dummy", "123")
+    ctrl = MagicMock()
+    ctrl.monitors_attivi.return_value = [{"id": "single-1", "ricetta": "VISITA DERMA"}]
+    ctrl.converti_in_reschedule.return_value = True
+    ctrl.store.get_prenotazione.return_value = {"data_ora": "20/11/2026 15:30"}
+    bot.controller = ctrl
+
+    up = MagicMock()
+    up.effective_chat.id = 123
+    up.message.reply_text = AsyncMock()
+
+    ctx = MagicMock()
+    ctx.args = []
+
+    await bot._h_anticipa(up, ctx)
+
+    ctrl.converti_in_reschedule.assert_called_once_with("single-1")
+    ctrl.force_poll.assert_called_once()
+    up.message.reply_text.assert_called_once()
+    assert "Ricerca anticipo attivata" in up.message.reply_text.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_h_anticipa_multiple_monitors():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot("dummy", "123")
+    ctrl = MagicMock()
+    ctrl.monitors_attivi.return_value = [
+        {"id": "m-1", "ricetta": "VISITA 1", "type": "new"},
+        {"id": "m-2", "ricetta": "VISITA 2", "type": "reschedule"},
+    ]
+    bot.controller = ctrl
+
+    up = MagicMock()
+    up.effective_chat.id = 123
+    up.message.reply_text = AsyncMock()
+
+    ctx = MagicMock()
+    ctx.args = []
+
+    await bot._h_anticipa(up, ctx)
+
+    ctrl.converti_in_reschedule.assert_not_called()
+    up.message.reply_text.assert_called_once()
+    assert "Scegli per quale visita cercare un" in up.message.reply_text.call_args[0][0]
+    kb = up.message.reply_text.call_args[1]["reply_markup"].inline_keyboard
+    assert any("anticipa:pick:m-1" in b.callback_data for row in kb for b in row)
+
+
+@pytest.mark.asyncio
+async def test_anticipa_callback():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot("dummy", "123")
+    ctrl = MagicMock()
+    ctrl.converti_in_reschedule.return_value = True
+    ctrl.store.get_prenotazione.return_value = {"data_ora": "12/12/2026 09:00"}
+    bot.controller = ctrl
+
+    up = MagicMock()
+    up.effective_chat.id = 123
+    q = MagicMock()
+    q.data = "anticipa:pick:chosen-1"
+    q.edit_message_text = AsyncMock()
+    up.callback_query = q
+
+    ctx = MagicMock()
+    await bot._h_callback(up, ctx)
+
+    ctrl.converti_in_reschedule.assert_called_once_with("chosen-1")
+    ctrl.force_poll.assert_called_once()
+    q.edit_message_text.assert_called_once()
+    assert "Ricerca anticipo attivata" in q.edit_message_text.call_args[0][0]
+
+
+
 
 
 

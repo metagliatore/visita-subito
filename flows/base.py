@@ -34,7 +34,9 @@ class Flow:
         self.queue = queue
         self.bot = bot
         self.store = store
-        self.criteri = monitor.get("criteri", {})
+        self.criteri = dict(monitor.get("criteri", {}))
+        if monitor.get("data_attuale") and not self.criteri.get("data_attuale"):
+            self.criteri["data_attuale"] = monitor["data_attuale"]
 
     @property
     def mid(self) -> str:
@@ -160,7 +162,8 @@ class Flow:
         if(m&&m.querySelector('#provincia')){
             var sp=m.querySelector('#provincia');
             st.stato='modale_ricerca';
-            if(sp.selectedOptions[0])st.provincia=sp.selectedOptions[0].textContent.trim();
+            if(sp.selectedOptions&&sp.selectedOptions[0]) st.provincia=sp.selectedOptions[0].textContent.trim();
+            else if(sp.selectedIndex>=0&&sp.options[sp.selectedIndex]) st.provincia=sp.options[sp.selectedIndex].textContent.trim();
             return st;
         }
         // 2) vista risultati: bottone 'Modifica ricerca' + slot renderizzati
@@ -173,11 +176,12 @@ class Flow:
         var bodyNoDisp=/non sono state trovate|nessuna disponib|non ci sono disponib/i.test(document.body.textContent||'');
         if(hasBtn&&(slotsInDom>0||bodyNoDisp)){
             st.stato='risultati';
-            var fs=document.querySelectorAll('span.field-label');
+            var fs=document.querySelectorAll('span.field-label, label, .field-label, dt');
             for(var j=0;j<fs.length;j++){
-                if((fs[j].textContent||'').trim()==='Provincia'){
-                    var sib=fs[j].nextElementSibling;
-                    if(sib)st.provincia=(sib.textContent||'').trim();
+                var labelText = (fs[j].textContent||'').replace(/[\s:]+$/,'').trim();
+                if(/^provincia$/i.test(labelText)){
+                    var sib=fs[j].nextElementSibling || (fs[j].parentElement?fs[j].parentElement.querySelector('.field-value, dd, span:not(.field-label)'):null);
+                    if(sib) st.provincia=(sib.textContent||'').trim();
                     break;
                 }
             }
@@ -371,6 +375,8 @@ class Flow:
             if b2 is not None and not b2.get_attribute("disabled"):
                 self._click_el(b2)
                 self._provincia_corrente = provincia
+                # Breve attesa per consentire la chiusura della modale e l'avvio della transizione DOM
+                time.sleep(1.0)
                 esito = self._attendi_esito(provincia, timeout_s=60)
                 # se la testata NON è cambiata alla provincia attesa, riprova una volta
                 if (esito.get("stato") == "risultati"
@@ -627,14 +633,36 @@ class Flow:
         (/poll): solo in quel caso viene inviata la notifica di fine-giro
         "nessuna disponibilità" (nei tick automatici sarebbe invasiva).
         """
-        # Se la visita è già stata prenotata ed è completata o in attesa di scelta, non fare polling a vuoto
+        # Se la visita è già stata prenotata:
         action_state = self.store.get_action(self.mid)
-        if self.type == "reschedule" and action_state == "done":
+        # 1) Per monitor di tipo 'reschedule': riarma sempre a 'idle' per continuare a cercare anticipi
+        if self.type == "reschedule" and action_state in ("done", "done_pending_choice"):
             log.info(
-                "[%s] Monitor reschedule attivo con action_state=done: ripristino a idle per proseguire il monitoraggio anticipo",
+                "[%s] Monitor reschedule attivo con action_state=%s: ripristino a idle per proseguire il monitoraggio anticipo",
                 self.mid,
+                action_state,
             )
             self.store.mark_action(self.mid, "idle", "riarmo monitor reschedule")
+            action_state = "idle"
+
+        # 2) Per monitor 'new' in attesa scelta post-prenotazione:
+        # se l'utente richiede esplicitamente il controllo (/poll manuale), promuove automaticamente a reschedule
+        if self.type == "new" and action_state == "done_pending_choice" and manual:
+            log.info("[%s] /poll manuale su monitor done_pending_choice: promozione automatica a ricerca anticipo", self.mid)
+            pren = self.store.get_prenotazione(self.mid)
+            d_str = pren.get("data_ora") or self.monitor.get("data_attuale") or ""
+            data_info = f" ({d_str})" if d_str else ""
+            if hasattr(self.bot, "notify"):
+                self.bot.notify(
+                    f"🔄 <b>{self.mid}</b> risulta già prenotata{data_info}.\n"
+                    f"Poiché hai richiesto il controllo con /poll, avvio la ricerca per <b>anticipare</b> la visita."
+                )
+            self.type = "reschedule"
+            self.monitor["type"] = "reschedule"
+            if d_str:
+                self.monitor["data_attuale"] = d_str
+                self.criteri["data_attuale"] = d_str
+            self.store.mark_action(self.mid, "idle", "promosso a reschedule da /poll manuale")
             action_state = "idle"
 
         if action_state in ("done", "done_pending_choice"):
