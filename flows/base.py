@@ -395,20 +395,11 @@ class Flow:
         log.warning("cambio provincia %s: stato inatteso %s", provincia, s)
         return {"stato": s, "provincia": st.get("provincia", "")}
 
-    def _salva_debug_dump(self, name: str) -> None:
+    def _salva_debug_dump(self, name: str) -> dict | None:
         """Salva dump HTML e screenshot della pagina corrente per diagnosi."""
-        try:
-            import os
-            os.makedirs("data/study", exist_ok=True)
-            d = getattr(self, "driver", None)
-            if d is not None:
-                html = d.page_source or ""
-                with open(f"data/study/{name}.html", "w", encoding="utf-8") as f:
-                    f.write(html)
-                d.save_screenshot(f"data/study/{name}.png")
-                log.info("[%s] Salvato debug dump in data/study/%s.(html|png)", self.mid, name)
-        except Exception as e:  # noqa: BLE001
-            log.debug("[%s] Impossibile salvare dump di debug %s: %s", self.mid, name, e)
+        from core.debug import salva_debug_dump
+        d = getattr(self, "driver", None) or getattr(self.browser, "driver", None)
+        return salva_debug_dump(d, tag=name, prefix=self.mid)
 
     def _attendi_conferma_prenotazione(self, timeout_s: int = 30) -> tuple[bool, str, str]:
         """Attende attivamente la conferma della prenotazione dopo il click su 'Conferma'.
@@ -503,8 +494,9 @@ class Flow:
             time.sleep(1)
 
         log.warning("[%s] Timeout attesa conferma prenotazione dopo %ds", self.mid, timeout_s)
-        self._salva_debug_dump("debug_conferma_timeout")
-        return False, "", f"Timeout dopo {timeout_s}s: nessuna schermata di conferma o codice prenotazione apparso"
+        dump = self._salva_debug_dump("debug_conferma_timeout")
+        dump_msg = f" ({dump['message']})" if dump else ""
+        return False, "", f"Timeout dopo {timeout_s}s: nessuna schermata di conferma o codice prenotazione apparso{dump_msg}"
 
     def _verifica_riscontro_miei_appuntamenti(self, slot, codice: str = "", timeout_s: int = 30) -> bool:
         """Verifica nella sezione 'I miei appuntamenti' che la prenotazione esista realmente."""
@@ -681,8 +673,10 @@ class Flow:
         if not self._is_autenticato():
             msg = "Sessione non autenticata o scaduta (redirect a login)"
             log.warning("[%s] %s", self.mid, msg)
+            dump = self._salva_debug_dump("sessione_scaduta")
+            dump_msg = f"\n\n{dump['message']}" if dump else ""
             if manual:
-                self.bot.notify(f"⚠️ Controllo non riuscito per {self.mid}: {msg}")
+                self.bot.notify(f"⚠️ Controllo non riuscito per {self.mid}: {msg}{dump_msg}")
             raise RuntimeError(msg)
 
         try:
@@ -690,15 +684,19 @@ class Flow:
             if not self._is_autenticato():
                 msg = "Sessione scaduta durante il caricamento della pagina"
                 log.warning("[%s] %s", self.mid, msg)
+                dump = self._salva_debug_dump("sessione_scaduta_load")
+                dump_msg = f"\n\n{dump['message']}" if dump else ""
                 if manual:
-                    self.bot.notify(f"⚠️ Controllo non riuscito per {self.mid}: {msg}")
+                    self.bot.notify(f"⚠️ Controllo non riuscito per {self.mid}: {msg}{dump_msg}")
                 raise RuntimeError(msg)
 
             slots = self.extract_slots()
         except Exception as e:  # noqa: BLE001
             log.error("[%s] load/extract errato: %s", self.mid, e)
+            dump = self._salva_debug_dump("errore_ricerca")
+            dump_msg = f"\n\n{dump['message']}" if dump else ""
             if manual:
-                self.bot.notify(f"⚠️ Controllo non riuscito per {self.mid}: {e}")
+                self.bot.notify(f"⚠️ Controllo non riuscito per {self.mid}: {e}{dump_msg}")
             raise
 
         # filtra per evitare di riproporre slot già visti o in blacklist
@@ -818,9 +816,11 @@ class Flow:
             return "ok"
         except Exception as e:  # noqa: BLE001
             log.exception("[%s] esecuzione fallita", self.mid)
+            dump = self._salva_debug_dump("errore_prenotazione")
+            dump_msg = f"\n\n{dump['message']}" if dump else ""
             self.store.mark_action(self.mid, "idle", f"fallita prenotazione: {e}")
             self.bot.notify(
-                f"❌ <b>Prenotazione non riuscita</b> per <b>{self.mid}</b>:\n{e}\n\n"
+                f"❌ <b>Prenotazione non riuscita</b> per <b>{self.mid}</b>:\n{e}{dump_msg}\n\n"
                 f"ℹ️ Il monitoraggio rimane attivo e continuerà a cercare nuove date disponibili."
             )
             return "errore"

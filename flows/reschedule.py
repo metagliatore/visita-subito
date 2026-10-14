@@ -144,19 +144,20 @@ class RescheduleFlow(Flow):
 
         if not dettagli:
             # salva dump pagina per debug
-            self._salva_debug_dump("debug_reschedule_not_found")
+            dump = self._salva_debug_dump("reschedule_cards_not_found")
+            dump_msg = f" ({dump['message']})" if dump else ""
             if not self._is_autenticato():
-                raise RuntimeError("Sessione scaduta: redirect su login durante il caricamento appuntamenti")
+                raise RuntimeError(f"Sessione scaduta: redirect su login durante il caricamento appuntamenti{dump_msg}")
             log.warning("flow B: nessuna card appuntamento trovata dopo attesa")
-            raise RuntimeError(f"Nessuna card appuntamento trovata per {self._appuntamento}")
+            raise RuntimeError(f"Nessuna card appuntamento trovata per {self._appuntamento}{dump_msg}")
 
-        # apri il dettaglio del monitor: match per prestazione, nre, codice o primo disponibile
-        target = dettagli[0]
+        # apri il dettaglio del monitor: match per prestazione, nre, codice
+        target = None
         ric = (self.monitor.get("ricetta") or "").strip()
         nre = (self.monitor.get("nre") or "").strip()
         cod = (self.monitor.get("codice_appuntamento") or "").strip()
         search_terms = [t.lower() for t in [ric, nre, cod, self._appuntamento] if t]
-        if len(dettagli) > 1 and search_terms:
+        if search_terms:
             for b in dettagli:
                 try:
                     card = b.find_element(By.XPATH, "ancestor::*[contains(@class,'appuntamento') or contains(@class,'app-unificato')][1]")
@@ -164,8 +165,25 @@ class RescheduleFlow(Flow):
                     if any(st in txt for st in search_terms):
                         target = b
                         break
+                    # Fallback su parole chiave significative della prestazione
+                    if ric:
+                        import re as _re
+                        parole = [w for w in _re.findall(r"\b[a-zA-Z]{4,}\b", ric.lower())
+                                  if w not in ("senza", "con", "della", "delle", "degli", "visita", "prima")]
+                        if parole and any(w in txt for w in parole):
+                            target = b
+                            break
                 except Exception:
                     continue
+
+        if target is None:
+            if len(dettagli) == 1:
+                target = dettagli[0]
+            else:
+                dump = self._salva_debug_dump("reschedule_match_card_not_found")
+                dump_msg = f" ({dump['message']})" if dump else ""
+                raise RuntimeError(f"Nessuna card appuntamento corrisponde ai criteri del monitor {self.mid}{dump_msg}")
+
         self._click_el(target)
         time.sleep(2)
         # controlla se l'appuntamento è gestibile in autonomia
@@ -309,11 +327,7 @@ class RescheduleFlow(Flow):
         st = self._attendi_esito(prov, timeout_s=60)
         if st.get("stato") not in ("risultati", "no_risultati"):
             log.warning("reschedule: ricerca per %s non completata (stato %s)", prov, st.get("stato"))
-            try:
-                from pathlib import Path
-                Path("data/study/zero_slots.html").write_text(self.driver.page_source, encoding="utf-8")
-            except Exception:  # noqa: BLE001
-                pass
+            self._salva_debug_dump(f"reschedule_zero_slots_{prov}")
 
     # ---------------- extract_slots (tutte le province) --------------
     def extract_slots(self) -> list[Slot]:

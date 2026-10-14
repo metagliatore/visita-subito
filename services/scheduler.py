@@ -217,13 +217,9 @@ class Controller:
             lock.release()
 
     def _dump_pagina_per_debug(self, name, driver):
-        """Salva un dump della pagina corrente per debug (solo se il file non esiste già)."""
-        import datetime
-        p = f"data/study/debug_{name}.html"
-        try:
-            open(p, "w", encoding="utf-8").write(driver.page_source)
-        except Exception:  # noqa: BLE001
-            pass
+        """Salva un dump della pagina corrente per debug."""
+        from core.debug import salva_debug_dump
+        return salva_debug_dump(driver, tag=name)
 
     def get_ricette(self) -> list | None:
         """Legge la pagina Ricette e ritorna le card classificate.
@@ -727,8 +723,12 @@ class Controller:
             self.login_in_corso = False
             self.sess.session_valid = False
             log.warning("login fallito: %s", e)
+            driver = getattr(self.browser, "driver", None)
+            from core.debug import salva_debug_dump
+            dump = salva_debug_dump(driver, tag="login_fallito")
+            dump_msg = f"\n\n{dump['message']}" if dump else ""
             desc = getattr(self.auth_config, "describe", lambda: "Autenticazione")()
-            self.bot.notify(f"❌ Login fallito ({desc}): {e}")
+            self.bot.notify(f"❌ Login fallito ({desc}): {e}{dump_msg}")
             if hasattr(self, "browser") and hasattr(self.browser, "stop"):
                 try:
                     self.browser.stop()

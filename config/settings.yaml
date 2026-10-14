@@ -61,3 +61,8 @@ approval:
   timeout_seconds: 600
   # Se true, dopo il timeout la richiesta viene scartata
   discard_on_timeout: true
+
+debug:
+  # Cartella dove salvare screenshot e dump HTML in caso di errore (sovrascrivibile da DEBUG_DUMP_DIR in .env)
+  dump_dir: "data/debug"
+
