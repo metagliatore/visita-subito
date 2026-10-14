@@ -106,6 +106,10 @@ class Controller:
                 cls = FLOW_TYPES.get(m.get("type", "new"), NewBookingFlow)
             self._flows.append(cls(m, self.browser, self.queue, self.bot, self.store))
 
+        if not self._flows and getattr(self, "paused", False) is True:
+            log.info("Nessun monitor configurato all'avvio: reset automatico della pausa")
+            self.resume()
+
     # ---- API per il bot ----
     def assicura_sessione_attiva(self, force_login: bool = False, reset_blocchi: bool = True) -> bool:
         """Assicura una sessione autenticata prima dei comandi che toccano il portale.
@@ -347,12 +351,21 @@ class Controller:
             self.store.record_prenotazione(mid, nre, data_att, {"prestazione": descrizione})
             self.store.mark_action(mid, "idle", "monitor reschedule pronto")
         self._flows.append(FLOW_TYPES[tipo](monitor, self.browser, self.queue, self.bot, self.store))
+
+        # Se il monitoraggio era in pausa, l'avvio di un nuovo monitor resetta automaticamente la pausa
+        if getattr(self, "paused", False) is True:
+            log.info("Avviato nuovo monitor: reset automatico della pausa del polling")
+            self.resume()
+
         return mid
 
     def rimuovi_monitor(self, monitor_id: str) -> bool:
         """Rimuove un monitor (dinamico o statico) arrestando i flussi attivi."""
         self.store.remove_monitor(monitor_id)
         self._flows = [f for f in self._flows if f.mid != monitor_id]
+        if not self._flows and getattr(self, "paused", False) is True:
+            log.info("Nessun monitor rimasto attivo: reset automatico della pausa")
+            self.resume()
         return True
 
     def converti_in_reschedule(self, monitor_id: str) -> bool:
@@ -427,6 +440,9 @@ class Controller:
         # Ricrea il flusso corrispondente in self._flows
         self._flows = [f for f in self._flows if f.mid != monitor_id]
         self._flows.append(RescheduleFlow(mon, self.browser, self.queue, self.bot, self.store))
+        if getattr(self, "paused", False) is True:
+            log.info("[%s] Monitor convertito in reschedule: reset automatico della pausa del polling", monitor_id)
+            self.resume()
         log.info("[%s] Monitor convertito a RescheduleFlow (data_attuale=%s)", monitor_id, data_ora)
         return True
 

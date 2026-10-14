@@ -441,6 +441,7 @@ class TelegramBot:
                 "⚠️ Non riesco a ricavare la prestazione da monitorare dall'elenco. "
                 "Riprova con /monitora e scegli la ricetta dall'elenco.")
             return
+        was_paused = bool(self.controller and getattr(self.controller, "paused", False) is True)
         data_ricetta = target.get("data_ricetta") or ""
         data_attuale = target.get("data_ora") or ""
         mid = self.controller.aggiungi_monitor(
@@ -453,11 +454,15 @@ class TelegramBot:
         if mid:
             prov_txt = ", ".join(prov_list) if prov_list else "default"
             nre_txt = f"\n🔖 NRE: {self._esc(nre)}" if nre else ""
-            await q.edit_message_text(
+            txt = (
                 f"✅ Monitor creato!\n🎯 {self._esc(desc)}{nre_txt}\n🏙 {self._esc(prov_txt)}\n"
                 f"📅 Range: {self._esc(data_dal)} → {self._esc(data_a)}\n"
                 f"🆔 {self._esc(mid)}\n\n"
-                f"Ti notificherò solo se trovo disponibilità nel range.")
+                f"Ti notificherò solo se trovo disponibilità nel range."
+            )
+            if was_paused:
+                txt += "\n\n▶️ La pausa del monitoraggio è stata resettata: la ricerca automatica è ora attiva."
+            await q.edit_message_text(txt)
         else:
             await q.edit_message_text("Errore creazione monitor.")
 

@@ -363,4 +363,61 @@ def test_risveglia_sets_poll_manual():
     ctrl._force.set.assert_called_once()
 
 
+def test_aggiungi_monitor_resets_pause_when_paused():
+    ctrl = MagicMock()
+    ctrl.paused = True
+    ctrl.store = MagicMock()
+    ctrl._force = MagicMock()
+    ctrl._flows = []
+    ctrl.resume = lambda: Controller.resume(ctrl)
+    ctrl.criteri_default.return_value = {}
+
+    mid = Controller.aggiungi_monitor(ctrl, tipo="new", descrizione="VISITA OCULISTICA")
+    assert mid != ""
+    assert ctrl.paused is False
+    ctrl.store.set_preferenza.assert_called_with("polling_paused", False)
+    ctrl._force.set.assert_called_once()
+
+
+def test_rimuovi_monitor_resets_pause_when_last_monitor_removed():
+    ctrl = MagicMock()
+    ctrl.paused = True
+    ctrl.store = MagicMock()
+    ctrl._force = MagicMock()
+    f1 = MagicMock(); f1.mid = "m1"
+    ctrl._flows = [f1]
+    ctrl.resume = lambda: Controller.resume(ctrl)
+
+    ok = Controller.rimuovi_monitor(ctrl, "m1")
+    assert ok is True
+    assert len(ctrl._flows) == 0
+    assert ctrl.paused is False
+    ctrl.store.set_preferenza.assert_called_with("polling_paused", False)
+    ctrl._force.set.assert_called_once()
+
+
+def test_converti_in_reschedule_resets_pause_when_paused():
+    ctrl = MagicMock()
+    ctrl.paused = True
+    ctrl.store = MagicMock()
+    ctrl._force = MagicMock()
+    ctrl.store.get_prenotazione.return_value = {
+        "codice": "PREN123",
+        "data_ora": "20/11/2026 10:00",
+    }
+    ctrl.store.is_prenotato.return_value = True
+    ctrl.store.get_monitors.return_value = [
+        {"id": "m1", "type": "new", "criteri": {}}
+    ]
+    ctrl._flows = [MagicMock(mid="m1")]
+    ctrl.resume = lambda: Controller.resume(ctrl)
+
+    ok = Controller.converti_in_reschedule(ctrl, "m1")
+    assert ok is True
+    assert ctrl.paused is False
+    ctrl.store.set_preferenza.assert_called_with("polling_paused", False)
+    ctrl._force.set.assert_called_once()
+
+
+
 
