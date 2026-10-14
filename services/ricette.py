@@ -119,20 +119,20 @@ def parse_ricette(html: str) -> list[dict]:
                     stato = "Accettata /Prenotata"
                 elif "erogata" in icon_tag:
                     stato = "Erogata"
-        # data ricetta: da <time datetime="YYYY-MM-DD"> o testo DD/MM/YYYY
+        # data ricetta: da <time datetime="YYYY-MM-DD"> o testo DD/MM/YYYY / YYYY-MM-DD
         data_ricetta = ""
-        m = re.search(r'Data ricetta.*?datetime="(\d{4}-\d{2}-\d{2})"', content)
+        m = re.search(r'Data(?:\s+ricetta)?.*?datetime=["\'](\d{4}-\d{2}-\d{2})["\']', content, re.I)
         if m:
             data_ricetta = m.group(1)  # YYYY-MM-DD
         else:
-            m = re.search(r'Data ricetta:?\s*<b>([^<]+)</b>', content)
+            m = re.search(r'Data(?:\s+ricetta)?[:\s]*(?:<b>|<span[^>]*>|<p[^>]*>)?\s*([0-9]{2}/[0-9]{2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})', content, re.I)
             if m:
-                t = m.group(1).strip()
-                mm = re.search(r'(\d{2}/\d{2}/\d{4})', t)
-                if mm:
-                    # converto DD/MM/YYYY -> YYYY-MM-DD
-                    d, mo, y = mm.group(1).split("/")
+                raw_d = m.group(1).strip()
+                if "/" in raw_d:
+                    d, mo, y = raw_d.split("/")
                     data_ricetta = f"{y}-{mo}-{d}"
+                else:
+                    data_ricetta = raw_d
         # regime / prescrittore
         regime = None; prescrittore = None
         m = re.search(r'Regime:</b>\s*<b>([^<]+)</b>', content)
@@ -188,13 +188,15 @@ def parse_ricette(html: str) -> list[dict]:
         })
     # ordina per data ricetta decrescente (più recenti in alto); senza data in fondo
     def _datakey(r):
-        d = (r.get("data_ricetta") or "")
-        if len(d) == 10 and d[4] == "-":  # YYYY-MM-DD
+        d = (r.get("data_ricetta") or "").strip()
+        if not d:
+            return -1e18
+        import datetime as _dt
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
             try:
-                import datetime as _dt
-                return _dt.datetime.strptime(d, "%Y-%m-%d").timestamp()
-            except Exception:  # noqa: BLE001
-                return -1e18
-        return -1e18  # senza data -> fondo (più vecchio)
+                return _dt.datetime.strptime(d[:10], fmt).timestamp()
+            except Exception:
+                continue
+        return -1e18  # senza data valida -> fondo (più vecchio)
     out.sort(key=_datakey, reverse=True)
     return out

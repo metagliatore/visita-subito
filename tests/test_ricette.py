@@ -96,3 +96,29 @@ def test_parse_ricette_svg_and_diverse_states():
     assert r2["prenotabile"] is True
 
 
+def test_ricette_sort_order_mixed_date_formats():
+    html = """
+    <div id="R_OLD" class="prescrizioni-row row">
+        <span id="codiceRicetta">R_OLD</span>
+        <div class="testo-ricetta"><p>Data: 01/01/2025</p></div>
+        <p>Prestazione: <b>VISITA A</b></p>
+    </div>
+    <div id="R_NEW" class="prescrizioni-row row">
+        <span id="codiceRicetta">R_NEW</span>
+        <div class="testo-ricetta"><p>Data: 10/10/2026</p></div>
+        <p>Prestazione: <b>VISITA B</b></p>
+    </div>
+    <div id="R_NODATE" class="prescrizioni-row row">
+        <span id="codiceRicetta">R_NODATE</span>
+        <p>Prestazione: <b>VISITA C</b></p>
+    </div>
+    """
+    res = parse_ricette(html)
+    assert len(res) == 3
+    # La più recente (2026) deve essere in cima, poi 2025, infine quella senza data
+    assert res[0]["codice"] == "R_NEW"
+    assert res[1]["codice"] == "R_OLD"
+    assert res[2]["codice"] == "R_NODATE"
+
+
+

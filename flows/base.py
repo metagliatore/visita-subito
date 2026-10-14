@@ -82,15 +82,22 @@ class Flow:
         """
         import datetime as _dt
         oggi = _dt.date.today()
-        raw = (criteri.get("data_dal") or "").strip()
-        if raw:
-            try:
-                d = _dt.datetime.strptime(raw, "%d/%m/%Y").date()
+        val = criteri.get("data_dal")
+        if val:
+            if hasattr(val, "strftime"):
+                d = val.date() if hasattr(val, "date") else val
                 if d < oggi:
                     return oggi.strftime("%d/%m/%Y")
                 return d.strftime("%d/%m/%Y")
-            except Exception:  # noqa: BLE001
-                pass
+            raw = str(val).strip()
+            for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+                try:
+                    d = _dt.datetime.strptime(raw[:10], fmt).date()
+                    if d < oggi:
+                        return oggi.strftime("%d/%m/%Y")
+                    return d.strftime("%d/%m/%Y")
+                except Exception:  # noqa: BLE001
+                    continue
         return oggi.strftime("%d/%m/%Y")
 
     def azione_extra(self, slot) -> str:
@@ -720,9 +727,16 @@ class Flow:
             # ci sono slot MA non nel range: mostra il primo fuori range
             s0 = slots[0]
             prov = (s0.extra or {}).get("provincia", "")
-            dal = self.criteri.get("data_dal")
-            al = self.criteri.get("data_a")
-            range_txt = f"da {dal} a {al}" if dal or al else "range"
+            dal = (self.criteri.get("data_dal") or "").strip()
+            al = (self.criteri.get("data_a") or "").strip()
+            if dal and al:
+                range_txt = f"da {dal} a {al}"
+            elif dal:
+                range_txt = f"a partire da {dal}"
+            elif al:
+                range_txt = f"fino a {al}"
+            else:
+                range_txt = "richiesto"
             self.bot.notify(
                 f"🔍 Controllo completato: nessuna disponibilità nel range {range_txt} "
                 f"per {self.mid}."

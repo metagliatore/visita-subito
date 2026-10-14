@@ -149,5 +149,5 @@ def parse_conferma(html: str) -> AppuntamentoInfo:
 def parse_successo(html: str) -> str:
     """Estrae il codice prenotazione dalla schermata di successo (opzionale)."""
     html = html.replace(r'\"', '"').replace(r'\n', '\n')
-    m = re.search(r"Codice prenotazione\s*(\d+)", re.sub(r"<[^>]+>", " ", html))
-    return m.group(1) if m else ""
+    m = re.search(r"Codice prenotazione\s*[:\-]?\s*([A-Za-z0-9\-]+)", re.sub(r"<[^>]+>", " ", html), re.IGNORECASE)
+    return m.group(1).strip() if m else ""

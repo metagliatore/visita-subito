@@ -353,4 +353,83 @@ def test_reschedule_flow_execute_aborts_on_riscontro_failure():
     flow.store.record_prenotazione.assert_not_called()
 
 
+def test_flow_data_dal_effettiva_supports_iso_and_date_objects():
+    from flows.base import Flow
+    import datetime as _dt
+    oggi = _dt.date.today()
+
+    # Formato italiano futuro
+    futuro = (oggi + _dt.timedelta(days=30)).strftime("%d/%m/%Y")
+    assert Flow._data_dal_effettiva({"data_dal": futuro}) == futuro
+
+    # Formato ISO futuro
+    futuro_iso = (oggi + _dt.timedelta(days=30)).strftime("%Y-%m-%d")
+    assert Flow._data_dal_effettiva({"data_dal": futuro_iso}) == futuro
+
+    # Oggetto date futuro
+    futuro_date = oggi + _dt.timedelta(days=30)
+    assert Flow._data_dal_effettiva({"data_dal": futuro_date}) == futuro
+
+    # Data passata -> fallback a oggi
+    passato = (oggi - _dt.timedelta(days=10)).strftime("%d/%m/%Y")
+    assert Flow._data_dal_effettiva({"data_dal": passato}) == oggi.strftime("%d/%m/%Y")
+
+    # Stringa vuota o None -> fallback a oggi
+    assert Flow._data_dal_effettiva({}) == oggi.strftime("%d/%m/%Y")
+
+
+def test_flow_request_approval_timeout_edits_message_without_blacklisting():
+    monitor = {"id": "m1", "type": "new", "ricetta": "VISITA CARDIOLOGICA", "criteri": {}}
+    browser = MagicMock()
+    queue = MagicMock()
+    bot = MagicMock()
+    store = MagicMock()
+
+    flow = DummyFlow(monitor, browser, queue, bot, store)
+    slot = Slot(datetime=datetime(2026, 10, 25, 9, 30))
+
+    queue.create.return_value = "req_timeout"
+    # Timeout decision
+    queue.wait_decision.return_value = {"cancelled": True, "reason": "timeout"}
+    inviati_mock = [("chat1", 123)]
+    bot.notify_buttons.return_value = inviati_mock
+
+    res = flow._request_approval(slot)
+    assert "non confermata" in res
+    # Deve modificare il messaggio su Telegram segnalando la scadenza
+    bot.edit_message.assert_called_once()
+    msg_edited = bot.edit_message.call_args[0][0]
+    assert "Proposta scaduta" in msg_edited
+    # NON deve inserire lo slot in blacklist perché era solo scaduto il timeout
+    store.add_blacklist_entry.assert_not_called()
+
+
+def test_flow_notifica_poll_vuoto_formatting():
+    bot = MagicMock()
+    slot = Slot(datetime=datetime(2026, 11, 20, 10, 0))
+
+    # Caso 1: entrambi dal e al presenti
+    flow1 = DummyFlow({"id": "m1", "criteri": {"data_dal": "01/10/2026", "data_a": "31/10/2026"}}, MagicMock(), MagicMock(), bot, MagicMock())
+    flow1._notifica_poll_vuoto([slot])
+    assert "da 01/10/2026 a 31/10/2026" in bot.notify.call_args[0][0]
+
+    # Caso 2: solo data_dal
+    bot.notify.reset_mock()
+    flow2 = DummyFlow({"id": "m2", "criteri": {"data_dal": "01/10/2026"}}, MagicMock(), MagicMock(), bot, MagicMock())
+    flow2._notifica_poll_vuoto([slot])
+    assert "a partire da 01/10/2026" in bot.notify.call_args[0][0]
+
+    # Caso 3: solo data_a
+    bot.notify.reset_mock()
+    flow3 = DummyFlow({"id": "m3", "criteri": {"data_a": "31/10/2026"}}, MagicMock(), MagicMock(), bot, MagicMock())
+    flow3._notifica_poll_vuoto([slot])
+    assert "fino a 31/10/2026" in bot.notify.call_args[0][0]
+
+    # Caso 4: nessun criterio di data
+    bot.notify.reset_mock()
+    flow4 = DummyFlow({"id": "m4", "criteri": {}}, MagicMock(), MagicMock(), bot, MagicMock())
+    flow4._notifica_poll_vuoto([slot])
+    assert "nel range richiesto" in bot.notify.call_args[0][0]
+
+
 

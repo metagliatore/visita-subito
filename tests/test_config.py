@@ -38,3 +38,19 @@ def test_env_token(monkeypatch):
     monkeypatch.delenv("MY_TEST_VAR", raising=False)
     assert env_token("MY_TEST_VAR", "yaml_value") == "yaml_value"
     assert env_token("MY_NONEXISTENT_VAR", "") == ""
+
+
+def test_load_empty_or_missing_yaml(tmp_path):
+    from core.config import _load
+    # File inesistente
+    assert _load(tmp_path / "non_esiste.yaml") == {}
+
+    # File vuoto
+    empty_yaml = tmp_path / "empty.yaml"
+    empty_yaml.write_text("# solo commenti\n", encoding="utf-8")
+    assert _load(empty_yaml) == {}
+
+    # File con lista anziché dict
+    list_yaml = tmp_path / "list.yaml"
+    list_yaml.write_text("- item1\n- item2\n", encoding="utf-8")
+    assert _load(list_yaml) == {}

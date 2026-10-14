@@ -72,6 +72,29 @@ def test_match_slot_date_range():
     assert ok is False
 
 
+def test_match_slot_date_range_iso_and_date_objects():
+    from datetime import date
+    slot = Slot(datetime=datetime(2026, 10, 15, 10, 0))
+
+    # Formato ISO (YYYY-MM-DD)
+    ok_iso, _ = match_slot(slot, {"data_dal": "2026-10-01", "data_a": "2026-10-31"})
+    assert ok_iso is True
+
+    # Esclusione per data_dal ISO posteriore allo slot
+    ok_iso_late, reason = match_slot(slot, {"data_dal": "2026-10-20"})
+    assert ok_iso_late is False
+    assert "prima del range" in reason
+
+    # Oggetti datetime.date (es. restituiti da parser YAML)
+    ok_date_obj, _ = match_slot(slot, {"data_dal": date(2026, 10, 1), "data_a": date(2026, 10, 31)})
+    assert ok_date_obj is True
+
+    # Esclusione per data_a anteriore allo slot
+    ok_date_early, reason2 = match_slot(slot, {"data_a": date(2026, 10, 10)})
+    assert ok_date_early is False
+    assert "dopo il range" in reason2
+
+
 def test_best_match_ordering():
     # Prioritizza i giorni nell'ordine specificato dall'utente
     s_wed = Slot(datetime=datetime(2026, 10, 7, 10, 0))  # Mercoledì

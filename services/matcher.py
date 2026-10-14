@@ -110,15 +110,25 @@ def match_slot(slot: Slot, criteri: dict) -> tuple[bool, str]:
     wd = slot.weekday  # 'MON'..'SUN'
     preferiti = [_norm_day(g) for g in giorni]
 
-    # ---- range temporale (data_dal / data_a, GG/MM/AAAA) ----
+    # ---- range temporale (data_dal / data_a, GG/MM/AAAA o AAAA-MM-GG) ----
     from datetime import datetime as _dt
     def _parsedata(s):
-        try:
-            return _dt.strptime(s, "%d/%m/%Y").date()
-        except Exception:  # noqa: BLE001
+        if not s:
             return None
-    dal = _parsedata(str(criteri.get("data_dal") or ""))
-    al = _parsedata(str(criteri.get("data_a") or ""))
+        if hasattr(s, "strftime"):
+            try:
+                return s.date() if hasattr(s, "date") else s
+            except Exception:
+                pass
+        raw = str(s).strip()
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+            try:
+                return _dt.strptime(raw[:10], fmt).date()
+            except Exception:
+                continue
+        return None
+    dal = _parsedata(criteri.get("data_dal"))
+    al = _parsedata(criteri.get("data_a"))
     sd = slot.datetime.date()
     if dal and sd < dal:
         return False, f"prima del range ({slot.date_str})"

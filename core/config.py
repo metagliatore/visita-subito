@@ -32,8 +32,11 @@ _load_dotenv()
 
 
 def _load(path: Path) -> dict:
+    if not path.exists():
+        return {}
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        data = yaml.safe_load(f)
+        return data if isinstance(data, dict) else {}
 
 
 @dataclass
