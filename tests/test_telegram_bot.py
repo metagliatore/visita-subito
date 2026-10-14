@@ -575,5 +575,60 @@ def test_h_poll_when_login_bloccato():
     assert "Tentativi di login sbloccati" in up.message.reply_text.call_args[0][0]
 
 
+def test_h_ricette_status_icon_prenotabile_vs_prenotata():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot.controller.login_in_corso = False
+    bot.controller.get_ricette.return_value = [
+        {
+            "codice": "REC1",
+            "prestazioni": ["VISITA DERMATOLOGICA"],
+            "stato": "Accettata",
+            "categoria": "specialistica",
+            "prenotabile": True,
+            "data_ricetta": "2026-09-01",
+            "link_download": "http://dl/1",
+        },
+        {
+            "codice": "REC2",
+            "prestazioni": ["VISITA CARDIOLOGICA"],
+            "stato": "Accettata /Prenotata",
+            "categoria": "specialistica",
+            "prenotabile": False,
+            "data_ricetta": "2026-08-01",
+            "link_download": None,
+        },
+        {
+            "codice": "REC3",
+            "prestazioni": ["PARACETAMOLO 1000"],
+            "stato": "Prescritta",
+            "categoria": "farmaceutica",
+            "prenotabile": False,
+            "data_ricetta": "2026-07-01",
+            "link_download": None,
+        },
+    ]
+    bot._risveglia_se_needed = MagicMock(return_value=False)
+    bot._wizard = {}
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    up.message.reply_text = AsyncMock()
+
+    asyncio.run(bot._h_ricette(up, MagicMock()))
+
+    # Verify calls
+    assert up.message.reply_text.call_count >= 2
+    # The message containing the ricette list
+    msg_list = up.message.reply_text.call_args_list[1][0][0]
+    # REC1 is 'Accettata' but prenotabile=True -> must be "Da prenotare", NOT "Già prenotata"!
+    assert "🅿️ Da prenotare" in msg_list
+    # REC2 is 'Accettata /Prenotata' and prenotabile=False -> "Già prenotata"
+    assert "✅ Già prenotata" in msg_list
+    # REC3 is farmaceutica -> "Farmaco"
+    assert "💊 Farmaco" in msg_list
+
+
+
 
 

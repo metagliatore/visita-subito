@@ -1026,12 +1026,19 @@ class TelegramBot:
             if len(prest) > 45:
                 prest = prest[:42] + "…"
             stato = (r.get("stato") or "").strip()
-            if stato.lower().startswith("prescritta"):
+            prenotabile = r.get("prenotabile", False)
+            if prenotabile:
                 stato_icona = "🅿️ Da prenotare"
-            elif "accettata" in stato.lower() or "prenotata" in stato.lower():
-                stato_icona = "✅ Già prenotata"
             elif "erogata" in stato.lower():
                 stato_icona = "⚪ Erogata"
+            elif "prenotata" in stato.lower():
+                stato_icona = "✅ Già prenotata"
+            elif r.get("categoria") == "farmaceutica":
+                stato_icona = "💊 Farmaco"
+            elif r.get("categoria") == "laboratorio":
+                stato_icona = "🧪 Laboratorio"
+            elif stato.lower().startswith("prescritta") or "attiva" in stato.lower():
+                stato_icona = "🅿️ Da prenotare"
             else:
                 stato_icona = stato or "—"
             data = (r.get("data_ricetta") or "")[-5:]  # MM-DD
@@ -1056,7 +1063,7 @@ class TelegramBot:
                   for i, r in scaricabili]
             kb.append([InlineKeyboardButton("❌ Chiudi", callback_data="ric:done")])
             await update.message.reply_text(
-                "🗂 Puoi scaricare le ricette prenotate:",
+                "🗂 Puoi scaricare il promemoria PDF delle ricette:",
                 reply_markup=InlineKeyboardMarkup(kb))
 
     async def _h_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

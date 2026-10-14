@@ -62,7 +62,7 @@ def parse_ricette(html: str) -> list[dict]:
     cards: list[tuple[str, str]] = []
     # Cerca i div card gestendo qualsiasi ordine di id e class e qualsiasi variante di classi CSS
     tag_matches = list(re.finditer(
-        r'<div\b(?=[^>]*\bid=["\']([A-Z0-9]+)["\'])(?=[^>]*\bclass=["\'][^"\']*prescrizioni-row[^"\']*["\'])[^>]*>',
+        r'<div\b(?=[^>]*\bid=["\']([A-Za-z0-9_\-]+)["\'])(?=[^>]*\bclass=["\'][^"\']*prescrizioni-row[^"\']*["\'])[^>]*>',
         html,
         re.I,
     ))
@@ -75,7 +75,7 @@ def parse_ricette(html: str) -> list[dict]:
     else:
         # Fallback retrocompatibilità su split legacy
         parts = re.split(
-            r'<div[^>]*id="([A-Z0-9]+)"[^>]*class="prescrizioni-row (?:ricette-row|visite-row) row"',
+            r'<div[^>]*id="([A-Za-z0-9_\-]+)"[^>]*class="prescrizioni-row (?:ricette-row|visite-row) row"',
             html)
         for k in range(1, len(parts) - 1, 2):
             cards.append((parts[k], parts[k + 1]))
@@ -104,11 +104,21 @@ def parse_ricette(html: str) -> list[dict]:
         else:
             tipologia = 'specialistica'
 
-        # stato
+        # stato: estrazione da div stato-text (con b, span o testo diretto) o da icona SVG
         stato = None
-        m = re.search(r'stato-text"><b>([^<]+)</b>', content)
-        if m:
+        m = re.search(r'stato-text[^>]*>\s*(?:<b>|<span[^>]*>)?([^<]+)', content)
+        if m and m.group(1).strip() and not m.group(1).strip().startswith("%"):
             stato = m.group(1).strip()
+        if not stato:
+            m_icon = re.search(r'blue-sheet-icon-([a-zA-Z0-9_\-]+)', content)
+            if m_icon:
+                icon_tag = m_icon.group(1).lower()
+                if "prescritta" in icon_tag:
+                    stato = "Prescritta"
+                elif "prenotata" in icon_tag:
+                    stato = "Accettata /Prenotata"
+                elif "erogata" in icon_tag:
+                    stato = "Erogata"
         # data ricetta: da <time datetime="YYYY-MM-DD"> o testo DD/MM/YYYY
         data_ricetta = ""
         m = re.search(r'Data ricetta.*?datetime="(\d{4}-\d{2}-\d{2})"', content)
