@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 
 from core.browser import Browser
 from core import selectors
@@ -38,6 +39,10 @@ class Flow:
     @property
     def mid(self) -> str:
         return self.monitor["id"]
+
+    @property
+    def driver(self):
+        return getattr(self.browser, "driver", None)
 
     def _is_autenticato(self) -> bool:
         """True se il browser corrente è autenticato e non su pagine di login/IdPC."""
@@ -382,6 +387,21 @@ class Flow:
             return self._cambia_provincia_e_ricerca(provincia, _retry=_retry + 1)
         log.warning("cambio provincia %s: stato inatteso %s", provincia, s)
         return {"stato": s, "provincia": st.get("provincia", "")}
+
+    def _salva_debug_dump(self, name: str) -> None:
+        """Salva dump HTML e screenshot della pagina corrente per diagnosi."""
+        try:
+            import os
+            os.makedirs("data/study", exist_ok=True)
+            d = getattr(self, "driver", None)
+            if d is not None:
+                html = d.page_source or ""
+                with open(f"data/study/{name}.html", "w", encoding="utf-8") as f:
+                    f.write(html)
+                d.save_screenshot(f"data/study/{name}.png")
+                log.info("[%s] Salvato debug dump in data/study/%s.(html|png)", self.mid, name)
+        except Exception as e:  # noqa: BLE001
+            log.debug("[%s] Impossibile salvare dump di debug %s: %s", self.mid, name, e)
 
     # ---- pipeline condivisa ----
     def poll_once(self, manual: bool = False) -> str:

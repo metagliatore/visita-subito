@@ -19,6 +19,7 @@ Il contratto con Flow.poll_once():
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from datetime import datetime
@@ -94,37 +95,76 @@ class RescheduleFlow(Flow):
         if not self._is_autenticato():
             raise RuntimeError("Sessione scaduta o non valida: reindirizzato a pagina di login")
 
-        # chiudi eventuale modale info (truffe SMS)
-        try:
-            d.execute_script("var el=document.querySelector('button[ng-click*=messaggiCtrl]');if(el)el.click();")
-        except Exception:  # noqa: BLE001
-            pass
-        time.sleep(1)
         # 1) apri 'Gestisci Prenotazioni' (I miei appuntamenti)
-        if not self._click_by_or(self.sel["menu_gestisci"], "menu gestisci appuntamenti") \
-           and not self._click_by_or(self.sel["menu_gestisci_alt"], "menu gestisci (alt)"):
-            log.warning("flow B: menu Gestisci non trovato")
-            if not self._is_autenticato():
-                raise RuntimeError("Sessione scaduta: menu Gestisci non raggiungibile (redirect login)")
-        time.sleep(3)
-        # 2) trova il pulsante 'Dettaglio' (l'appuntamento è quello in lista)
-        dettagli = self._find(self.sel["btn_dettaglio"], mult=True)
-        if not dettagli:
+        # Click via script JS (più affidabile per Angular), con fallback su selettori
+        opened = False
+        try:
+            opened = d.execute_script("""
+                var a = document.querySelector("a[ng-click*='clickGestisciAppuntamenti']") ||
+                        document.querySelector("a[ng-click*='clickGestisci']");
+                if (a) { a.click(); return true; }
+                return false;
+            """)
+        except Exception:
+            pass
+        if not opened:
+            if not self._click_by_or(self.sel["menu_gestisci"], "menu gestisci appuntamenti") \
+               and not self._click_by_or(self.sel["menu_gestisci_alt"], "menu gestisci (alt)"):
+                log.warning("flow B: menu Gestisci non trovato")
+                if not self._is_autenticato():
+                    raise RuntimeError("Sessione scaduta: menu Gestisci non raggiungibile (redirect login)")
+
+        time.sleep(1)
+        # Assicura chiusura modali e switch al tab 'I miei appuntamenti'
+        try:
+            d.execute_script("""
+                var b = document.querySelector("button[ng-click*='messaggiCtrl']");
+                if (b) b.click();
+                var tab = document.querySelector("a[ng-click*='typeTabAppuntamenti']") ||
+                          document.querySelector("a[aria_controls='i_tuoi_appuntamenti']");
+                if (tab && !tab.closest('li.active')) tab.click();
+            """)
+        except Exception:
+            pass
+
+        # 2) attesa dinamica delle card appuntamento (default 30 secondi, configurabile via env)
+        timeout_attesa = int(os.environ.get("RESCHEDULE_WAIT_TIMEOUT", "30"))
+        dettagli = []
+        for _ in range(max(1, timeout_attesa)):
             if not self._is_autenticato():
                 raise RuntimeError("Sessione scaduta: redirect su login durante il caricamento appuntamenti")
-            log.warning("flow B: nessuna card appuntamento trovata")
+            try:
+                d.execute_script("var b=document.querySelector('button[ng-click*=messaggiCtrl]');if(b)b.click();")
+            except Exception:
+                pass
+            dettagli = self._find(self.sel["btn_dettaglio"], mult=True)
+            if dettagli:
+                break
+            time.sleep(1)
+
+        if not dettagli:
+            # salva dump pagina per debug
+            self._salva_debug_dump("debug_reschedule_not_found")
+            if not self._is_autenticato():
+                raise RuntimeError("Sessione scaduta: redirect su login durante il caricamento appuntamenti")
+            log.warning("flow B: nessuna card appuntamento trovata dopo attesa")
             raise RuntimeError(f"Nessuna card appuntamento trovata per {self._appuntamento}")
-        # apri il dettaglio del monitor: match per prestazione o primo disponibile
+
+        # apri il dettaglio del monitor: match per prestazione, nre, codice o primo disponibile
         target = dettagli[0]
-        ric = self.monitor.get("ricetta", "").strip()
-        if ric:
+        ric = (self.monitor.get("ricetta") or "").strip()
+        nre = (self.monitor.get("nre") or "").strip()
+        cod = (self.monitor.get("codice_appuntamento") or "").strip()
+        search_terms = [t.lower() for t in [ric, nre, cod, self._appuntamento] if t]
+        if len(dettagli) > 1 and search_terms:
             for b in dettagli:
                 try:
-                    card = b.find_element(By.XPATH, "ancestor::*[contains(@class,'appuntamento')][1]")
-                    if ric and ric.lower() in (card.text or "").lower():
+                    card = b.find_element(By.XPATH, "ancestor::*[contains(@class,'appuntamento') or contains(@class,'app-unificato')][1]")
+                    txt = (card.text or "").lower()
+                    if any(st in txt for st in search_terms):
                         target = b
                         break
-                except Exception:  # noqa: BLE001
+                except Exception:
                     continue
         self._click_el(target)
         time.sleep(2)

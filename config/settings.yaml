@@ -41,6 +41,8 @@ session:
 scheduler:
   # Intervallo di polling dei flussi
   poll_interval_seconds: 300       # 5 min
+  # Timeout massimo (sec) per caricamento lista appuntamenti in riprogrammazione
+  reschedule_wait_timeout: 30
 
 telegram:
   # Token del bot creato con @BotFather
