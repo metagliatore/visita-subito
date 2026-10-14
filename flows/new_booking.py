@@ -168,38 +168,59 @@ class NewBookingFlow(Flow):
             time.sleep(3)
         # applica il filtro specialistiche per rendere visibili le visite
         self._applica_filtro_specialistiche()
-        # 1) match deterministico per id=NRE (univoco, non ambiguo)
+        # 1) match deterministico per NRE normalizzato (ignora trattini, spazi, maiuscole)
         done = False
         if self._nre:
+            import re as _re
+            nre_clean = _re.sub(r"[^a-zA-Z0-9]", "", self._nre).lower()
             done = d.execute_script(
-                "var q=String(arguments[0]);"
-                "var links=Array.from(document.querySelectorAll('a.cambia-visibilita[href*=prenotaonline]'));"
-                "var a=links.find(function(l){var c=l.closest('.prescrizioni-row');"
-                "return c && (c.getAttribute('id')||'')===q;});"
-                "if(!a) return false; a.click(); return true;",
-                self._nre)
-        # 2) match per testo prestazione
-        if not done:
-            # ricerca la card: match per testo prestazione
+                "var clean = function(s) { return String(s || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase(); };"
+                "var q = arguments[0];"
+                "var links = Array.from(document.querySelectorAll('a.cambia-visibilita[href*=prenotaonline]'));"
+                "var a = links.find(function(l) {"
+                "    var c = l.closest('.prescrizioni-row');"
+                "    if (!c) return false;"
+                "    var cid = clean(c.getAttribute('id'));"
+                "    if (cid && cid === q) return true;"
+                "    var codSpan = c.querySelector('#codiceRicetta');"
+                "    if (codSpan && clean(codSpan.textContent) === q) return true;"
+                "    return clean(c.textContent).indexOf(q) > -1;"
+                "});"
+                "if (!a) return false; a.click(); return true;",
+                nre_clean)
+            if done:
+                log.info("[%s] Ricetta aperta tramite NRE normalizzato (%s)", self.mid, self._nre)
+
+        # 2) match per testo prestazione (esatto e case-insensitive)
+        if not done and self._ricetta:
             done = d.execute_script(
-                "var q=String(arguments[0]);"
-                "var links=Array.from(document.querySelectorAll('a.cambia-visibilita[href*=prenotaonline]'));"
-                "var a=links.find(function(l){var c=l.closest('.prescrizioni-row');"
-                "return c && ((c.textContent.indexOf(q)>-1) || "
-                "(c.getAttribute('id')||'')===q);});"
-                "if(!a) return false; a.click(); return true;",
+                "var q = String(arguments[0]).toLowerCase();"
+                "var links = Array.from(document.querySelectorAll('a.cambia-visibilita[href*=prenotaonline]'));"
+                "var a = links.find(function(l) {"
+                "    var c = l.closest('.prescrizioni-row') || l.parentElement;"
+                "    return c && c.textContent.toLowerCase().indexOf(q) > -1;"
+                "});"
+                "if (!a) return false; a.click(); return true;",
                 self._ricetta)
-        if not done:
-            # second tentativo: caso-insensitive e più permissivo (anche senza .prescrizioni-row)
-            log.warning("ricetta '%s' non trovata al primo tentativo; riprovo...", self._ricetta)
-            time.sleep(1)
-            done = d.execute_script(
-                "var q=String(arguments[0]).toLowerCase();"
-                "var links=Array.from(document.querySelectorAll('a.cambia-visibilita[href*=prenotaonline]'));"
-                "var a=links.find(function(l){var c=l.closest('.prescrizioni-row')||l.parentElement;"
-                "return c && c.textContent.toLowerCase().indexOf(q)>-1;});"
-                "if(!a) return false; a.click(); return true;",
-                self._ricetta)
+
+        # 3) match per parole chiave significative della prestazione
+        if not done and self._ricetta:
+            import re as _re
+            parole = [w.lower() for w in _re.findall(r"\b[a-zA-Z]{4,}\b", self._ricetta)
+                      if w.lower() not in ("senza", "con", "della", "delle", "degli", "visita", "prima")]
+            if parole:
+                done = d.execute_script(
+                    "var words = arguments[0];"
+                    "var links = Array.from(document.querySelectorAll('a.cambia-visibilita[href*=prenotaonline]'));"
+                    "var a = links.find(function(l) {"
+                    "    var c = l.closest('.prescrizioni-row') || l.parentElement;"
+                    "    if (!c) return false; var txt = c.textContent.toLowerCase();"
+                    "    return words.some(function(w) { return txt.indexOf(w) > -1; });"
+                    "});"
+                    "if (!a) return false; a.click(); return true;",
+                    parole)
+                if done:
+                    log.info("[%s] Ricetta aperta tramite parole chiave (%s)", self.mid, parole)
         if not done:
             log.warning("ricetta '%s' non trovata sulla pagina Ricette", self._ricetta)
             # diagnostica: stampa le card presenti per il debug

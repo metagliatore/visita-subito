@@ -151,37 +151,68 @@ class RescheduleFlow(Flow):
             log.warning("flow B: nessuna card appuntamento trovata dopo attesa")
             raise RuntimeError(f"Nessuna card appuntamento trovata per {self._appuntamento}{dump_msg}")
 
-        # apri il dettaglio del monitor: match per prestazione, nre, codice
+        # apri il dettaglio del monitor: match per NRE, codice, data attuale o parole chiave
         target = None
         ric = (self.monitor.get("ricetta") or "").strip()
         nre = (self.monitor.get("nre") or "").strip()
         cod = (self.monitor.get("codice_appuntamento") or "").strip()
+        data_att = (self.monitor.get("data_attuale") or "").strip()
         search_terms = [t.lower() for t in [ric, nre, cod, self._appuntamento] if t]
-        if search_terms:
+
+        import re as _re
+        nre_clean = _re.sub(r"[^a-zA-Z0-9]", "", nre).lower() if nre else ""
+        cod_clean = _re.sub(r"[^a-zA-Z0-9]", "", cod).lower() if cod else ""
+
+        if search_terms or data_att:
             for b in dettagli:
                 try:
                     card = b.find_element(By.XPATH, "ancestor::*[contains(@class,'appuntamento') or contains(@class,'app-unificato')][1]")
                     txt = (card.text or "").lower()
+                    txt_clean = _re.sub(r"[^a-zA-Z0-9]", "", txt)
+
+                    # 1) Match deterministico per NRE o codice appuntamento (puliti da trattini)
+                    if nre_clean and nre_clean in txt_clean:
+                        target = b
+                        log.info("[%s] Match card appuntamento per NRE (%s)", self.mid, nre)
+                        break
+                    if cod_clean and cod_clean in txt_clean:
+                        target = b
+                        log.info("[%s] Match card appuntamento per codice (%s)", self.mid, cod)
+                        break
+
+                    # 2) Match esatto per termine completo
                     if any(st in txt for st in search_terms):
                         target = b
+                        log.info("[%s] Match card appuntamento per termine completo", self.mid)
                         break
-                    # Fallback su parole chiave significative della prestazione
+
+                    # 3) Match per parole chiave significative della prestazione
                     if ric:
-                        import re as _re
                         parole = [w for w in _re.findall(r"\b[a-zA-Z]{4,}\b", ric.lower())
                                   if w not in ("senza", "con", "della", "delle", "degli", "visita", "prima")]
                         if parole and any(w in txt for w in parole):
                             target = b
+                            log.info("[%s] Match card appuntamento per parole chiave (%s)", self.mid, parole)
+                            break
+
+                    # 4) Match per data attuale fissata
+                    if data_att:
+                        m_dt = _re.search(r"(\d{2}/\d{2}/\d{4})", data_att)
+                        if m_dt and m_dt.group(1) in txt:
+                            target = b
+                            log.info("[%s] Match card appuntamento per data attuale (%s)", self.mid, m_dt.group(1))
                             break
                 except Exception:
                     continue
 
         if target is None:
-            if len(dettagli) == 1:
+            if len(dettagli) == 1 and not search_terms:
                 target = dettagli[0]
             else:
                 dump = self._salva_debug_dump("reschedule_match_card_not_found")
                 dump_msg = f" ({dump['message']})" if dump else ""
+                log.error("[%s] Nessuna card appuntamento corrisponde ai criteri del monitor (ricetta='%s', nre='%s', cod='%s', data='%s')",
+                          self.mid, ric, nre, cod, data_att)
                 raise RuntimeError(f"Nessuna card appuntamento corrisponde ai criteri del monitor {self.mid}{dump_msg}")
 
         self._click_el(target)

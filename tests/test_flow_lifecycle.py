@@ -432,4 +432,92 @@ def test_flow_notifica_poll_vuoto_formatting():
     assert "nel range richiesto" in bot.notify.call_args[0][0]
 
 
+def test_reschedule_flow_card_selection_safe_and_keyword_matching():
+    from flows.reschedule import RescheduleFlow
+
+    # Mock 2 card appuntamento: Card 1 = Cardiologia, Card 2 = Urologia
+    b1 = MagicMock()
+    c1 = MagicMock()
+    c1.text = "VISITA CARDIOLOGICA - Data 10/11/2026 - Codice COD-CARDIO-1"
+    b1.find_element.return_value = c1
+
+    b2 = MagicMock()
+    c2 = MagicMock()
+    c2.text = "VISITA UROLOGICA (PRIMA VISITA) - Data 20/11/2026 - NRE: 0300A1234567890"
+    b2.find_element.return_value = c2
+
+    flow = RescheduleFlow(
+        {"id": "res-uro", "ricetta": "VISITA UROLOGICA (PRIMA VISITA)", "nre": "0300A-1234567890"},
+        MagicMock(), MagicMock(), MagicMock(), MagicMock()
+    )
+    flow._find = MagicMock(return_value=[b1, b2])
+    flow._is_autenticato = MagicMock(return_value=True)
+    flow._click_el = MagicMock()
+    flow._gestisci_completa_dati = MagicMock()
+    flow._compila_dove_quando_e_cerca = MagicMock()
+
+    # Naviga e seleziona
+    with patch("selenium.webdriver.support.ui.WebDriverWait.until", return_value=MagicMock()):
+        flow.load_page()
+
+    # DEVE aver selezionato b2 (Urologica), NON b1
+    flow._click_el.assert_any_call(b2)
+    assert not any(call[0][0] == b1 for call in flow._click_el.call_args_list)
+
+
+def test_reschedule_flow_card_selection_aborts_when_no_match():
+    from flows.reschedule import RescheduleFlow
+
+    b1 = MagicMock()
+    c1 = MagicMock()
+    c1.text = "VISITA CARDIOLOGICA"
+    b1.find_element.return_value = c1
+
+    b2 = MagicMock()
+    c2 = MagicMock()
+    c2.text = "VISITA DERMATOLOGICA"
+    b2.find_element.return_value = c2
+
+    # Monitor cerca OCULISTICA
+    flow = RescheduleFlow(
+        {"id": "res-ocu", "ricetta": "VISITA OCULISTICA"},
+        MagicMock(), MagicMock(), MagicMock(), MagicMock()
+    )
+    flow._find = MagicMock(return_value=[b1, b2])
+    flow._is_autenticato = MagicMock(return_value=True)
+    flow._click_el = MagicMock()
+
+    with pytest.raises(RuntimeError) as exc_info:
+        flow.load_page()
+
+    assert "Nessuna card appuntamento corrisponde ai criteri" in str(exc_info.value)
+    flow._click_el.assert_not_called()
+
+
+def test_new_booking_flow_apri_ricetta_normalizes_nre():
+    from flows.new_booking import NewBookingFlow
+
+    driver_mock = MagicMock()
+    driver_mock.current_url = "https://www.fascicolosanitario.regione.lombardia.it/web/areaprivata/ricette"
+    driver_mock.window_handles = ["w1"]
+    driver_mock.current_window_handle = "w1"
+    driver_mock.execute_script.return_value = True
+
+    flow = NewBookingFlow(
+        {"id": "new-1", "ricetta": "VISITA DERMATOLOGICA", "nre": "0300A-1112223334"},
+        MagicMock(driver=driver_mock), MagicMock(), MagicMock(), MagicMock()
+    )
+    flow._applica_filtro_specialistiche = MagicMock()
+
+    res = flow._apri_ricetta_e_prenota()
+    assert res is True
+
+    # Verifica che il primo script execute_script abbia passato l'NRE pulito (senza trattino)
+    args = driver_mock.execute_script.call_args_list[0][0]
+    script_str, nre_arg = args[0], args[1]
+    assert "clean" in script_str
+    assert nre_arg == "0300a1112223334"
+
+
+
 
