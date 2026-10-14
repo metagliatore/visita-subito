@@ -20,19 +20,61 @@ Bot automatizzato che controlla periodicamente le disponibilità per visite ed e
 
 ---
 
-## 🏗️ Architettura
+## 🏗️ Architettura e Flusso Operativo
 
-```text
-┌──────────────────────┐   richieste JSON    ┌───────────────────────────────────────────────┐
-│     Bot Telegram     │ ◄─────────────────► │        Controller (poller + scheduler)        │
-│ (interfaccia utente) │   approval.json     │  • SessionManager (cookie SPID + keep-alive)  │
-└──────────────────────┘                     │  • Gestione flussi (NewBooking / Reschedule)  │
-           ▲                                 └───────────────────────┬───────────────────────┘
-           │ notifiche                                               │ Selenium WebDriver
-           │                                                ┌────────▼────────┐
-           └────────────────────────────────────────────────┤ Google Chrome   │
-                                                            │ (Xvfb / Headless│
-                                                            └─────────────────┘
+Il sistema è composto da un bot Telegram asincrono (interfaccia utente), un orchestratore centrale (scheduler e session manager) e un motore di automazione browser basato su Selenium WebDriver con Google Chrome in ambiente virtuale (Xvfb).
+
+```mermaid
+flowchart TD
+    subgraph TG["📱 Interfaccia Utente (Telegram)"]
+        CMD["Comandi (/start, /monitora, /status, /poll, /pause, /stop)"]
+        NOTIF["Notifica disponibilità con pulsanti inline (Approva / Rifiuta)"]
+        CONFIRM["Scelta post-prenotazione: 🛑 Ferma vs 🔄 Prova ad anticipare"]
+    end
+
+    subgraph CORE["⚙️ Controller & Scheduler"]
+        SCHED["Scheduler & Polling Loop (tick periodico o /poll)"]
+        SESS["SessionManager (SPID / CIE + Keep-Alive)"]
+        QUEUE["ApprovalQueue (approval.json con timeout)"]
+        STORE[("Persistenza Dati (state.json, cookies.pkl)")]
+    end
+
+    subgraph FLOWS["🧭 Motore Flussi (Selenium + Headless Chrome)"]
+        AUTH_STEP{"Sessione autenticata?"}
+        LOGIN["Login SPID/CIE (SielteID push/OTP o CIE L2/QR)"]
+        FLOW_TYPE{"Tipo Monitor"}
+        FLOW_A["Flusso A: Nuova Ricetta (NRE)"]
+        FLOW_B["Flusso B: Spostamento / Anticipo Appuntamento"]
+        SEARCH["Ricerca disponibilità multi-provincia"]
+        MATCH{"Match Criteri (date, orari, blacklist)"}
+        EXEC["Esecuzione Prenotazione sul Portale"]
+        VERIFY["Verifica riscontro in 'I miei appuntamenti'"]
+    end
+
+    CMD --> SCHED
+    SCHED --> AUTH_STEP
+    AUTH_STEP -- "No" --> LOGIN
+    LOGIN --> STORE
+    AUTH_STEP -- "Sì" --> FLOW_TYPE
+
+    FLOW_TYPE -- "Nuova ricetta" --> FLOW_A
+    FLOW_TYPE -- "Appuntamento esistente" --> FLOW_B
+
+    FLOW_A --> SEARCH
+    FLOW_B --> SEARCH
+    SEARCH --> MATCH
+
+    MATCH -- "Nessun match" --> SCHED
+    MATCH -- "Slot idoneo trovato" --> QUEUE
+
+    QUEUE --> NOTIF
+    NOTIF -- "Rifiuta (o scaduto)" --> STORE
+    NOTIF -- "Approva" --> EXEC
+
+    EXEC --> VERIFY
+    VERIFY --> CONFIRM
+    CONFIRM -- "Ferma" --> STORE
+    CONFIRM -- "Continua ad anticipare" --> FLOW_B
 ```
 
 ---
