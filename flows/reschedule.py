@@ -360,10 +360,14 @@ class RescheduleFlow(Flow):
             log.warning("reschedule: ricerca per %s non completata (stato %s)", prov, st.get("stato"))
             self._salva_debug_dump(f"reschedule_zero_slots_{prov}")
 
-    # ---------------- extract_slots (tutte le province) --------------
+    # ---------------- extract_slots (tutte le province o singola) --------------
+    def extract_slots_current_province(self) -> list[Slot]:
+        """Estrae gli slot della sola provincia attualmente visualizzata a schermo."""
+        return self._estrai_slots_pagina_corrente()
+
     def extract_slots(self) -> list[Slot]:
         """Estrae gli slot per TUTTI le province configurate (aggregando i risultati).
-
+        
         La prima provincia è già stata cercata in load_page; per le restanti usa
         'Modifica ricerca' -> cambia provincia -> 'Aggiorna ricerca'.
         """

@@ -15,7 +15,8 @@ Bot automatizzato che controlla periodicamente le disponibilità per visite ed e
 - **Anticipo / spostamento appuntamenti (Flow B)**: monitora visite già fissate per trovare date precedenti (anticipo) o più comode all'interno di un intervallo temporale desiderato.
 - **Wizard interattivo su Telegram**: creazione guidata dei monitor direttamente dalla chat con selezione di ricetta/appuntamento, scelta multi-provincia e calendario inline per l'intervallo date.
 - **Gestione sessione SPID / CIE**: keep-alive automatico della sessione e rinnovo intelligente tramite SielteID o CIE (Livello 2 / QR Code) con supporto interattivo su Telegram.
-- **Richiesta di approvazione a 2 vie**: quando viene trovato uno slot che soddisfa i criteri, il bot invia un messaggio con pulsanti inline (*Conferma* / *Rifiuta*) con timeout configurabile prima di bloccare la prenotazione.
+- **Strategie di ricerca multi-provincia**: modalità `first_match` (consigliata/rapida, blocca la prima data utile senza cambiare provincia riducendo le race condition sul portale) oppure `best_match` (globale, confronta tutte le province alla ricerca della data migliore).
+- **Diagnostica automatica e screenshot Telegram**: salvataggio automatico di screenshot PNG e dump HTML in caso di errore o timeout durante la prenotazione, con invio immediato dell'immagine direttamente nella chat Telegram.
 - **Completamente Dockerizzato**: pronto per l'esecuzione 24/7 in background con server X virtuale (`Xvfb`) e volumi persistenti per cookie e stato.
 
 ---
@@ -137,6 +138,10 @@ SPID_OTP_MODE=notifica
 POLL_INTERVAL_SECONDS=300
 MAX_LOGIN_RETRIES=3
 APPROVAL_TIMEOUT_SECONDS=600
+
+# Strategia ricerca multi-provincia: first_match (consigliata/rapida) o best_match (globale)
+SEARCH_STRATEGY=first_match
+DEBUG_DUMP_DIR=data/debug
 ```
 
 ### 4. Avvio del container

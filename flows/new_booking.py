@@ -368,7 +368,11 @@ class NewBookingFlow(Flow):
         # reset: il prossimo giro (nuova provincia in rotazione) rifarà la ricerca
         self._ricerca_fatta = False
 
-    # ================= extract_slots (tutte le province) =================
+    # ================= extract_slots (tutte le province o singola) =================
+    def extract_slots_current_province(self) -> list[Slot]:
+        """Estrae gli slot della sola provincia attualmente visualizzata a schermo."""
+        return self._estrai_slots_corrente()
+
     def extract_slots(self) -> list[Slot]:
         """Estrae gli slot dalla lista disponibilità.
 

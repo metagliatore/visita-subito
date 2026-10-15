@@ -106,7 +106,9 @@ APPROVAL_TIMEOUT_SECONDS=600
 | `POLL_INTERVAL_SECONDS` | No | `300` | Intervallo in secondi tra un controllo e l'altro (es. `300` = 5 minuti). |
 | `APPROVAL_TIMEOUT_SECONDS` | No | `600` | Secondi di attesa per la conferma dell'utente su Telegram prima che lo slot scada. |
 | `MAX_LOGIN_RETRIES` | No | `3` | Numero massimo di tentativi di login consecutivi falliti prima di mettere in pausa i tentativi. |
-| `DATA_PATH` | No | `fascicolo_data` | Directory host per i dati persistenti. Lasciare vuoto per usare il volume Docker gestito. |
+| `SEARCH_STRATEGY` | No | `first_match` | Strategia di ricerca multi-provincia: `first_match` (consigliata/rapida, blocca il primo posto e non cambia pagina) oppure `best_match` (globale, confronta tutte le province). |
+| `DEBUG_DUMP_DIR` | No | `data/debug` | Cartella di destinazione per gli screenshot PNG e HTML di diagnostica (inviati anche su Telegram se si verifica un errore). |
+| `DATA_PATH` | No | `fascicolo_data` | Directory host per i dati persistenti (es. `/nvme/docker-data/fascicolo/data`). Lasciare vuoto per usare il volume Docker gestito. |
 
 ---
 

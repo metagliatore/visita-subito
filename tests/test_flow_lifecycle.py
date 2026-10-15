@@ -570,6 +570,165 @@ def test_new_booking_flow_poll_once_manual_auto_promotes_done_pending_choice():
     assert any("anticipare" in call[0][0] for call in bot.notify.call_args_list)
 
 
+def test_flow_search_strategy_first_match_stops_at_first_province(tmp_path):
+    monitor = {
+        "id": "mon-multi-1",
+        "type": "new",
+        "criteri": {
+            "province": ["MILANO CITTA'", "MILANO PROVINCIA", "MONZA E DELLA BRIANZA"],
+            "search_strategy": "first_match",
+        }
+    }
+    browser = MagicMock()
+    queue = MagicMock()
+    queue.create.return_value = "req-1"
+    queue.wait_decision.return_value = {"cancelled": True, "decision": False}
+    bot = MagicMock()
+    store = MagicMock()
+    store.get_action.return_value = "idle"
+    store.seen_slots.return_value = set()
+    store.get_blacklist_keys.return_value = set()
+
+    slot_p1 = Slot(datetime=datetime(2026, 11, 3, 9, 50), extra={"provincia": "MILANO CITTA'"})
+
+    flow = DummyFlow(monitor, browser, queue, bot, store)
+    flow._is_autenticato = MagicMock(return_value=True)
+    flow.load_page = MagicMock()
+    flow._cambia_provincia_e_ricerca = MagicMock()
+    # La prima provincia ha già uno slot valido
+    flow.extract_slots_current_province = MagicMock(return_value=[slot_p1])
+
+    res = flow.poll_once(manual=False)
+
+    flow.load_page.assert_called_once()
+    # first_match non deve cambiare provincia se la prima ha già uno slot valido
+    flow._cambia_provincia_e_ricerca.assert_not_called()
+    queue.create.assert_called_once()
+    assert queue.create.call_args[0][1]["slot"]["datetime"] == slot_p1.datetime
+
+
+def test_flow_search_strategy_first_match_advances_when_no_match():
+    monitor = {
+        "id": "mon-multi-2",
+        "type": "new",
+        "criteri": {
+            "province": ["MILANO CITTA'", "MILANO PROVINCIA", "MONZA E DELLA BRIANZA"],
+            "search_strategy": "first_match",
+        }
+    }
+    browser = MagicMock()
+    queue = MagicMock()
+    queue.create.return_value = "req-2"
+    queue.wait_decision.return_value = {"cancelled": True, "decision": False}
+    bot = MagicMock()
+    store = MagicMock()
+    store.get_action.return_value = "idle"
+    store.seen_slots.return_value = set()
+    store.get_blacklist_keys.return_value = set()
+
+    slot_p2 = Slot(datetime=datetime(2026, 11, 4, 10, 0), extra={"provincia": "MILANO PROVINCIA"})
+
+    flow = DummyFlow(monitor, browser, queue, bot, store)
+    flow._is_autenticato = MagicMock(return_value=True)
+    flow.load_page = MagicMock()
+    flow._cambia_provincia_e_ricerca = MagicMock(return_value={"stato": "risultati", "provincia": "MILANO PROVINCIA"})
+    # La prima provincia non ha slot; la seconda sì
+    flow.extract_slots_current_province = MagicMock(side_effect=[[], [slot_p2]])
+
+    flow.poll_once(manual=False)
+
+    # Ha cambiato provincia per passare a MILANO PROVINCIA ma NON a MONZA
+    flow._cambia_provincia_e_ricerca.assert_called_once_with("MILANO PROVINCIA")
+    queue.create.assert_called_once()
+    assert queue.create.call_args[0][1]["slot"]["datetime"] == slot_p2.datetime
+
+
+def test_flow_search_strategy_best_match_scans_all_provinces():
+    monitor = {
+        "id": "mon-multi-3",
+        "type": "new",
+        "criteri": {
+            "province": ["MILANO CITTA'", "MILANO PROVINCIA"],
+            "search_strategy": "best_match",
+        }
+    }
+    browser = MagicMock()
+    queue = MagicMock()
+    queue.create.return_value = "req-3"
+    queue.wait_decision.return_value = {"cancelled": True, "decision": False}
+    bot = MagicMock()
+    store = MagicMock()
+    store.get_action.return_value = "idle"
+    store.seen_slots.return_value = set()
+    store.get_blacklist_keys.return_value = set()
+
+    slot_late = Slot(datetime=datetime(2026, 11, 10, 9, 0), extra={"provincia": "MILANO CITTA'"})
+    slot_early = Slot(datetime=datetime(2026, 11, 2, 9, 0), extra={"provincia": "MILANO PROVINCIA"})
+
+    flow = DummyFlow(monitor, browser, queue, bot, store)
+    flow._is_autenticato = MagicMock(return_value=True)
+    flow.load_page = MagicMock()
+    # In best_match usa extract_slots() aggregando tutti
+    flow.extract_slots = MagicMock(return_value=[slot_late, slot_early])
+
+    flow.poll_once(manual=False)
+
+    flow.extract_slots.assert_called_once()
+    # Deve aver scelto la data più prossima (02/11/2026 anziché 10/11/2026)
+    assert queue.create.call_args[0][1]["slot"]["datetime"] == slot_early.datetime
+
+
+def test_flow_salva_debug_dump_sends_photo_on_error(tmp_path):
+    png_file = tmp_path / "error.png"
+    png_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    monitor = {"id": "m-dump", "criteri": {}}
+    bot = MagicMock()
+    flow = DummyFlow(monitor, MagicMock(), MagicMock(), bot, MagicMock())
+
+    with patch("core.debug.salva_debug_dump") as mock_dump:
+        mock_dump.return_value = {
+            "ref": "20261015_m-dump_errore_prenotazione",
+            "png_path": png_file,
+            "message": "Screenshot salvato",
+        }
+        res = flow._salva_debug_dump("errore_prenotazione", invia_telegram=True)
+        assert res is not None
+        bot.send_photo.assert_called_once()
+        assert str(png_file) in bot.send_photo.call_args[0][0]
+        assert "Screenshot di debug" in bot.send_photo.call_args[1]["caption"]
+
+
+def test_flow_request_approval_execution_error_sends_screenshot(tmp_path):
+    png_file = tmp_path / "exec_err.png"
+    png_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    monitor = {"id": "m-fail", "ricetta": "VISITA UROLOGICA", "criteri": {}}
+    queue = MagicMock()
+    queue.create.return_value = "req-fail"
+    queue.wait_decision.return_value = {"cancelled": False, "decision": True, "extra": {"azione": "approve"}}
+    bot = MagicMock()
+    store = MagicMock()
+
+    flow = DummyFlow(monitor, MagicMock(), queue, bot, store)
+    flow.execute = MagicMock(side_effect=RuntimeError("Slot non trovato sulla provincia della UI"))
+
+    slot = Slot(datetime=datetime(2026, 11, 3, 9, 50), extra={"provincia": "MILANO CITTA'"})
+
+    with patch.object(flow, "_salva_debug_dump") as mock_salva:
+        mock_salva.return_value = {
+            "ref": "dump-fail-ref",
+            "png_path": png_file,
+            "message": "📸 Screenshot salvato: dump-fail-ref.png",
+        }
+        res = flow._request_approval(slot)
+        assert res == "errore"
+        mock_salva.assert_called_once_with("errore_prenotazione", invia_telegram=True)
+        bot.notify.assert_called()
+        assert any("Prenotazione non riuscita" in call[0][0] for call in bot.notify.call_args_list)
+
+
+
 
 
 

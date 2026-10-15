@@ -11,6 +11,7 @@ Sottoclassi da implementare:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 
@@ -37,6 +38,29 @@ class Flow:
         self.criteri = dict(monitor.get("criteri", {}))
         if monitor.get("data_attuale") and not self.criteri.get("data_attuale"):
             self.criteri["data_attuale"] = monitor["data_attuale"]
+
+        # Strategia di ricerca multi-provincia:
+        # - "first_match": rapida/immediata, si ferma al primo match valido, mantiene la pagina e prenota subito
+        # - "best_match": globale, scansiona tutte le province e sceglie la data migliore
+        strat = (
+            self.criteri.get("search_strategy")
+            or os.environ.get("SEARCH_STRATEGY", "")
+        ).strip().lower()
+        if not strat:
+            try:
+                from core.config import Config
+                cfg = Config.load()
+                strat = str(cfg.settings.get("scheduler", {}).get("search_strategy", "first_match")).strip().lower()
+            except Exception:
+                strat = "first_match"
+        if strat in ("best", "best_match", "globale", "all", "all_provinces"):
+            self.search_strategy = "best_match"
+        else:
+            self.search_strategy = "first_match"
+
+    @property
+    def is_first_match(self) -> bool:
+        return self.search_strategy == "first_match"
 
     @property
     def mid(self) -> str:
@@ -69,6 +93,14 @@ class Flow:
     def extract_slots(self) -> list:
         """Estrai la lista di Slot disponibili dalla pagina corrente."""
         raise NotImplementedError
+
+    def extract_slots_current_province(self) -> list:
+        """Estrae gli slot della sola provincia attualmente a video.
+        
+        Nelle sottoclassi implementa l'estrazione veloce dalla schermata corrente
+        senza iterare sulle province successive. Se non sovrascritta, fa fallback su extract_slots().
+        """
+        return self.extract_slots()
 
     def execute(self, slot) -> None:
         """Esegue la prenotazione/reprogrammazione reale sul portale."""
@@ -401,11 +433,27 @@ class Flow:
         log.warning("cambio provincia %s: stato inatteso %s", provincia, s)
         return {"stato": s, "provincia": st.get("provincia", "")}
 
-    def _salva_debug_dump(self, name: str) -> dict | None:
-        """Salva dump HTML e screenshot della pagina corrente per diagnosi."""
+    def _salva_debug_dump(self, name: str, invia_telegram: bool = False) -> dict | None:
+        """Salva dump HTML e screenshot della pagina corrente per diagnosi.
+
+        Se invia_telegram=True (oppure se il tag indica un errore critico di prenotazione),
+        invia automaticamente lo screenshot PNG sul canale Telegram per visibilità immediata.
+        """
         from core.debug import salva_debug_dump
         d = getattr(self, "driver", None) or getattr(self.browser, "driver", None)
-        return salva_debug_dump(d, tag=name, prefix=self.mid)
+        dump = salva_debug_dump(d, tag=name, prefix=self.mid)
+        if dump and (invia_telegram or "errore_prenotazione" in name or "conferma_errore" in name):
+            png_p = dump.get("png_path")
+            if png_p and getattr(self, "bot", None) is not None:
+                try:
+                    caption = f"📸 <b>Screenshot di debug</b> ({self.mid})\n🏷 Riferimento: <code>{dump.get('ref', '')}</code>"
+                    if hasattr(self.bot, "send_photo"):
+                        self.bot.send_photo(str(png_p), caption=caption)
+                    elif hasattr(self.bot, "send_file"):
+                        self.bot.send_file(str(png_p), caption=caption)
+                except Exception as e_tg:  # noqa: BLE001
+                    log.warning("[%s] Invio screenshot Telegram fallito: %s", self.mid, e_tg)
+        return dump
 
     def _attendi_conferma_prenotazione(self, timeout_s: int = 30) -> tuple[bool, str, str]:
         """Attende attivamente la conferma della prenotazione dopo il click su 'Conferma'.
@@ -718,7 +766,11 @@ class Flow:
                     self.bot.notify(f"⚠️ Controllo non riuscito per {self.mid}: {msg}{dump_msg}")
                 raise RuntimeError(msg)
 
-            slots = self.extract_slots()
+            province = list(self.criteri.get("province") or [])
+            if self.search_strategy == "first_match" and len(province) > 1:
+                return self._cerca_first_match(manual=manual)
+            else:
+                return self._cerca_best_match(manual=manual)
         except Exception as e:  # noqa: BLE001
             log.error("[%s] load/extract errato: %s", self.mid, e)
             dump = self._salva_debug_dump("errore_ricerca")
@@ -727,7 +779,11 @@ class Flow:
                 self.bot.notify(f"⚠️ Controllo non riuscito per {self.mid}: {e}{dump_msg}")
             raise
 
-        # filtra per evitare di riproporre slot già visti o in blacklist
+    def _cerca_best_match(self, manual: bool = False) -> str:
+        """Modalità 'best_match': scansiona tutte le province, estrae tutti gli slot
+        e propone il migliore in assoluto.
+        """
+        slots = self.extract_slots()
         seen = self.store.seen_slots(self.mid)
         bl_keys = self.store.get_blacklist_keys(self.mid) if hasattr(self.store, "get_blacklist_keys") else set()
         fresh = [s for s in slots if s.key not in seen and s.key not in bl_keys]
@@ -745,6 +801,52 @@ class Flow:
         # propongo all'utente
         self.store.record_slots(self.mid, [s.key for s in slots])
         return self._request_approval(match)
+
+    def _cerca_first_match(self, manual: bool = False) -> str:
+        """Modalità 'first_match': esamina le province in ordine sequenziale.
+
+        Non appena trova una disponibilità valida nei criteri:
+        - si ferma subito senza esaminare le province successive;
+        - lascia il browser fermo sulla schermata dei risultati della provincia trovata;
+        - chiede l'approvazione all'utente;
+        - all'approvazione, prenota direttamente sulla schermata già caricata,
+          azzerando i tempi di switch e minimizzando le race condition.
+        """
+        province = list(self.criteri.get("province") or [])
+        seen = self.store.seen_slots(self.mid)
+        bl_keys = self.store.get_blacklist_keys(self.mid) if hasattr(self.store, "get_blacklist_keys") else set()
+        all_slots = []
+
+        for i, prov in enumerate(province):
+            if i > 0:
+                log.info("[%s] first_match: passo alla provincia successiva: %s", self.mid, prov)
+                esito = self._cambia_provincia_e_ricerca(prov)
+                if esito.get("stato") not in ("risultati", "no_risultati"):
+                    log.warning("[%s] first_match: ricerca per %s non completata -> skip", self.mid, prov)
+                    continue
+                self._provincia_corrente = esito.get("provincia") or prov
+
+            slots = self.extract_slots_current_province()
+            all_slots.extend(slots)
+            fresh = [s for s in slots if s.key not in seen and s.key not in bl_keys]
+            match = best_match(fresh, self.criteri)
+
+            if match:
+                log.info(
+                    "[%s] first_match: trovato slot valido in '%s' (%s ore %s). "
+                    "Stop ricerca altre province, browser fermo sulla pagina.",
+                    self.mid, prov, match.date_str, match.time_str
+                )
+                self.store.record_slots(self.mid, [s.key for s in slots])
+                return self._request_approval(match)
+            else:
+                self.store.record_slots(self.mid, [s.key for s in slots])
+
+        # Nessuna provincia contiene slot che soddisfano i criteri
+        log.info("[%s] first_match: nessun match nuovo in tutte le province (%d disponibili)", self.mid, len(all_slots))
+        if manual and self.criteri.get("notifica_vuoto", True):
+            self._notifica_poll_vuoto(all_slots)
+        return ""
 
     def _notifica_poll_vuoto(self, slots):
         """Notifica a fine poll quando non ci sono disponibilità nel range."""
@@ -844,7 +946,7 @@ class Flow:
             return "ok"
         except Exception as e:  # noqa: BLE001
             log.exception("[%s] esecuzione fallita", self.mid)
-            dump = self._salva_debug_dump("errore_prenotazione")
+            dump = self._salva_debug_dump("errore_prenotazione", invia_telegram=True)
             dump_msg = f"\n\n{dump['message']}" if dump else ""
             self.store.mark_action(self.mid, "idle", f"fallita prenotazione: {e}")
             self.bot.notify(

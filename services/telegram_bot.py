@@ -181,13 +181,65 @@ class TelegramBot:
     def send_file(self, path: str, caption: str = "") -> None:
         """Invia un documento (es. event .ics) da un flusso/poller."""
         try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and loop.is_running():
+            asyncio.create_task(self._send_file(path, caption))
+            return
+
+        try:
             asyncio.run(self._send_file(path, caption))
         except RuntimeError:
             loop = asyncio.new_event_loop()
-            loop.run_until_complete(self._send_file(path, caption))
-            loop.close()
+            try:
+                loop.run_until_complete(self._send_file(path, caption))
+            finally:
+                loop.close()
         except Exception as e:  # noqa: BLE001
             log.error("send_file TG fallita: %s", e)
+
+    # ---------- invio immagini / screenshot ----------
+    async def _send_photo(self, path: str, caption: str = "") -> None:
+        if not (self.token and self.chat_ids):
+            log.warning("TG non configurato, foto non inviata: %s", path)
+            return
+        app = Application.builder().token(self.token).build()
+        async with app:
+            for cid in self.chat_ids:
+                try:
+                    with open(path, "rb") as f:
+                        await app.bot.send_photo(chat_id=cid, photo=f, caption=caption, parse_mode=ParseMode.HTML)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("invio photo TG a %s fallito (%s), provo send_document", cid, e)
+                    try:
+                        with open(path, "rb") as f:
+                            await app.bot.send_document(chat_id=cid, document=f, filename=path.split("/")[-1], caption=caption, parse_mode=ParseMode.HTML)
+                    except Exception as e2:  # noqa: BLE001
+                        log.error("invio fallback file TG a %s fallito: %s", cid, e2)
+
+    def send_photo(self, path: str, caption: str = "") -> None:
+        """Invia un'immagine (es. screenshot PNG) da un flusso o poller."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and loop.is_running():
+            asyncio.create_task(self._send_photo(path, caption))
+            return
+
+        try:
+            asyncio.run(self._send_photo(path, caption))
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(self._send_photo(path, caption))
+            finally:
+                loop.close()
+        except Exception as e:  # noqa: BLE001
+            log.error("send_photo TG fallita: %s", e)
 
     # ---------- interazioni autenticazione (fallback push / otp) ----------
     def ask_auth_fallback(self, prompt: str = "", timeout_s: int = 120) -> str | None:

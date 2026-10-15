@@ -576,6 +576,10 @@ class Controller:
             al = crit.get("data_a") or ""
             if dal or al:
                 riga += f"\n  📅 Range: da {dal or 'oggi'} a {al or 'senza limite'}"
+            if province and isinstance(province, (list, tuple)) and len(province) > 1:
+                strat = getattr(f, "search_strategy", "first_match")
+                strat_lbl = "immediata (ferma al primo match)" if strat == "first_match" else "globale (miglior data tra tutte le province)"
+                riga += f"\n  ⚡ Ricerca multi-provincia: {strat_lbl}"
             riga += f"\n  Stato: {stato_txt}"
             lines.append(riga)
         return "\n".join(lines)

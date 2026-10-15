@@ -1,6 +1,6 @@
 import asyncio
 import threading
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from services.telegram_bot import TelegramBot
@@ -728,6 +728,45 @@ async def test_anticipa_callback():
     ctrl.force_poll.assert_called_once()
     q.edit_message_text.assert_called_once()
     assert "Ricerca anticipo attivata" in q.edit_message_text.call_args[0][0]
+
+
+def test_telegram_send_photo(tmp_path):
+    from services.telegram_bot import TelegramBot
+    test_file = tmp_path / "test.png"
+    test_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    bot = TelegramBot("dummy", "123")
+    with patch("telegram.ext.Application.builder") as mock_builder:
+        mock_app = MagicMock()
+        mock_builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app.__aenter__.return_value = mock_app
+        mock_app.__aexit__.return_value = None
+        mock_app.bot.send_photo = AsyncMock()
+
+        bot.send_photo(str(test_file), caption="screenshot caption")
+        mock_app.bot.send_photo.assert_awaited_once()
+        assert mock_app.bot.send_photo.call_args[1]["caption"] == "screenshot caption"
+
+
+def test_telegram_send_photo_fallback_to_document(tmp_path):
+    from services.telegram_bot import TelegramBot
+    test_file = tmp_path / "test.png"
+    test_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    bot = TelegramBot("dummy", "123")
+    with patch("telegram.ext.Application.builder") as mock_builder:
+        mock_app = MagicMock()
+        mock_builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app.__aenter__.return_value = mock_app
+        mock_app.__aexit__.return_value = None
+        mock_app.bot.send_photo = AsyncMock(side_effect=Exception("send_photo failed"))
+        mock_app.bot.send_document = AsyncMock()
+
+        bot.send_photo(str(test_file), caption="fallback caption")
+        mock_app.bot.send_photo.assert_awaited_once()
+        mock_app.bot.send_document.assert_awaited_once()
+        assert mock_app.bot.send_document.call_args[1]["caption"] == "fallback caption"
+
 
 
 

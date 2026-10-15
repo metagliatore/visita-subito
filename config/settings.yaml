@@ -43,6 +43,16 @@ scheduler:
   poll_interval_seconds: 300       # 5 min
   # Timeout massimo (sec) per caricamento lista appuntamenti in riprogrammazione
   reschedule_wait_timeout: 30
+  # Strategia di ricerca multi-provincia: "first_match" | "best_match"
+  # - "first_match" (consigliata / rapida): carica una provincia alla volta;
+  #   non appena trova una disponibilità valida nei criteri, si ferma, la propone
+  #   all'utente e attende con il browser fermo sulla schermata. All'approvazione,
+  #   prenota all'istante senza dover cambiare provincia, minimizzando le race condition.
+  # - "best_match" (globale): scansiona TUTTE le province configurate, raccoglie
+  #   tutti gli slot e propone la data più vicina in assoluto. Comporta il rischio che,
+  #   nel tempo impiegato per esaminare le altre province e tornare indietro, lo slot
+  #   sia già stato occupato da altri.
+  search_strategy: "first_match"
 
 telegram:
   # Token del bot creato con @BotFather
