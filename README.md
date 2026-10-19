@@ -177,7 +177,7 @@ SPID_PASSWORD=la_tua_password
 SPID_OTP_MODE=notifica
 
 # --- Se AUTH_METHOD=cie (Carta d'Identità Elettronica) ---
-# CIE_MODE=app
+# CIE_MODE=app            # app (credenziali + push con fallback QR su Telegram) oppure qr (QR diretto)
 # CIE_USERNAME=codice_fiscale_o_numero_cie
 # CIE_PASSWORD=la_tua_password
 
@@ -203,7 +203,7 @@ Alla prima esecuzione:
 1. Il container si avvia e naviga automaticamente verso il portale di autenticazione.
 2. In base alla modalità scelta in `AUTH_METHOD`:
    - **SPID (SielteID)**: riceverai un messaggio su Telegram (`📲 Sto per inviare la notifica SielteID...`). Apri l'app **SielteID** sul tuo smartphone e approva la richiesta push entro 3 minuti.
-   - **CIE**: il bot supporta l'accesso Livello 2 (credenziali + notifica/codice OTP su app CieID) oppure invia direttamente lo screenshot del **QR Code** su Telegram da inquadrare con l'app CieID.
+   - **CIE**: il bot supporta l'accesso Livello 2 (credenziali + notifica su app CieID con fallback interattivo su Telegram che recapita il **QR Code** direttamente in chat da inquadrare con l'app CieID, oppure modalità diretta `CIE_MODE=qr`).
 3. I cookie di sessione verranno salvati automaticamente nel volume persistente `./data/cookies/cookies.pkl`. Da questo momento in poi il monitor rimarrà attivo autonomamente.
 
 ### 6. Gestione del container

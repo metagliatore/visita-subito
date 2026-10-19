@@ -703,9 +703,19 @@ class Controller:
 
         def _auth_cb(action: str, **kwargs):
             if action == "ask_action":
-                return self.bot.ask_auth_fallback(prompt=kwargs.get("prompt", ""))
+                return self.bot.ask_auth_fallback(
+                    prompt=kwargs.get("prompt", ""),
+                    buttons=kwargs.get("buttons", None),
+                )
             elif action == "ask_otp":
                 return self.bot.ask_otp(kwargs.get("prompt", ""))
+            elif action == "send_photo":
+                path = kwargs.get("path", "")
+                caption = kwargs.get("caption", "")
+                if hasattr(self.bot, "send_photo"):
+                    return self.bot.send_photo(path, caption=caption)
+                if hasattr(self.bot, "send_file"):
+                    return self.bot.send_file(path, caption=caption)
             elif action == "send_file":
                 if hasattr(self.bot, "send_file"):
                     return self.bot.send_file(kwargs.get("path", ""), caption=kwargs.get("caption", ""))

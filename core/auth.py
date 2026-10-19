@@ -95,7 +95,12 @@ class AuthConfig:
             mode_lbl = f", {self.spid_otp_mode}" if self.spid_otp_mode else ""
             return f"SPID ({label}{mode_lbl}) [{status}]"
         elif self.method == "cie":
-            mode_lbl = "App CieID" if self.cie_mode == "app" else "Smartcard/NFC"
+            if self.cie_mode in ("qr", "qrcode"):
+                mode_lbl = "QR Code (App CieID)"
+            elif self.cie_mode == "app":
+                mode_lbl = "App CieID"
+            else:
+                mode_lbl = "Smartcard/NFC"
             status = "automatico" if self.cie_user and self.cie_pwd else "semi-automatico"
             return f"CIE ({mode_lbl}) [{status}]"
         elif self.method == "manual":
