@@ -15,24 +15,67 @@ Bot automatizzato che controlla periodicamente le disponibilità per visite ed e
 - **Anticipo / spostamento appuntamenti (Flow B)**: monitora visite già fissate per trovare date precedenti (anticipo) o più comode all'interno di un intervallo temporale desiderato.
 - **Wizard interattivo su Telegram**: creazione guidata dei monitor direttamente dalla chat con selezione di ricetta/appuntamento, scelta multi-provincia e calendario inline per l'intervallo date.
 - **Gestione sessione SPID / CIE**: keep-alive automatico della sessione e rinnovo intelligente tramite SielteID o CIE (Livello 2 / QR Code) con supporto interattivo su Telegram.
-- **Richiesta di approvazione a 2 vie**: quando viene trovato uno slot che soddisfa i criteri, il bot invia un messaggio con pulsanti inline (*Conferma* / *Rifiuta*) con timeout configurabile prima di bloccare la prenotazione.
+- **Strategie di ricerca multi-provincia**: modalità `first_match` (consigliata/rapida, blocca la prima data utile senza cambiare provincia riducendo le race condition sul portale) oppure `best_match` (globale, confronta tutte le province alla ricerca della data migliore).
+- **Diagnostica automatica e screenshot Telegram**: salvataggio automatico di screenshot PNG e dump HTML in caso di errore o timeout durante la prenotazione, con invio immediato dell'immagine direttamente nella chat Telegram.
 - **Completamente Dockerizzato**: pronto per l'esecuzione 24/7 in background con server X virtuale (`Xvfb`) e volumi persistenti per cookie e stato.
 
 ---
 
-## 🏗️ Architettura
+## 🏗️ Architettura e Flusso Operativo
 
-```text
-┌──────────────────────┐   richieste JSON    ┌───────────────────────────────────────────────┐
-│     Bot Telegram     │ ◄─────────────────► │        Controller (poller + scheduler)        │
-│ (interfaccia utente) │   approval.json     │  • SessionManager (cookie SPID + keep-alive)  │
-└──────────────────────┘                     │  • Gestione flussi (NewBooking / Reschedule)  │
-           ▲                                 └───────────────────────┬───────────────────────┘
-           │ notifiche                                               │ Selenium WebDriver
-           │                                                ┌────────▼────────┐
-           └────────────────────────────────────────────────┤ Google Chrome   │
-                                                            │ (Xvfb / Headless│
-                                                            └─────────────────┘
+Il sistema è composto da un bot Telegram asincrono (interfaccia utente), un orchestratore centrale (scheduler e session manager) e un motore di automazione browser basato su Selenium WebDriver con Google Chrome in ambiente virtuale (Xvfb).
+
+```mermaid
+flowchart TD
+    subgraph TG["📱 Interfaccia Utente (Telegram)"]
+        CMD["Comandi (/start, /monitora, /status, /poll, /pause, /stop)"]
+        NOTIF["Notifica disponibilità con pulsanti inline (Approva / Rifiuta)"]
+        CONFIRM["Scelta post-prenotazione: 🛑 Ferma vs 🔄 Prova ad anticipare"]
+    end
+
+    subgraph CORE["⚙️ Controller & Scheduler"]
+        SCHED["Scheduler & Polling Loop (tick periodico o /poll)"]
+        SESS["SessionManager (SPID / CIE + Keep-Alive)"]
+        QUEUE["ApprovalQueue (approval.json con timeout)"]
+        STORE[("Persistenza Dati (state.json, cookies.pkl)")]
+    end
+
+    subgraph FLOWS["🧭 Motore Flussi (Selenium + Headless Chrome)"]
+        AUTH_STEP{"Sessione autenticata?"}
+        LOGIN["Login SPID/CIE (SielteID push/OTP o CIE L2/QR)"]
+        FLOW_TYPE{"Tipo Monitor"}
+        FLOW_A["Flusso A: Nuova Ricetta (NRE)"]
+        FLOW_B["Flusso B: Spostamento / Anticipo Appuntamento"]
+        SEARCH["Ricerca disponibilità multi-provincia"]
+        MATCH{"Match Criteri (date, orari, blacklist)"}
+        EXEC["Esecuzione Prenotazione sul Portale"]
+        VERIFY["Verifica riscontro in 'I miei appuntamenti'"]
+    end
+
+    CMD --> SCHED
+    SCHED --> AUTH_STEP
+    AUTH_STEP -- "No" --> LOGIN
+    LOGIN --> STORE
+    AUTH_STEP -- "Sì" --> FLOW_TYPE
+
+    FLOW_TYPE -- "Nuova ricetta" --> FLOW_A
+    FLOW_TYPE -- "Appuntamento esistente" --> FLOW_B
+
+    FLOW_A --> SEARCH
+    FLOW_B --> SEARCH
+    SEARCH --> MATCH
+
+    MATCH -- "Nessun match" --> SCHED
+    MATCH -- "Slot idoneo trovato" --> QUEUE
+
+    QUEUE --> NOTIF
+    NOTIF -- "Rifiuta (o scaduto)" --> STORE
+    NOTIF -- "Approva" --> EXEC
+
+    EXEC --> VERIFY
+    VERIFY --> CONFIRM
+    CONFIRM -- "Ferma" --> STORE
+    CONFIRM -- "Continua ad anticipare" --> FLOW_B
 ```
 
 ---
@@ -95,6 +138,10 @@ SPID_OTP_MODE=notifica
 POLL_INTERVAL_SECONDS=300
 MAX_LOGIN_RETRIES=3
 APPROVAL_TIMEOUT_SECONDS=600
+
+# Strategia ricerca multi-provincia: first_match (consigliata/rapida) o best_match (globale)
+SEARCH_STRATEGY=first_match
+DEBUG_DUMP_DIR=data/debug
 ```
 
 ### 4. Avvio del container

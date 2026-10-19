@@ -168,38 +168,59 @@ class NewBookingFlow(Flow):
             time.sleep(3)
         # applica il filtro specialistiche per rendere visibili le visite
         self._applica_filtro_specialistiche()
-        # 1) match deterministico per id=NRE (univoco, non ambiguo)
+        # 1) match deterministico per NRE normalizzato (ignora trattini, spazi, maiuscole)
         done = False
         if self._nre:
+            import re as _re
+            nre_clean = _re.sub(r"[^a-zA-Z0-9]", "", self._nre).lower()
             done = d.execute_script(
-                "var q=String(arguments[0]);"
-                "var links=Array.from(document.querySelectorAll('a.cambia-visibilita[href*=prenotaonline]'));"
-                "var a=links.find(function(l){var c=l.closest('.prescrizioni-row');"
-                "return c && (c.getAttribute('id')||'')===q;});"
-                "if(!a) return false; a.click(); return true;",
-                self._nre)
-        # 2) match per testo prestazione
-        if not done:
-            # ricerca la card: match per testo prestazione
+                "var clean = function(s) { return String(s || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase(); };"
+                "var q = arguments[0];"
+                "var links = Array.from(document.querySelectorAll('a.cambia-visibilita[href*=prenotaonline]'));"
+                "var a = links.find(function(l) {"
+                "    var c = l.closest('.prescrizioni-row');"
+                "    if (!c) return false;"
+                "    var cid = clean(c.getAttribute('id'));"
+                "    if (cid && cid === q) return true;"
+                "    var codSpan = c.querySelector('#codiceRicetta');"
+                "    if (codSpan && clean(codSpan.textContent) === q) return true;"
+                "    return clean(c.textContent).indexOf(q) > -1;"
+                "});"
+                "if (!a) return false; a.click(); return true;",
+                nre_clean)
+            if done:
+                log.info("[%s] Ricetta aperta tramite NRE normalizzato (%s)", self.mid, self._nre)
+
+        # 2) match per testo prestazione (esatto e case-insensitive)
+        if not done and self._ricetta:
             done = d.execute_script(
-                "var q=String(arguments[0]);"
-                "var links=Array.from(document.querySelectorAll('a.cambia-visibilita[href*=prenotaonline]'));"
-                "var a=links.find(function(l){var c=l.closest('.prescrizioni-row');"
-                "return c && ((c.textContent.indexOf(q)>-1) || "
-                "(c.getAttribute('id')||'')===q);});"
-                "if(!a) return false; a.click(); return true;",
+                "var q = String(arguments[0]).toLowerCase();"
+                "var links = Array.from(document.querySelectorAll('a.cambia-visibilita[href*=prenotaonline]'));"
+                "var a = links.find(function(l) {"
+                "    var c = l.closest('.prescrizioni-row') || l.parentElement;"
+                "    return c && c.textContent.toLowerCase().indexOf(q) > -1;"
+                "});"
+                "if (!a) return false; a.click(); return true;",
                 self._ricetta)
-        if not done:
-            # second tentativo: caso-insensitive e più permissivo (anche senza .prescrizioni-row)
-            log.warning("ricetta '%s' non trovata al primo tentativo; riprovo...", self._ricetta)
-            time.sleep(1)
-            done = d.execute_script(
-                "var q=String(arguments[0]).toLowerCase();"
-                "var links=Array.from(document.querySelectorAll('a.cambia-visibilita[href*=prenotaonline]'));"
-                "var a=links.find(function(l){var c=l.closest('.prescrizioni-row')||l.parentElement;"
-                "return c && c.textContent.toLowerCase().indexOf(q)>-1;});"
-                "if(!a) return false; a.click(); return true;",
-                self._ricetta)
+
+        # 3) match per parole chiave significative della prestazione
+        if not done and self._ricetta:
+            import re as _re
+            parole = [w.lower() for w in _re.findall(r"\b[a-zA-Z]{4,}\b", self._ricetta)
+                      if w.lower() not in ("senza", "con", "della", "delle", "degli", "visita", "prima")]
+            if parole:
+                done = d.execute_script(
+                    "var words = arguments[0];"
+                    "var links = Array.from(document.querySelectorAll('a.cambia-visibilita[href*=prenotaonline]'));"
+                    "var a = links.find(function(l) {"
+                    "    var c = l.closest('.prescrizioni-row') || l.parentElement;"
+                    "    if (!c) return false; var txt = c.textContent.toLowerCase();"
+                    "    return words.some(function(w) { return txt.indexOf(w) > -1; });"
+                    "});"
+                    "if (!a) return false; a.click(); return true;",
+                    parole)
+                if done:
+                    log.info("[%s] Ricetta aperta tramite parole chiave (%s)", self.mid, parole)
         if not done:
             log.warning("ricetta '%s' non trovata sulla pagina Ricette", self._ricetta)
             # diagnostica: stampa le card presenti per il debug
@@ -347,7 +368,11 @@ class NewBookingFlow(Flow):
         # reset: il prossimo giro (nuova provincia in rotazione) rifarà la ricerca
         self._ricerca_fatta = False
 
-    # ================= extract_slots (tutte le province) =================
+    # ================= extract_slots (tutte le province o singola) =================
+    def extract_slots_current_province(self) -> list[Slot]:
+        """Estrae gli slot della sola provincia attualmente visualizzata a schermo."""
+        return self._estrai_slots_corrente()
+
     def extract_slots(self) -> list[Slot]:
         """Estrae gli slot dalla lista disponibilità.
 
@@ -505,11 +530,25 @@ class NewBookingFlow(Flow):
             self._click_el(conf)
         elif conf is not None:
             raise RuntimeError("Bottone 'Conferma' disabilitato (lettura non presa visione)")
-        time.sleep(3)
-        # codice prenotazione dalla schermata di successo
-        cod = parse_successo(self.driver.page_source)
-        info.codice = cod or ""
-        # --- memorizza la prenotazione nello store (ricetta ora è un appuntamento) ---
+        else:
+            raise RuntimeError("Bottone 'Conferma' non trovato nella modale di conferma")
+
+        # 4) Controllo rigoroso conferma dal portale
+        ok_conf, cod, err_conf = self._attendi_conferma_prenotazione(timeout_s=30)
+        if not ok_conf:
+            raise RuntimeError(f"Conferma prenotazione non riuscita: {err_conf}")
+        info.codice = cod or info.codice or ""
+
+        # 5) Controllo finale di riscontro su 'I miei appuntamenti'
+        log.info("[%s] Controllo finale di riscontro in 'I miei appuntamenti'...", self.mid)
+        riscontro_ok = self._verifica_riscontro_miei_appuntamenti(slot, codice=info.codice)
+        if not riscontro_ok:
+            raise RuntimeError(
+                f"Riscontro fallito: la prenotazione {slot.date_str} {slot.time_str} (cod: {info.codice or 'n/d'}) "
+                f"non risulta presente nella sezione 'I miei appuntamenti'"
+            )
+
+        # 6) Prenotazione verificata con successo -> salvataggio e notifiche
         try:
             self.store.record_prenotazione(
                 self.mid, info.codice or "",

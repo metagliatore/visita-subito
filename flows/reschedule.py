@@ -19,6 +19,7 @@ Il contratto con Flow.poll_once():
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from datetime import datetime
@@ -94,38 +95,126 @@ class RescheduleFlow(Flow):
         if not self._is_autenticato():
             raise RuntimeError("Sessione scaduta o non valida: reindirizzato a pagina di login")
 
-        # chiudi eventuale modale info (truffe SMS)
-        try:
-            d.execute_script("var el=document.querySelector('button[ng-click*=messaggiCtrl]');if(el)el.click();")
-        except Exception:  # noqa: BLE001
-            pass
-        time.sleep(1)
         # 1) apri 'Gestisci Prenotazioni' (I miei appuntamenti)
-        if not self._click_by_or(self.sel["menu_gestisci"], "menu gestisci appuntamenti") \
-           and not self._click_by_or(self.sel["menu_gestisci_alt"], "menu gestisci (alt)"):
-            log.warning("flow B: menu Gestisci non trovato")
-            if not self._is_autenticato():
-                raise RuntimeError("Sessione scaduta: menu Gestisci non raggiungibile (redirect login)")
-        time.sleep(3)
-        # 2) trova il pulsante 'Dettaglio' (l'appuntamento è quello in lista)
-        dettagli = self._find(self.sel["btn_dettaglio"], mult=True)
-        if not dettagli:
+        # Click via script JS (più affidabile per Angular), con fallback su selettori
+        opened = False
+        try:
+            opened = d.execute_script("""
+                var a = document.querySelector("a[ng-click*='clickGestisciAppuntamenti']") ||
+                        document.querySelector("a[ng-click*='clickGestisci']");
+                if (a) { a.click(); return true; }
+                return false;
+            """)
+        except Exception:
+            pass
+        if not opened:
+            if not self._click_by_or(self.sel["menu_gestisci"], "menu gestisci appuntamenti") \
+               and not self._click_by_or(self.sel["menu_gestisci_alt"], "menu gestisci (alt)"):
+                log.warning("flow B: menu Gestisci non trovato")
+                if not self._is_autenticato():
+                    raise RuntimeError("Sessione scaduta: menu Gestisci non raggiungibile (redirect login)")
+
+        time.sleep(1)
+        # Assicura chiusura modali e switch al tab 'I miei appuntamenti'
+        try:
+            d.execute_script("""
+                var b = document.querySelector("button[ng-click*='messaggiCtrl']");
+                if (b) b.click();
+                var tab = document.querySelector("a[ng-click*='typeTabAppuntamenti']") ||
+                          document.querySelector("a[aria_controls='i_tuoi_appuntamenti']");
+                if (tab && !tab.closest('li.active')) tab.click();
+            """)
+        except Exception:
+            pass
+
+        # 2) attesa dinamica delle card appuntamento (default 30 secondi, configurabile via env)
+        timeout_attesa = int(os.environ.get("RESCHEDULE_WAIT_TIMEOUT", "30"))
+        dettagli = []
+        for _ in range(max(1, timeout_attesa)):
             if not self._is_autenticato():
                 raise RuntimeError("Sessione scaduta: redirect su login durante il caricamento appuntamenti")
-            log.warning("flow B: nessuna card appuntamento trovata")
-            raise RuntimeError(f"Nessuna card appuntamento trovata per {self._appuntamento}")
-        # apri il dettaglio del monitor: match per prestazione o primo disponibile
-        target = dettagli[0]
-        ric = self.monitor.get("ricetta", "").strip()
-        if ric:
+            try:
+                d.execute_script("var b=document.querySelector('button[ng-click*=messaggiCtrl]');if(b)b.click();")
+            except Exception:
+                pass
+            dettagli = self._find(self.sel["btn_dettaglio"], mult=True)
+            if dettagli:
+                break
+            time.sleep(1)
+
+        if not dettagli:
+            # salva dump pagina per debug
+            dump = self._salva_debug_dump("reschedule_cards_not_found")
+            dump_msg = f" ({dump['message']})" if dump else ""
+            if not self._is_autenticato():
+                raise RuntimeError(f"Sessione scaduta: redirect su login durante il caricamento appuntamenti{dump_msg}")
+            log.warning("flow B: nessuna card appuntamento trovata dopo attesa")
+            raise RuntimeError(f"Nessuna card appuntamento trovata per {self._appuntamento}{dump_msg}")
+
+        # apri il dettaglio del monitor: match per NRE, codice, data attuale o parole chiave
+        target = None
+        ric = (self.monitor.get("ricetta") or "").strip()
+        nre = (self.monitor.get("nre") or "").strip()
+        cod = (self.monitor.get("codice_appuntamento") or "").strip()
+        data_att = (self.monitor.get("data_attuale") or "").strip()
+        search_terms = [t.lower() for t in [ric, nre, cod, self._appuntamento] if t]
+
+        import re as _re
+        nre_clean = _re.sub(r"[^a-zA-Z0-9]", "", nre).lower() if nre else ""
+        cod_clean = _re.sub(r"[^a-zA-Z0-9]", "", cod).lower() if cod else ""
+
+        if search_terms or data_att:
             for b in dettagli:
                 try:
-                    card = b.find_element(By.XPATH, "ancestor::*[contains(@class,'appuntamento')][1]")
-                    if ric and ric.lower() in (card.text or "").lower():
+                    card = b.find_element(By.XPATH, "ancestor::*[contains(@class,'appuntamento') or contains(@class,'app-unificato')][1]")
+                    txt = (card.text or "").lower()
+                    txt_clean = _re.sub(r"[^a-zA-Z0-9]", "", txt)
+
+                    # 1) Match deterministico per NRE o codice appuntamento (puliti da trattini)
+                    if nre_clean and nre_clean in txt_clean:
                         target = b
+                        log.info("[%s] Match card appuntamento per NRE (%s)", self.mid, nre)
                         break
-                except Exception:  # noqa: BLE001
+                    if cod_clean and cod_clean in txt_clean:
+                        target = b
+                        log.info("[%s] Match card appuntamento per codice (%s)", self.mid, cod)
+                        break
+
+                    # 2) Match esatto per termine completo
+                    if any(st in txt for st in search_terms):
+                        target = b
+                        log.info("[%s] Match card appuntamento per termine completo", self.mid)
+                        break
+
+                    # 3) Match per parole chiave significative della prestazione
+                    if ric:
+                        parole = [w for w in _re.findall(r"\b[a-zA-Z]{4,}\b", ric.lower())
+                                  if w not in ("senza", "con", "della", "delle", "degli", "visita", "prima")]
+                        if parole and any(w in txt for w in parole):
+                            target = b
+                            log.info("[%s] Match card appuntamento per parole chiave (%s)", self.mid, parole)
+                            break
+
+                    # 4) Match per data attuale fissata
+                    if data_att:
+                        m_dt = _re.search(r"(\d{2}/\d{2}/\d{4})", data_att)
+                        if m_dt and m_dt.group(1) in txt:
+                            target = b
+                            log.info("[%s] Match card appuntamento per data attuale (%s)", self.mid, m_dt.group(1))
+                            break
+                except Exception:
                     continue
+
+        if target is None:
+            if len(dettagli) == 1 and not search_terms:
+                target = dettagli[0]
+            else:
+                dump = self._salva_debug_dump("reschedule_match_card_not_found")
+                dump_msg = f" ({dump['message']})" if dump else ""
+                log.error("[%s] Nessuna card appuntamento corrisponde ai criteri del monitor (ricetta='%s', nre='%s', cod='%s', data='%s')",
+                          self.mid, ric, nre, cod, data_att)
+                raise RuntimeError(f"Nessuna card appuntamento corrisponde ai criteri del monitor {self.mid}{dump_msg}")
+
         self._click_el(target)
         time.sleep(2)
         # controlla se l'appuntamento è gestibile in autonomia
@@ -269,16 +358,16 @@ class RescheduleFlow(Flow):
         st = self._attendi_esito(prov, timeout_s=60)
         if st.get("stato") not in ("risultati", "no_risultati"):
             log.warning("reschedule: ricerca per %s non completata (stato %s)", prov, st.get("stato"))
-            try:
-                from pathlib import Path
-                Path("data/study/zero_slots.html").write_text(self.driver.page_source, encoding="utf-8")
-            except Exception:  # noqa: BLE001
-                pass
+            self._salva_debug_dump(f"reschedule_zero_slots_{prov}")
 
-    # ---------------- extract_slots (tutte le province) --------------
+    # ---------------- extract_slots (tutte le province o singola) --------------
+    def extract_slots_current_province(self) -> list[Slot]:
+        """Estrae gli slot della sola provincia attualmente visualizzata a schermo."""
+        return self._estrai_slots_pagina_corrente()
+
     def extract_slots(self) -> list[Slot]:
         """Estrae gli slot per TUTTI le province configurate (aggregando i risultati).
-
+        
         La prima provincia è già stata cercata in load_page; per le restanti usa
         'Modifica ricerca' -> cambia provincia -> 'Aggiorna ricerca'.
         """
@@ -379,12 +468,38 @@ class RescheduleFlow(Flow):
         if chk is not None and not chk.is_selected():
             self._click_el(chk)
             time.sleep(1)
+
+        from services.appuntamento import parse_conferma
+        info = parse_conferma(self.driver.page_source)
+        info.data_ora = f"{slot.date_str} - {slot.time_str}" or info.data_ora
+        if not info.prestazione:
+            info.prestazione = self.monitor.get("ricetta", self._appuntamento)
+
         conf = self._find(self.po["modal_conferma_prenota"]["btn_conferma"])
         if conf is not None and not conf.get_attribute("disabled"):
             self._click_el(conf)
-        time.sleep(3)
-        # 3) estrai info dalla schermata/modale e invia riepilogo + ICS
-        self._invia_riepilogo_dopo_modifica(slot)
+        elif conf is not None:
+            raise RuntimeError("Bottone 'Conferma' disabilitato (lettura non presa visione)")
+        else:
+            raise RuntimeError("Bottone 'Conferma' non trovato nella modale di conferma")
+
+        # 3) Controllo rigoroso conferma dal portale
+        ok_conf, cod, err_conf = self._attendi_conferma_prenotazione(timeout_s=30)
+        if not ok_conf:
+            raise RuntimeError(f"Riprogrammazione non riuscita dal portale: {err_conf}")
+        info.codice = cod or info.codice or ""
+
+        # 4) Controllo finale di riscontro su 'I miei appuntamenti'
+        log.info("[%s] Controllo finale di riscontro in 'I miei appuntamenti'...", self.mid)
+        riscontro_ok = self._verifica_riscontro_miei_appuntamenti(slot, codice=info.codice)
+        if not riscontro_ok:
+            raise RuntimeError(
+                f"Riscontro fallito: l'appuntamento riprogrammato {slot.date_str} {slot.time_str} (cod: {info.codice or 'n/d'}) "
+                f"non risulta presente nella sezione 'I miei appuntamenti'"
+            )
+
+        # 5) Invio riepilogo + ICS + salvataggio nello store
+        self._invia_riepilogo_dopo_modifica(slot, info=info)
         log.info("flow B: riprogrammazione (%s) confermata %s", azione, slot)
 
     def _trova_bottone_slot(self, slot):
@@ -419,15 +534,16 @@ class RescheduleFlow(Flow):
                 return b
         return None
 
-    def _invia_riepilogo_dopo_modifica(self, slot):
+    def _invia_riepilogo_dopo_modifica(self, slot, info=None):
         """Estrae e invia luogo+note dell'appuntamento confermato (+ ICS)."""
         from services.appuntamento import parse_conferma, parse_successo
         from services.calendar import write_ics
-        info = parse_conferma(self.driver.page_source)
-        info.data_ora = f"{slot.date_str} - {slot.time_str}" or info.data_ora
-        if not info.prestazione:
-            info.prestazione = self.monitor.get("ricetta", "")
-        info.codice = parse_successo(self.driver.page_source) or ""
+        if info is None:
+            info = parse_conferma(self.driver.page_source)
+            info.data_ora = f"{slot.date_str} - {slot.time_str}" or info.data_ora
+            if not info.prestazione:
+                info.prestazione = self.monitor.get("ricetta", "")
+            info.codice = parse_successo(self.driver.page_source) or ""
         # invia riepilogo con luogo e note
         import html as _html
         e = _html.escape

@@ -110,20 +110,65 @@ def match_slot(slot: Slot, criteri: dict) -> tuple[bool, str]:
     wd = slot.weekday  # 'MON'..'SUN'
     preferiti = [_norm_day(g) for g in giorni]
 
-    # ---- range temporale (data_dal / data_a, GG/MM/AAAA) ----
+    # ---- range temporale (data_dal / data_a, GG/MM/AAAA o AAAA-MM-GG) ----
     from datetime import datetime as _dt
     def _parsedata(s):
-        try:
-            return _dt.strptime(s, "%d/%m/%Y").date()
-        except Exception:  # noqa: BLE001
+        if not s:
             return None
-    dal = _parsedata(str(criteri.get("data_dal") or ""))
-    al = _parsedata(str(criteri.get("data_a") or ""))
+        if hasattr(s, "strftime"):
+            try:
+                return s.date() if hasattr(s, "date") else s
+            except Exception:
+                pass
+        raw = str(s).strip()
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+            try:
+                return _dt.strptime(raw[:10], fmt).date()
+            except Exception:
+                continue
+        return None
+    dal = _parsedata(criteri.get("data_dal"))
+    al = _parsedata(criteri.get("data_a"))
     sd = slot.datetime.date()
     if dal and sd < dal:
         return False, f"prima del range ({slot.date_str})"
     if al and sd > al:
         return False, f"dopo il range ({slot.date_str})"
+
+    # ---- verifica miglioramento per anticipo appuntamento attuale ----
+    data_att_raw = criteri.get("data_attuale")
+    if data_att_raw:
+        def _parse_data_e_ora(val):
+            import re
+            if not val:
+                return None, None
+            if hasattr(val, "date") and hasattr(val, "time"):
+                t = val.time()
+                return val.date(), f"{t.hour:02d}:{t.minute:02d}"
+            if hasattr(val, "date"):
+                return val.date(), None
+            raw = str(val).strip()
+            d_match = re.search(r"(\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})", raw)
+            d_obj = None
+            if d_match:
+                ds = d_match.group(1)
+                for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+                    try:
+                        d_obj = _dt.strptime(ds, fmt).date()
+                        break
+                    except Exception:
+                        pass
+            t_match = re.search(r"\b(\d{1,2}:\d{2})\b", raw)
+            t_str = _norm_time(t_match.group(1)) if t_match else None
+            return d_obj, t_str
+
+        cur_date, cur_time = _parse_data_e_ora(data_att_raw)
+        if cur_date:
+            if sd > cur_date:
+                return False, f"dopo l'appuntamento attuale ({slot.date_str} > {cur_date.strftime('%d/%m/%Y')})"
+            if sd == cur_date and cur_time:
+                if slot.time_str >= cur_time:
+                    return False, f"stesso giorno dell'appuntamento attuale ma orario non migliorativo ({slot.time_str} >= {cur_time})"
 
     if wd in escludi:
         return False, f"giorno escluso ({wd})"

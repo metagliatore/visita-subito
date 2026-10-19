@@ -55,3 +55,15 @@ def test_parse_conferma():
     assert info.azienda == "ASST NIGUARDA"
     assert info.presentarsi_in == "Padiglione Centrale"
     assert info.indirizzo == "Piazza Ospedale 3, Milano"
+
+
+def test_parse_successo_numeric_and_alphanumeric():
+    from services.appuntamento import parse_successo
+    html_num = "<div><h1>Operazione completata</h1><p>Codice prenotazione: 12345678</p></div>"
+    assert parse_successo(html_num) == "12345678"
+
+    html_alpha = "<div><p>Codice prenotazione 0300A-1234567890</p></div>"
+    assert parse_successo(html_alpha) == "0300A-1234567890"
+
+    html_none = "<div><p>Nessun codice trovato</p></div>"
+    assert parse_successo(html_none) == ""

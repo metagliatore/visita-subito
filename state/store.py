@@ -23,6 +23,8 @@ class Store:
         if self.path.exists():
             try:
                 self.data = json.loads(self.path.read_text(encoding="utf-8"))
+                if not isinstance(self.data, dict):
+                    self.data = {}
             except Exception:  # noqa: BLE001
                 self.data = {}
 
@@ -32,11 +34,17 @@ class Store:
             encoding="utf-8",
         )
 
+    def _entry(self, monitor_id: str) -> dict:
+        entry = self.data.get(monitor_id)
+        if not isinstance(entry, dict):
+            entry = self.data[monitor_id] = {}
+        return entry
+
     def seen_slots(self, monitor_id: str) -> set:
-        return set(self.data.get(monitor_id, {}).get("seen", []))
+        return set(self._entry(monitor_id).get("seen", []))
 
     def record_slots(self, monitor_id: str, slot_keys: list[str], max_history: int = 300) -> None:
-        entry = self.data.setdefault(monitor_id, {})
+        entry = self._entry(monitor_id)
         merged = list(dict.fromkeys([*entry.get("seen", []), *slot_keys]))
         if len(merged) > max_history:
             merged = merged[-max_history:]
@@ -45,7 +53,7 @@ class Store:
         self._flush()
 
     def mark_action(self, monitor_id: str, state: str, detail: str = "") -> None:
-        entry = self.data.setdefault(monitor_id, {})
+        entry = self._entry(monitor_id)
         entry["action_state"] = state
         entry["action_detail"] = detail
         self._flush()
@@ -57,7 +65,7 @@ class Store:
         Una volta prenotata, la ricetta non è più 'da prenotare': il monitor
         diventa un appuntamento esistente, gestibile via Flusso B (spostamento).
         """
-        entry = self.data.setdefault(monitor_id, {})
+        entry = self._entry(monitor_id)
         entry["prenotato"] = True
         entry["codice_prenotazione"] = codice
         entry["data_ora"] = data_ora
@@ -66,17 +74,18 @@ class Store:
         self._flush()
 
     def is_prenotato(self, monitor_id: str) -> bool:
-        return bool(self.data.get(monitor_id, {}).get("prenotato"))
+        return bool(self._entry(monitor_id).get("prenotato"))
 
     def get_prenotazione(self, monitor_id: str) -> dict:
+        entry = self._entry(monitor_id)
         return {
-            "codice": self.data.get(monitor_id, {}).get("codice_prenotazione"),
-            "data_ora": self.data.get(monitor_id, {}).get("data_ora"),
-            "info": self.data.get(monitor_id, {}).get("info_prenotazione", {}),
+            "codice": entry.get("codice_prenotazione"),
+            "data_ora": entry.get("data_ora"),
+            "info": entry.get("info_prenotazione", {}),
         }
 
     def get_action(self, monitor_id: str) -> str:
-        return self.data.get(monitor_id, {}).get("action_state", "idle") or "idle"
+        return self._entry(monitor_id).get("action_state", "idle") or "idle"
 
     # ---- blacklist disponibilità rifiutate ----
     def add_blacklist_entry(
@@ -243,7 +252,8 @@ class Store:
         self._flush()
 
     def get_preferenze(self) -> dict:
-        return self.data.get("_preferenze", {})
+        prefs = self.data.get("_preferenze")
+        return prefs if isinstance(prefs, dict) else {}
 
     # ---- monitor dinamici (creati da Telegram) ----
     def add_monitor(self, monitor: dict) -> None:
@@ -254,6 +264,12 @@ class Store:
         if monitor["id"] in disabled:
             disabled = [m for m in disabled if m != monitor["id"]]
             self.data["_disabled_monitors"] = disabled
+        # se il monitor era precedentemente marcato done o done_pending_choice,
+        # la riattivazione/creazione deve ripristinare action_state a idle
+        entry = self._entry(monitor["id"])
+        if entry.get("action_state") in ("done", "done_pending_choice"):
+            entry["action_state"] = "idle"
+            entry["action_detail"] = "monitor aggiunto/riattivato"
         self._flush()
 
     def remove_monitor(self, monitor_id: str) -> None:
@@ -266,7 +282,9 @@ class Store:
         self._flush()
 
     def is_disabled(self, monitor_id: str) -> bool:
-        return monitor_id in self.data.get("_disabled_monitors", [])
+        disabled = self.data.get("_disabled_monitors")
+        return monitor_id in disabled if isinstance(disabled, list) else False
 
     def get_monitors(self) -> list:
-        return list(self.data.get("_monitors", {}).values())
+        monitors = self.data.get("_monitors")
+        return list(monitors.values()) if isinstance(monitors, dict) else []

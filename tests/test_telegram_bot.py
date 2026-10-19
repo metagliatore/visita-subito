@@ -1,6 +1,6 @@
 import asyncio
 import threading
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from services.telegram_bot import TelegramBot
@@ -573,6 +573,202 @@ def test_h_poll_when_login_bloccato():
     assert bot.controller.login_bloccato is False
     up.message.reply_text.assert_awaited_once()
     assert "Tentativi di login sbloccati" in up.message.reply_text.call_args[0][0]
+
+
+def test_h_ricette_status_icon_prenotabile_vs_prenotata():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot.controller.login_in_corso = False
+    bot.controller.get_ricette.return_value = [
+        {
+            "codice": "REC1",
+            "prestazioni": ["VISITA DERMATOLOGICA"],
+            "stato": "Accettata",
+            "categoria": "specialistica",
+            "prenotabile": True,
+            "data_ricetta": "2026-09-01",
+            "link_download": "http://dl/1",
+        },
+        {
+            "codice": "REC2",
+            "prestazioni": ["VISITA CARDIOLOGICA"],
+            "stato": "Accettata /Prenotata",
+            "categoria": "specialistica",
+            "prenotabile": False,
+            "data_ricetta": "2026-08-01",
+            "link_download": None,
+        },
+        {
+            "codice": "REC3",
+            "prestazioni": ["PARACETAMOLO 1000"],
+            "stato": "Prescritta",
+            "categoria": "farmaceutica",
+            "prenotabile": False,
+            "data_ricetta": "2026-07-01",
+            "link_download": None,
+        },
+    ]
+    bot._risveglia_se_needed = MagicMock(return_value=False)
+    bot._wizard = {}
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    up.message.reply_text = AsyncMock()
+
+    asyncio.run(bot._h_ricette(up, MagicMock()))
+
+    # Verify calls
+    assert up.message.reply_text.call_count >= 2
+    # The message containing the ricette list
+    msg_list = up.message.reply_text.call_args_list[1][0][0]
+    # REC1 is 'Accettata' but prenotabile=True -> must be "Da prenotare", NOT "Già prenotata"!
+    assert "🅿️ Da prenotare" in msg_list
+    # REC2 is 'Accettata /Prenotata' and prenotabile=False -> "Già prenotata"
+    assert "✅ Già prenotata" in msg_list
+    # REC3 is farmaceutica -> "Farmaco"
+    assert "💊 Farmaco" in msg_list
+
+
+@pytest.mark.asyncio
+async def test_h_anticipa_with_arg():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot("dummy", "123")
+    ctrl = MagicMock()
+    ctrl.converti_in_reschedule.return_value = True
+    ctrl.store.get_prenotazione.return_value = {"data_ora": "25/10/2026 10:00"}
+    bot.controller = ctrl
+
+    up = MagicMock()
+    up.effective_chat.id = 123
+    up.message.reply_text = AsyncMock()
+
+    ctx = MagicMock()
+    ctx.args = ["m-1"]
+
+    await bot._h_anticipa(up, ctx)
+
+    ctrl.converti_in_reschedule.assert_called_once_with("m-1")
+    ctrl.force_poll.assert_called_once()
+    up.message.reply_text.assert_called_once()
+    assert "Ricerca anticipo attivata" in up.message.reply_text.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_h_anticipa_single_monitor():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot("dummy", "123")
+    ctrl = MagicMock()
+    ctrl.monitors_attivi.return_value = [{"id": "single-1", "ricetta": "VISITA DERMA"}]
+    ctrl.converti_in_reschedule.return_value = True
+    ctrl.store.get_prenotazione.return_value = {"data_ora": "20/11/2026 15:30"}
+    bot.controller = ctrl
+
+    up = MagicMock()
+    up.effective_chat.id = 123
+    up.message.reply_text = AsyncMock()
+
+    ctx = MagicMock()
+    ctx.args = []
+
+    await bot._h_anticipa(up, ctx)
+
+    ctrl.converti_in_reschedule.assert_called_once_with("single-1")
+    ctrl.force_poll.assert_called_once()
+    up.message.reply_text.assert_called_once()
+    assert "Ricerca anticipo attivata" in up.message.reply_text.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_h_anticipa_multiple_monitors():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot("dummy", "123")
+    ctrl = MagicMock()
+    ctrl.monitors_attivi.return_value = [
+        {"id": "m-1", "ricetta": "VISITA 1", "type": "new"},
+        {"id": "m-2", "ricetta": "VISITA 2", "type": "reschedule"},
+    ]
+    bot.controller = ctrl
+
+    up = MagicMock()
+    up.effective_chat.id = 123
+    up.message.reply_text = AsyncMock()
+
+    ctx = MagicMock()
+    ctx.args = []
+
+    await bot._h_anticipa(up, ctx)
+
+    ctrl.converti_in_reschedule.assert_not_called()
+    up.message.reply_text.assert_called_once()
+    assert "Scegli per quale visita cercare un" in up.message.reply_text.call_args[0][0]
+    kb = up.message.reply_text.call_args[1]["reply_markup"].inline_keyboard
+    assert any("anticipa:pick:m-1" in b.callback_data for row in kb for b in row)
+
+
+@pytest.mark.asyncio
+async def test_anticipa_callback():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot("dummy", "123")
+    ctrl = MagicMock()
+    ctrl.converti_in_reschedule.return_value = True
+    ctrl.store.get_prenotazione.return_value = {"data_ora": "12/12/2026 09:00"}
+    bot.controller = ctrl
+
+    up = MagicMock()
+    up.effective_chat.id = 123
+    q = MagicMock()
+    q.data = "anticipa:pick:chosen-1"
+    q.edit_message_text = AsyncMock()
+    up.callback_query = q
+
+    ctx = MagicMock()
+    await bot._h_callback(up, ctx)
+
+    ctrl.converti_in_reschedule.assert_called_once_with("chosen-1")
+    ctrl.force_poll.assert_called_once()
+    q.edit_message_text.assert_called_once()
+    assert "Ricerca anticipo attivata" in q.edit_message_text.call_args[0][0]
+
+
+def test_telegram_send_photo(tmp_path):
+    from services.telegram_bot import TelegramBot
+    test_file = tmp_path / "test.png"
+    test_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    bot = TelegramBot("dummy", "123")
+    with patch("telegram.ext.Application.builder") as mock_builder:
+        mock_app = MagicMock()
+        mock_builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app.__aenter__.return_value = mock_app
+        mock_app.__aexit__.return_value = None
+        mock_app.bot.send_photo = AsyncMock()
+
+        bot.send_photo(str(test_file), caption="screenshot caption")
+        mock_app.bot.send_photo.assert_awaited_once()
+        assert mock_app.bot.send_photo.call_args[1]["caption"] == "screenshot caption"
+
+
+def test_telegram_send_photo_fallback_to_document(tmp_path):
+    from services.telegram_bot import TelegramBot
+    test_file = tmp_path / "test.png"
+    test_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    bot = TelegramBot("dummy", "123")
+    with patch("telegram.ext.Application.builder") as mock_builder:
+        mock_app = MagicMock()
+        mock_builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app.__aenter__.return_value = mock_app
+        mock_app.__aexit__.return_value = None
+        mock_app.bot.send_photo = AsyncMock(side_effect=Exception("send_photo failed"))
+        mock_app.bot.send_document = AsyncMock()
+
+        bot.send_photo(str(test_file), caption="fallback caption")
+        mock_app.bot.send_photo.assert_awaited_once()
+        mock_app.bot.send_document.assert_awaited_once()
+        assert mock_app.bot.send_document.call_args[1]["caption"] == "fallback caption"
+
+
+
 
 
 

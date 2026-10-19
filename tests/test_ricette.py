@@ -69,3 +69,56 @@ def test_parse_ricette_inverted_attributes():
     assert "PRIMA VISITA DERMATOLOGICA" in ricette[0]["prestazioni"]
     assert ricette[0]["automatizzabile"] is True
 
+
+def test_parse_ricette_svg_and_diverse_states():
+    sample_html = """
+    <div id="REC_PRENOTABILE_ACCETTATA" class="prescrizioni-row row">
+        <span id="codiceRicetta">REC_PRENOTABILE_ACCETTATA</span>
+        <div class="stato-text"><b>Accettata</b></div>
+        <p>Prestazione: <b>VISITA OCULISTICA</b></p>
+        <a href="/prenotaonline/prenota?cod=777" class="cambia-visibilita">Prenota</a>
+    </div>
+    <div id="REC_SVG_FALLBACK" class="prescrizioni-row row">
+        <span id="codiceRicetta">REC_SVG_FALLBACK</span>
+        <div class="stato-content"><svg><use href="#blue-sheet-icon-prescritta"></use></svg></div>
+        <p>Prestazione: <b>VISITA UROLOGICA</b></p>
+        <a href="/prenotaonline/prenota?cod=888" class="cambia-visibilita">Prenota</a>
+    </div>
+    """
+    ricette = parse_ricette(sample_html)
+    assert len(ricette) == 2
+    r1 = next(r for r in ricette if r["codice"] == "REC_PRENOTABILE_ACCETTATA")
+    assert r1["stato"] == "Accettata"
+    assert r1["prenotabile"] is True
+
+    r2 = next(r for r in ricette if r["codice"] == "REC_SVG_FALLBACK")
+    assert r2["stato"] == "Prescritta"
+    assert r2["prenotabile"] is True
+
+
+def test_ricette_sort_order_mixed_date_formats():
+    html = """
+    <div id="R_OLD" class="prescrizioni-row row">
+        <span id="codiceRicetta">R_OLD</span>
+        <div class="testo-ricetta"><p>Data: 01/01/2025</p></div>
+        <p>Prestazione: <b>VISITA A</b></p>
+    </div>
+    <div id="R_NEW" class="prescrizioni-row row">
+        <span id="codiceRicetta">R_NEW</span>
+        <div class="testo-ricetta"><p>Data: 10/10/2026</p></div>
+        <p>Prestazione: <b>VISITA B</b></p>
+    </div>
+    <div id="R_NODATE" class="prescrizioni-row row">
+        <span id="codiceRicetta">R_NODATE</span>
+        <p>Prestazione: <b>VISITA C</b></p>
+    </div>
+    """
+    res = parse_ricette(html)
+    assert len(res) == 3
+    # La più recente (2026) deve essere in cima, poi 2025, infine quella senza data
+    assert res[0]["codice"] == "R_NEW"
+    assert res[1]["codice"] == "R_OLD"
+    assert res[2]["codice"] == "R_NODATE"
+
+
+

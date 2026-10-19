@@ -95,11 +95,20 @@ class Controller:
             if self.store.is_disabled(m["id"]):
                 continue
             # se la ricetta è già stata prenotata o è di tipo reschedule, usa RescheduleFlow
-            if self.store.is_prenotato(m["id"]) or m.get("type") == "reschedule":
+            is_reschedule = self.store.is_prenotato(m["id"]) or m.get("type") == "reschedule"
+            if is_reschedule:
                 cls = RescheduleFlow
+                # Se un monitor reschedule attivo è rimasto in stato 'done', riarmalo a 'idle'
+                if self.store.get_action(m["id"]) == "done":
+                    log.info("[%s] Riarmo monitor reschedule all'avvio: stato da done a idle", m["id"])
+                    self.store.mark_action(m["id"], "idle", "riarmo all'avvio")
             else:
                 cls = FLOW_TYPES.get(m.get("type", "new"), NewBookingFlow)
             self._flows.append(cls(m, self.browser, self.queue, self.bot, self.store))
+
+        if not self._flows and getattr(self, "paused", False) is True:
+            log.info("Nessun monitor configurato all'avvio: reset automatico della pausa")
+            self.resume()
 
     # ---- API per il bot ----
     def assicura_sessione_attiva(self, force_login: bool = False, reset_blocchi: bool = True) -> bool:
@@ -208,13 +217,9 @@ class Controller:
             lock.release()
 
     def _dump_pagina_per_debug(self, name, driver):
-        """Salva un dump della pagina corrente per debug (solo se il file non esiste già)."""
-        import datetime
-        p = f"data/study/debug_{name}.html"
-        try:
-            open(p, "w", encoding="utf-8").write(driver.page_source)
-        except Exception:  # noqa: BLE001
-            pass
+        """Salva un dump della pagina corrente per debug."""
+        from core.debug import salva_debug_dump
+        return salva_debug_dump(driver, tag=name)
 
     def get_ricette(self) -> list | None:
         """Legge la pagina Ricette e ritorna le card classificate.
@@ -311,7 +316,7 @@ class Controller:
         self.store.set_preferenza("data_dal", data_dal)
         return True
 
-    def aggiungi_monitor(self, tipo: str, descrizione: str, nre: str = "", criteri: dict = None, data_ricetta: str = "") -> str:
+    def aggiungi_monitor(self, tipo: str, descrizione: str, nre: str = "", criteri: dict = None, data_ricetta: str = "", data_attuale: str = "") -> str:
         """Aggiunge un monitor dinamico (nuova prenotazione o appuntamento).
 
         Ritorna l'id del monitor creato, oppure '' se fallisce.
@@ -330,17 +335,35 @@ class Controller:
             parola = tipo
         prog = len(self.store.get_monitors()) + 1
         mid = f"{tipo}-{parola}-{prog}"
+        data_att = data_attuale or crit.get("data_a", "")
         monitor = {"id": mid, "type": tipo, "enabled": True,
                     "ricetta": descrizione, "nre": nre or "", "criteri": crit,
                     "data_ricetta": data_ricetta or ""}
+        if data_att:
+            monitor["data_attuale"] = data_att
+            if tipo == "reschedule" or data_attuale:
+                crit["data_attuale"] = data_att
         self.store.add_monitor(monitor)
+        self.store.mark_action(mid, "idle", "monitor creato")
+        if tipo == "reschedule" and data_att:
+            self.store.record_prenotazione(mid, nre, data_att, {"prestazione": descrizione})
+            self.store.mark_action(mid, "idle", "monitor reschedule pronto")
         self._flows.append(FLOW_TYPES[tipo](monitor, self.browser, self.queue, self.bot, self.store))
+
+        # Se il monitoraggio era in pausa, l'avvio di un nuovo monitor resetta automaticamente la pausa
+        if getattr(self, "paused", False) is True:
+            log.info("Avviato nuovo monitor: reset automatico della pausa del polling")
+            self.resume()
+
         return mid
 
     def rimuovi_monitor(self, monitor_id: str) -> bool:
         """Rimuove un monitor (dinamico o statico) arrestando i flussi attivi."""
         self.store.remove_monitor(monitor_id)
         self._flows = [f for f in self._flows if f.mid != monitor_id]
+        if not self._flows and getattr(self, "paused", False) is True:
+            log.info("Nessun monitor rimasto attivo: reset automatico della pausa")
+            self.resume()
         return True
 
     def converti_in_reschedule(self, monitor_id: str) -> bool:
@@ -356,6 +379,12 @@ class Controller:
             if mon is not None:
                 mon = dict(mon)
 
+        is_already_reschedule = (mon is not None and mon.get("type") == "reschedule")
+
+        if not self.store.is_prenotato(monitor_id) and not data_ora and not is_already_reschedule:
+            log.warning("[%s] Impossibile convertire in reschedule: nessuna prenotazione registrata nello store", monitor_id)
+            return False
+
         if mon is None:
             info = pren.get("info", {})
             mon = {
@@ -365,12 +394,20 @@ class Controller:
                 "criteri": self.criteri_default(),
             }
 
+        if not data_ora and is_already_reschedule:
+            data_ora = mon.get("data_attuale") or (mon.get("criteri", {}) or {}).get("data_a", "")
+            if not codice:
+                codice = mon.get("nre") or mon.get("codice_appuntamento") or ""
+            if data_ora:
+                self.store.record_prenotazione(monitor_id, codice, data_ora, {"prestazione": mon.get("ricetta", monitor_id)})
+
         # Aggiorna a tipo reschedule
         mon["type"] = "reschedule"
         if codice:
             mon["codice_appuntamento"] = codice
         if data_ora:
             mon["data_attuale"] = data_ora
+            mon.setdefault("criteri", {})["data_attuale"] = data_ora
             # Se la visita è fissata per una certa data, imposta data_a alla data prenotata
             # per cercare esclusivamente date migliorative (anticipo)
             try:
@@ -402,6 +439,9 @@ class Controller:
         # Ricrea il flusso corrispondente in self._flows
         self._flows = [f for f in self._flows if f.mid != monitor_id]
         self._flows.append(RescheduleFlow(mon, self.browser, self.queue, self.bot, self.store))
+        if getattr(self, "paused", False) is True:
+            log.info("[%s] Monitor convertito in reschedule: reset automatico della pausa del polling", monitor_id)
+            self.resume()
         log.info("[%s] Monitor convertito a RescheduleFlow (data_attuale=%s)", monitor_id, data_ora)
         return True
 
@@ -495,13 +535,22 @@ class Controller:
                 mon = {"ricetta": f.monitor.get("ricetta", ""), "criteri": f.monitor.get("criteri", {}), "type": f.type}
             nome = self._nome_leggibile(mon)
             stato = self.store.get_action(f.mid)
-            stato_txt = {
-                "idle": "in attesa di novità",
-                "done": "completato (prenotato)",
-                "done_pending_choice": "prenotato (in attesa scelta: ferma o prova ad anticipare)",
-                "prenotato": "prenotato",
-                "pending": "in attesa conferma",
-            }.get(stato, stato)
+            if f.type == "reschedule":
+                stato_txt = {
+                    "idle": "in attesa di novità (anticipo)",
+                    "done": "completato (spostato)",
+                    "done_pending_choice": "spostato (in attesa scelta: ferma o prova ad anticipare)",
+                    "prenotato": "in attesa di novità (anticipo)",
+                    "pending": "in attesa conferma",
+                }.get(stato, stato)
+            else:
+                stato_txt = {
+                    "idle": "in attesa di novità",
+                    "done": "completato (prenotato)",
+                    "done_pending_choice": "prenotato (in attesa scelta: ferma o prova ad anticipare)",
+                    "prenotato": "prenotato",
+                    "pending": "in attesa conferma",
+                }.get(stato, stato)
             crit = mon.get("criteri", {}) if isinstance(mon, dict) else {}
             riga = f"\n• {nome}"
             # ricetta reale (la riga "nome" potrebbe essere generica, es. 'monitor')
@@ -527,6 +576,10 @@ class Controller:
             al = crit.get("data_a") or ""
             if dal or al:
                 riga += f"\n  📅 Range: da {dal or 'oggi'} a {al or 'senza limite'}"
+            if province and isinstance(province, (list, tuple)) and len(province) > 1:
+                strat = getattr(f, "search_strategy", "first_match")
+                strat_lbl = "immediata (ferma al primo match)" if strat == "first_match" else "globale (miglior data tra tutte le province)"
+                riga += f"\n  ⚡ Ricerca multi-provincia: {strat_lbl}"
             riga += f"\n  Stato: {stato_txt}"
             lines.append(riga)
         return "\n".join(lines)
@@ -677,8 +730,12 @@ class Controller:
             self.login_in_corso = False
             self.sess.session_valid = False
             log.warning("login fallito: %s", e)
+            driver = getattr(self.browser, "driver", None)
+            from core.debug import salva_debug_dump
+            dump = salva_debug_dump(driver, tag="login_fallito")
+            dump_msg = f"\n\n{dump['message']}" if dump else ""
             desc = getattr(self.auth_config, "describe", lambda: "Autenticazione")()
-            self.bot.notify(f"❌ Login fallito ({desc}): {e}")
+            self.bot.notify(f"❌ Login fallito ({desc}): {e}{dump_msg}")
             if hasattr(self, "browser") and hasattr(self.browser, "stop"):
                 try:
                     self.browser.stop()
@@ -777,11 +834,17 @@ class Controller:
                             log.info("Sessione ancora non pronta, salto polling automatico")
                             return
 
-                for f in list(self._flows):
+                for i, f in enumerate(list(self._flows)):
                     # interruzione: /poll richiesto durante il giro -> esci subito
                     if self._force.is_set():
                         log.info("Polling interrotto a metà: /poll richiesto dall'utente")
                         break
+                    # Sincronizza il flusso se il tipo monitor è variato nello store (es. promozione a reschedule)
+                    mon_stored = next((m for m in self.store.get_monitors() if m.get("id") == f.mid), None)
+                    if mon_stored and mon_stored.get("type") and mon_stored.get("type") != f.type and mon_stored.get("type") in FLOW_TYPES:
+                        log.info("[%s] Tipo monitor variato nello store (%s -> %s): ricreo il flusso", f.mid, f.type, mon_stored["type"])
+                        f = FLOW_TYPES[mon_stored["type"]](mon_stored, self.browser, self.queue, self.bot, self.store)
+                        self._flows[i] = f
                     log.info("Polling %s (%s)", f.mid, f.type)
                     try:
                         f.poll_once(manual=manual)

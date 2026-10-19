@@ -57,10 +57,11 @@ def test_store_dynamic_monitors(tmp_path):
     assert store.is_disabled("dyn-1") is True
     assert store.get_action("dyn-1") == "done"
 
-    # Se riaggiunto, non deve più risultare disabilitato
+    # Se riaggiunto, non deve più risultare disabilitato e l'action_state deve tornare a idle
     store.add_monitor(mon)
     assert store.is_disabled("dyn-1") is False
     assert len(store.get_monitors()) == 1
+    assert store.get_action("dyn-1") == "idle"
 
 
 def test_store_blacklist(tmp_path):
@@ -123,4 +124,27 @@ def test_store_blacklist(tmp_path):
     # get_blacklist() deve pulire le entry scadute
     assert len(store.get_blacklist("mon-1")) == 0
     assert slot_dict["key"] not in store.seen_slots("mon-1")
+
+
+def test_store_corrupted_json_or_invalid_structure(tmp_path):
+    # Caso 1: JSON non dizionario (es. lista o stringa o file corrotto)
+    f = tmp_path / "corrupt.json"
+    f.write_text('["elemento_inatteso"]', encoding="utf-8")
+    store = Store(f)
+    assert store.data == {}
+    assert store.get_monitors() == []
+    assert store.is_disabled("m1") is False
+    assert store.get_preferenze() == {}
+    assert store.get_action("m1") == "idle"
+    assert store.seen_slots("m1") == set()
+
+    # Caso 2: Monitor presente ma con valore None o tipo inatteso
+    store.data["m_broken"] = "non un dict"
+    assert store.get_action("m_broken") == "idle"
+    assert store.is_prenotato("m_broken") is False
+    assert store.seen_slots("m_broken") == set()
+    # Scrittura su m_broken non fallisce e ripristina la struttura valida
+    store.mark_action("m_broken", "idle", "ripristino")
+    assert store.get_action("m_broken") == "idle"
+    assert isinstance(store.data["m_broken"], dict)
 

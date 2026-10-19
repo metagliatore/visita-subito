@@ -27,6 +27,7 @@ HELP_TEXT = (
     "/stop - lista dei monitor e scelta di quello da fermare\n"
     "/status - stato monitor e sessione\n"
     "/poll - forza il controllo disponibilità\n"
+    "/anticipa - cerca date precedenti per un appuntamento già prenotato\n"
     "/pause - metti in pausa o riprendi la ricerca (/resume per riprendere)\n"
     "\n📋 <b>Informazioni</b>\n"
     "/ricette - elenca le ricette da prenotare\n"
@@ -180,13 +181,65 @@ class TelegramBot:
     def send_file(self, path: str, caption: str = "") -> None:
         """Invia un documento (es. event .ics) da un flusso/poller."""
         try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and loop.is_running():
+            asyncio.create_task(self._send_file(path, caption))
+            return
+
+        try:
             asyncio.run(self._send_file(path, caption))
         except RuntimeError:
             loop = asyncio.new_event_loop()
-            loop.run_until_complete(self._send_file(path, caption))
-            loop.close()
+            try:
+                loop.run_until_complete(self._send_file(path, caption))
+            finally:
+                loop.close()
         except Exception as e:  # noqa: BLE001
             log.error("send_file TG fallita: %s", e)
+
+    # ---------- invio immagini / screenshot ----------
+    async def _send_photo(self, path: str, caption: str = "") -> None:
+        if not (self.token and self.chat_ids):
+            log.warning("TG non configurato, foto non inviata: %s", path)
+            return
+        app = Application.builder().token(self.token).build()
+        async with app:
+            for cid in self.chat_ids:
+                try:
+                    with open(path, "rb") as f:
+                        await app.bot.send_photo(chat_id=cid, photo=f, caption=caption, parse_mode=ParseMode.HTML)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("invio photo TG a %s fallito (%s), provo send_document", cid, e)
+                    try:
+                        with open(path, "rb") as f:
+                            await app.bot.send_document(chat_id=cid, document=f, filename=path.split("/")[-1], caption=caption, parse_mode=ParseMode.HTML)
+                    except Exception as e2:  # noqa: BLE001
+                        log.error("invio fallback file TG a %s fallito: %s", cid, e2)
+
+    def send_photo(self, path: str, caption: str = "") -> None:
+        """Invia un'immagine (es. screenshot PNG) da un flusso o poller."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and loop.is_running():
+            asyncio.create_task(self._send_photo(path, caption))
+            return
+
+        try:
+            asyncio.run(self._send_photo(path, caption))
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(self._send_photo(path, caption))
+            finally:
+                loop.close()
+        except Exception as e:  # noqa: BLE001
+            log.error("send_photo TG fallita: %s", e)
 
     # ---------- interazioni autenticazione (fallback push / otp) ----------
     def ask_auth_fallback(self, prompt: str = "", timeout_s: int = 120) -> str | None:
@@ -441,21 +494,28 @@ class TelegramBot:
                 "⚠️ Non riesco a ricavare la prestazione da monitorare dall'elenco. "
                 "Riprova con /monitora e scegli la ricetta dall'elenco.")
             return
+        was_paused = bool(self.controller and getattr(self.controller, "paused", False) is True)
         data_ricetta = target.get("data_ricetta") or ""
+        data_attuale = target.get("data_ora") or ""
         mid = self.controller.aggiungi_monitor(
             tipo, desc, nre=nre,
             criteri={"province": prov_list, "data_dal": data_dal, "data_a": data_a},
-            data_ricetta=data_ricetta)
+            data_ricetta=data_ricetta,
+            data_attuale=data_attuale)
         self._wizard.pop(chat_id, None)
         q = update.callback_query
         if mid:
             prov_txt = ", ".join(prov_list) if prov_list else "default"
             nre_txt = f"\n🔖 NRE: {self._esc(nre)}" if nre else ""
-            await q.edit_message_text(
+            txt = (
                 f"✅ Monitor creato!\n🎯 {self._esc(desc)}{nre_txt}\n🏙 {self._esc(prov_txt)}\n"
                 f"📅 Range: {self._esc(data_dal)} → {self._esc(data_a)}\n"
                 f"🆔 {self._esc(mid)}\n\n"
-                f"Ti notificherò solo se trovo disponibilità nel range.")
+                f"Ti notificherò solo se trovo disponibilità nel range."
+            )
+            if was_paused:
+                txt += "\n\n▶️ La pausa del monitoraggio è stata resettata: la ricerca automatica è ora attiva."
+            await q.edit_message_text(txt)
         else:
             await q.edit_message_text("Errore creazione monitor.")
 
@@ -572,8 +632,28 @@ class TelegramBot:
                             parse_mode=ParseMode.HTML,
                         )
                     else:
-                        await q.edit_message_text(f"⚠️ Impossibile aggiornare il monitor {self._esc(mid)}.")
+                        await q.edit_message_text(f"⚠️ Impossibile aggiornare il monitor {self._esc(mid)}: nessuna prenotazione valida registrata.")
                     return
+            # selezione monitor da anticipare
+            if data.startswith("anticipa:pick:"):
+                mid = data.split(":", 2)[2]
+                if not self.controller:
+                    await q.answer("Controller non inizializzato.")
+                    return
+                ok = self.controller.converti_in_reschedule(mid)
+                if ok:
+                    pren = self.controller.store.get_prenotazione(mid)
+                    d_str = pren.get("data_ora") or ""
+                    data_info = f"\n📌 Appuntamento attuale: <b>{self._esc(d_str)}</b>" if d_str else ""
+                    await q.edit_message_text(
+                        f"🔄 <b>Ricerca anticipo attivata per {self._esc(mid)}!</b>{data_info}\n\n"
+                        f"Il bot continuerà a verificare automaticamente per provare ad anticipare la visita.",
+                        parse_mode=ParseMode.HTML,
+                    )
+                    self.controller.force_poll()
+                else:
+                    await q.edit_message_text(f"⚠️ Impossibile aggiornare il monitor {self._esc(mid)}: nessuna prenotazione valida registrata.")
+                return
             # calendario inline (seleziona data)
             if (data or "").startswith("cal:"):
                 await self._h_cal(update, chat_id)
@@ -1026,12 +1106,19 @@ class TelegramBot:
             if len(prest) > 45:
                 prest = prest[:42] + "…"
             stato = (r.get("stato") or "").strip()
-            if stato.lower().startswith("prescritta"):
+            prenotabile = r.get("prenotabile", False)
+            if prenotabile:
                 stato_icona = "🅿️ Da prenotare"
-            elif "accettata" in stato.lower() or "prenotata" in stato.lower():
-                stato_icona = "✅ Già prenotata"
             elif "erogata" in stato.lower():
                 stato_icona = "⚪ Erogata"
+            elif "prenotata" in stato.lower():
+                stato_icona = "✅ Già prenotata"
+            elif r.get("categoria") == "farmaceutica":
+                stato_icona = "💊 Farmaco"
+            elif r.get("categoria") == "laboratorio":
+                stato_icona = "🧪 Laboratorio"
+            elif stato.lower().startswith("prescritta") or "attiva" in stato.lower():
+                stato_icona = "🅿️ Da prenotare"
             else:
                 stato_icona = stato or "—"
             data = (r.get("data_ricetta") or "")[-5:]  # MM-DD
@@ -1056,7 +1143,7 @@ class TelegramBot:
                   for i, r in scaricabili]
             kb.append([InlineKeyboardButton("❌ Chiudi", callback_data="ric:done")])
             await update.message.reply_text(
-                "🗂 Puoi scaricare le ricette prenotate:",
+                "🗂 Puoi scaricare il promemoria PDF delle ricette:",
                 reply_markup=InlineKeyboardMarkup(kb))
 
     async def _h_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1087,6 +1174,66 @@ class TelegramBot:
             await update.message.reply_text("Avvio polling forzato...")
         if self.controller:
             self.controller.force_poll()
+
+    async def _h_anticipa(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._autorizzato(update):
+            return
+        self._risveglia_se_needed(update)
+        if self.controller is None:
+            await update.message.reply_text("Controller non inizializzato.")
+            return
+
+        # 1. Se fornito ID esplicito come argomento
+        if ctx.args:
+            mid = ctx.args[0]
+            ok = self.controller.converti_in_reschedule(mid)
+            if ok:
+                pren = self.controller.store.get_prenotazione(mid)
+                d_str = pren.get("data_ora") or ""
+                data_info = f"\n📌 Appuntamento attuale: <b>{self._esc(d_str)}</b>" if d_str else ""
+                await update.message.reply_text(
+                    f"🔄 <b>Ricerca anticipo attivata per {self._esc(mid)}!</b>{data_info}\n\n"
+                    f"Il bot continuerà a verificare automaticamente per provare ad anticipare la visita.",
+                    parse_mode=ParseMode.HTML,
+                )
+                self.controller.force_poll()
+            else:
+                await update.message.reply_text(f"⚠️ Impossibile attivare l'anticipo per {self._esc(mid)}: monitor non trovato o nessuna prenotazione valida registrata.")
+            return
+
+        # 2. Senza argomenti: se c'è un solo monitor attivo, usalo direttamente
+        monitors = self.controller.monitors_attivi()
+        if not monitors:
+            await update.message.reply_text("Nessun monitor attivo.")
+            return
+
+        if len(monitors) == 1:
+            mid = monitors[0]["id"]
+            ok = self.controller.converti_in_reschedule(mid)
+            if ok:
+                pren = self.controller.store.get_prenotazione(mid)
+                d_str = pren.get("data_ora") or ""
+                data_info = f"\n📌 Appuntamento attuale: <b>{self._esc(d_str)}</b>" if d_str else ""
+                await update.message.reply_text(
+                    f"🔄 <b>Ricerca anticipo attivata per {self._esc(mid)}!</b>{data_info}\n\n"
+                    f"Il bot continuerà a verificare automaticamente per provare ad anticipare la visita.",
+                    parse_mode=ParseMode.HTML,
+                )
+                self.controller.force_poll()
+            else:
+                await update.message.reply_text(f"⚠️ Impossibile attivare l'anticipo per {self._esc(mid)}: nessuna prenotazione valida registrata.")
+            return
+
+        # 3. Più monitor attivi: mostra bottoni di selezione
+        kb = [[InlineKeyboardButton(
+            f"{m.get('ricetta','')[:28]} [{m.get('type','')}]",
+            callback_data=f"anticipa:pick:{m['id']}")] for m in monitors]
+        kb.append([InlineKeyboardButton("❌ Annulla", callback_data="stop:annulla")])
+        await update.message.reply_text(
+            "🔄 Scegli per quale visita cercare un <b>anticipo</b>:",
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode=ParseMode.HTML,
+        )
 
     async def _h_pause(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
@@ -1269,6 +1416,7 @@ class TelegramBot:
                 BotCommand("blacklist", "Visualizza ed elimina disponibilità rifiutate"),
                 BotCommand("status", "Stato dei monitor e sessione SPID"),
                 BotCommand("poll", "Forza controllo disponibilità adesso"),
+                BotCommand("anticipa", "Cerca date precedenti per visita prenotata"),
                 BotCommand("pause", "Mette in pausa o riprende la ricerca automatica"),
                 BotCommand("resume", "Riprende la ricerca automatica"),
                 BotCommand("ricette", "Elenco delle ricette dematerializzate"),
@@ -1296,6 +1444,7 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("ricette", self._h_ricette))
         self.app.add_handler(CommandHandler("appuntamenti", self._h_appuntamenti))
         self.app.add_handler(CommandHandler("poll", self._h_poll))
+        self.app.add_handler(CommandHandler("anticipa", self._h_anticipa))
         self.app.add_handler(CommandHandler(["pause", "pause_unpause"], self._h_pause))
         self.app.add_handler(CommandHandler(["resume", "unpause"], self._h_resume))
         self.app.add_handler(CommandHandler("monitora", self._h_monitora))

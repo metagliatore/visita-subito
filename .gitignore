@@ -3,8 +3,12 @@ __pycache__/
 .venv/
 .chrome/
 data/
+debug/
+screenshots/
 *.log
 .env
+.env.*
+!.env.example
 .idea/
 *.swp
 .DS_Store
