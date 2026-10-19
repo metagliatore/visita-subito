@@ -558,6 +558,84 @@ class SessionManager:
 
         return True
 
+    def _cattura_e_invia_qr_cie(self, driver: webdriver.Chrome, auth_callback=None) -> bool:
+        """Capture CIE QR code screenshot and send it via Telegram."""
+        from pathlib import Path
+        from core import selectors
+
+        cie_sel = selectors.LOGIN_CIE
+        qr_path = "data/cie_qr.png"
+        Path(qr_path).parent.mkdir(parents=True, exist_ok=True)
+
+        # If QR is not immediately visible, try clicking btn_mostra_qr
+        if not self._find_element(driver, cie_sel["qr_code"]):
+            self._find_and_click(driver, cie_sel["btn_mostra_qr"])
+            time.sleep(2)
+
+        qr_el = self._find_element(driver, cie_sel["qr_code"])
+        saved = False
+
+        if qr_el:
+            # First try direct extraction if src is a base64 data-URI (sharp and reliable)
+            try:
+                src = qr_el.get_attribute("src") or ""
+                if "data:image/" in src and "base64," in src:
+                    import base64
+                    b64_data = src.split("base64,", 1)[1].strip()
+                    Path(qr_path).write_bytes(base64.b64decode(b64_data))
+                    saved = True
+                    log.info("Immagine QR Code CIE estratta direttamente da data-URI in %s", qr_path)
+            except Exception as e:
+                log.debug("Estrazione diretta data-URI non riuscita (%s), procedo con screenshot", e)
+
+            if not saved:
+                try:
+                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", qr_el)
+                except Exception:
+                    pass
+                try:
+                    qr_el.screenshot(qr_path)
+                    saved = True
+                    log.info("Screenshot dell'elemento QR Code CIE salvato in %s", qr_path)
+                except Exception as e:
+                    log.warning("Impossibile salvare screenshot dell'elemento QR: %s", e)
+
+        # If specific element could not be extracted, fallback to entire page screenshot
+        if not saved:
+            try:
+                driver.save_screenshot(qr_path)
+                saved = True
+                log.info("Screenshot completo pagina CIE (fallback QR) salvato in %s", qr_path)
+            except Exception as e:
+                log.error("Errore salvataggio screenshot fallback CIE: %s", e)
+
+        if not saved:
+            if self.on_notify:
+                self.on_notify("⚠️ Impossibile acquisire lo screenshot del QR Code CIE.")
+            return False
+
+        caption = "📲 <b>Accesso CIE (Livello 2)</b>
+Scansiona questo QR Code con l'app CieID per completare l'accesso."
+        inviato = False
+
+        if auth_callback:
+            try:
+                auth_callback("send_photo", path=qr_path, caption=caption)
+                inviato = True
+            except Exception as e:
+                log.warning("auth_callback send_photo fallito: %s, provo send_file", e)
+                try:
+                    auth_callback("send_file", path=qr_path, caption=caption)
+                    inviato = True
+                except Exception as e2:
+                    log.warning("auth_callback send_file fallito: %s", e2)
+
+        if not inviato and self.on_notify:
+            self.on_notify("📲 QR Code CIE visualizzato: scansionalo con l'app CieID sul tuo smartphone.")
+
+        log.info("QR Code CIE inviato con successo.")
+        return True
+
     # ---------------- multi-provider SPID login ----------------
     def relogin_spid(self, provider_key: str, username: str = "", password: str = "",
                       wait_otp_sec: int = 180, auth_callback=None) -> webdriver.Chrome:
@@ -660,6 +738,8 @@ class SessionManager:
         mode_str = (mode or "app").lower()
         mode_lbl = {
             "app": "App CieID / Credenziali (Livello 2)",
+            "qr": "QR Code (App CieID)",
+            "qrcode": "QR Code (App CieID)",
             "credenziali": "Credenziali Livello 2 (SMS / App)",
             "smartcard": "Smartcard / NFC (Livello 3)",
         }.get(mode_str, f"CIE ({mode})")
@@ -702,8 +782,16 @@ class SessionManager:
                 break
             time.sleep(2)
 
-        # Level 1/2 credential handling
-        if username and password:
+        qr_sent = False
+
+        # Level 1/2 credential handling or direct QR mode
+        if mode_str in ("qr", "qrcode") or (not username and not password and mode_str != "smartcard"):
+            log.info("Accesso CIE in modalità QR Code: clicco opzione smartphone/QR")
+            self._find_and_click(driver, cie_sel["btn_smartphone"])
+            time.sleep(2)
+            self._cattura_e_invia_qr_cie(driver, auth_callback)
+            qr_sent = True
+        elif username and password:
             # If page shows mode selection first, open credentials section
             if not self._find_element(driver, cie_sel["username"]):
                 log.info("Campi credenziali CIE non visibili subito: provo selettori 'btn_credenziali'")
@@ -717,7 +805,7 @@ class SessionManager:
                 self._find_and_click(driver, cie_sel["btn_prosegui"])
                 time.sleep(3)
                 if self.on_notify:
-                    self.on_notify("📲 Credenziali CIE inviate: verifica la notifica nell'app CieID o inserisci l'OTP.")
+                    self.on_notify("📲 Credenziali CIE inviate: verifica la notifica nell'app CieID o scansiona il QR Code.")
             else:
                 log.warning("Campi credenziali CIE non trovati.")
                 if self.on_notify:
@@ -732,22 +820,29 @@ class SessionManager:
                 if self.on_notify:
                     self.on_notify("🔑 Schermata CIE aperta: completa l'autenticazione con l'app CieID (QR/notifica) o Smartcard.")
 
-        # 2FA, QR, OTP, approval and consent waiting loop
+        # Authorization waiting loop (push, QR scan or consent)
         t0 = time.time()
         deadline = t0 + wait_otp_sec
         abs_deadline = t0 + 600  # Max 10 minutes for human interaction
-        qr_sent = False
         last_fallback_prompt = 0
 
         while time.time() < deadline and time.time() < abs_deadline:
-            # Attempt clicking consent button
+            # Try clicking consent or proceed post QR scan
             self._find_and_click(driver, cie_sel["consenso"])
+            self._find_and_click(driver, cie_sel.get("btn_post_qr", []))
             if self.is_autenticato(driver):
                 self.save(driver)
                 self.session_valid = True
                 return driver
 
-            # Check if OTP input field has appeared
+            # If QR code appeared on screen and not sent yet
+            if not qr_sent and mode_str != "smartcard":
+                if self._find_element(driver, cie_sel["qr_code"]):
+                    log.info("Rilevato QR code CIE a schermo: lo invio su Telegram")
+                    self._cattura_e_invia_qr_cie(driver, auth_callback)
+                    qr_sent = True
+
+            # If OTP input field appears (e.g. explicit OTP config)
             if self._find_element(driver, cie_sel["otp"]):
                 log.info("Rilevato campo OTP CIE sul portale")
                 deadline = max(deadline, min(abs_deadline, time.time() + 130))
@@ -757,53 +852,35 @@ class SessionManager:
                     self.session_valid = True
                     return driver
 
-            # Check if QR code has appeared for scanning
-            if not qr_sent and mode_str != "smartcard":
-                qr_el = self._find_element(driver, cie_sel["qr_code"])
-                if qr_el:
-                    log.info("Rilevato QR code CIE a schermo")
-                    qr_sent = True
-                    qr_path = "data/cie_qr.png"
-                    try:
-                        from pathlib import Path
-                        Path(qr_path).parent.mkdir(parents=True, exist_ok=True)
-                        qr_el.screenshot(qr_path)
-                        if auth_callback:
-                            auth_callback("send_file", path=qr_path,
-                                          caption="📲 Scansiona questo QR Code con l'app CieID per completare l'accesso.")
-                        elif self.on_notify:
-                            self.on_notify("📲 QR Code CIE visualizzato: scansionalo con l'app CieID sul tuo smartphone.")
-                    except Exception as e:
-                        log.warning("Cattura screenshot QR CIE: %s", e)
-                        if self.on_notify:
-                            self.on_notify("📲 QR Code CIE visualizzato: scansionalo con l'app CieID sul tuo smartphone.")
-
-            # If awaiting push notification and more than 35 seconds elapsed since submit
-            if (username and password and auth_callback and
-                    (time.time() - t0 > 35) and (time.time() - last_fallback_prompt > 60)):
-                log.info("Notifica CIE non ancora approvata: propongo fallback interattivo Telegram")
+            # Interactive fallback if push notification is not approved within 30s
+            if (auth_callback and mode_str != "smartcard" and
+                    (time.time() - t0 > 30) and (time.time() - last_fallback_prompt > 60)):
+                last_fallback_prompt = time.time()
+                log.info("Notifica CIE non ancora approvata: propongo fallback interattivo Telegram con opzione QR Code")
                 prompt_msg = (
                     "⚠️ <b>Accesso CIE (Livello 2)</b>\n"
-                    "La notifica nell'app CieID non è stata ancora approvata.\n\n"
+                    "La notifica push nell'app CieID non è stata ancora approvata o non è arrivata.\n\n"
                     "Come vuoi procedere?"
                 )
+                cie_buttons = [
+                    [("📲 Invia QR Code", "auth:qr"), ("🔄 Attendi notifica", "auth:notify")],
+                    [("❌ Annulla login", "auth:cancel")],
+                ]
                 scelta = None
                 try:
-                    scelta = auth_callback("ask_action", prompt=prompt_msg)
-                    last_fallback_prompt = time.time()
+                    scelta = auth_callback("ask_action", prompt=prompt_msg, buttons=cie_buttons)
                 except Exception as e:
                     log.warning("auth_callback ask_action CIE: %s", e)
 
-                if scelta == "otp":
-                    log.info("Scelta fallback CIE: utente richiede immissione OTP")
-                    self._find_and_click(driver, cie_sel["btn_richiedi_sms_otp"])
+                if scelta == "qr":
+                    log.info("Scelta fallback CIE: utente richiede invio QR Code")
+                    if self.on_notify:
+                        self.on_notify("📲 Recupero il QR Code dal portale CIE...")
+                    self._find_and_click(driver, cie_sel["btn_mostra_qr"])
                     time.sleep(2)
-                    deadline = max(deadline, min(abs_deadline, time.time() + 130))
-                    successo = self._chiedi_e_inserisci_otp_cie(driver, auth_callback)
-                    if successo and self.is_autenticato(driver):
-                        self.save(driver)
-                        self.session_valid = True
-                        return driver
+                    self._cattura_e_invia_qr_cie(driver, auth_callback)
+                    qr_sent = True
+                    deadline = max(deadline, min(abs_deadline, time.time() + 180))
                 elif scelta == "notify":
                     log.info("Scelta fallback CIE: attendo notifica")
                     deadline = max(deadline, min(abs_deadline, time.time() + 65))
@@ -813,6 +890,6 @@ class SessionManager:
                     log.info("Login CIE annullato dall'utente.")
                     raise RuntimeError("Login CIE annullato dall'utente.")
 
-            time.sleep(4)
+            time.sleep(3)
 
         raise TimeoutError("Timeout nell'attesa autenticazione CIE (completa l'accesso con l'app CieID o Smartcard)")

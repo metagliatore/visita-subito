@@ -242,6 +242,14 @@ def test_auth_callback_notify_and_otp():
     assert bot._auth_choice == "otp"
     assert bot._auth_event.is_set()
 
+    # Prova scelta QR
+    bot._auth_event = threading.Event()
+    bot._auth_choice = None
+    up.callback_query.data = "auth:qr"
+    asyncio.run(bot._h_callback(up, MagicMock()))
+    assert bot._auth_choice == "qr"
+    assert bot._auth_event.is_set()
+
     # Prova Annulla
     bot._auth_event = threading.Event()
     bot._auth_choice = None
@@ -303,6 +311,39 @@ def test_echo_chat_text_choices_during_fallback():
     asyncio.run(bot._h_echo_chat(up, MagicMock()))
     assert bot._auth_choice == "notify"
     assert bot._auth_event.is_set()
+
+    # Prova testo 'qr'
+    bot._auth_event = threading.Event()
+    bot._auth_choice = None
+    up.message.text = "mostra qr code"
+    asyncio.run(bot._h_echo_chat(up, MagicMock()))
+    assert bot._auth_choice == "qr"
+    assert bot._auth_event.is_set()
+
+
+def test_ask_auth_fallback_custom_buttons(monkeypatch):
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.token = "fake"
+    bot.chat_ids = ["12345"]
+    bot._received_otp = None
+    bot.notify_buttons = MagicMock(return_value=[("12345", 10)])
+
+    # Simuliamo che l'utente scelga 'qr'
+    orig_event_init = threading.Event
+
+    def fake_event_factory():
+        ev = orig_event_init()
+        # auto-set
+        bot._auth_choice = "qr"
+        ev.set()
+        return ev
+
+    monkeypatch.setattr("threading.Event", fake_event_factory)
+
+    custom_btns = [[("📲 Invia QR Code", "auth:qr")]]
+    res = bot.ask_auth_fallback("Prompt CIE", buttons=custom_btns)
+    assert res == "qr"
+    bot.notify_buttons.assert_called_once_with("Prompt CIE", custom_btns)
 
 
 def test_login_in_corso_guards():
