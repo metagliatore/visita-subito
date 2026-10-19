@@ -567,12 +567,15 @@ class SessionManager:
         qr_path = "data/cie_qr.png"
         Path(qr_path).parent.mkdir(parents=True, exist_ok=True)
 
-        # If QR is not immediately visible, try clicking btn_mostra_qr
-        if not self._find_element(driver, cie_sel["qr_code"]):
+        qr_el = None
+        for _ in range(3):
+            qr_el = self._find_element(driver, cie_sel["qr_code"])
+            if qr_el:
+                break
+            # If QR is not immediately visible, try clicking btn_mostra_qr
             self._find_and_click(driver, cie_sel["btn_mostra_qr"])
-            time.sleep(2)
+            time.sleep(1.5)
 
-        qr_el = self._find_element(driver, cie_sel["qr_code"])
         saved = False
 
         if qr_el:
@@ -614,13 +617,33 @@ class SessionManager:
                 self.on_notify("⚠️ Impossibile acquisire lo screenshot del QR Code CIE.")
             return False
 
-        caption = "📲 <b>Accesso CIE (Livello 2)</b>
-Scansiona questo QR Code con l'app CieID per completare l'accesso."
+        # Attempt extracting direct link to open CieID app on mobile
+        deep_link = ""
+        try:
+            link_el = self._find_element(driver, cie_sel.get("link_app_cie", []))
+            if link_el:
+                deep_link = link_el.get_attribute("href") or ""
+        except Exception as e:
+            log.debug("Ricerca link diretto app CieID: %s", e)
+
+        buttons = []
+        if deep_link and deep_link.startswith(("http://", "https://", "cieid://")):
+            caption = (
+                "📲 <b>Accesso CIE (Livello 2)</b>\n\n"
+                "• <b>Da PC o tablet:</b> inquadra questo QR Code con la funzione <i>Scansiona codice QR</i> dell'app CieID.\n"
+                "• <b>Da questo smartphone:</b> tocca il pulsante qui sotto per aprire direttamente l'app CieID."
+            )
+            buttons = [[("📲 Apri in App CieID", deep_link)]]
+        else:
+            caption = (
+                "📲 <b>Accesso CIE (Livello 2)</b>\n"
+                "Scansiona questo QR Code con l'app CieID (opzione <i>Scansiona codice QR</i>) per completare l'accesso."
+            )
         inviato = False
 
         if auth_callback:
             try:
-                auth_callback("send_photo", path=qr_path, caption=caption)
+                auth_callback("send_photo", path=qr_path, caption=caption, buttons=buttons)
                 inviato = True
             except Exception as e:
                 log.warning("auth_callback send_photo fallito: %s, provo send_file", e)
@@ -786,9 +809,10 @@ Scansiona questo QR Code con l'app CieID per completare l'accesso."
 
         # Level 1/2 credential handling or direct QR mode
         if mode_str in ("qr", "qrcode") or (not username and not password and mode_str != "smartcard"):
-            log.info("Accesso CIE in modalità QR Code: clicco opzione smartphone/QR")
-            self._find_and_click(driver, cie_sel["btn_smartphone"])
-            time.sleep(2)
+            log.info("Accesso CIE in modalità QR Code")
+            if not self._find_element(driver, cie_sel["qr_code"]):
+                self._find_and_click(driver, cie_sel["btn_smartphone"])
+                time.sleep(2)
             self._cattura_e_invia_qr_cie(driver, auth_callback)
             qr_sent = True
         elif username and password:

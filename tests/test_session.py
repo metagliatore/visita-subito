@@ -394,7 +394,8 @@ def test_relogin_cie_qr_code_send_file(tmp_path, monkeypatch):
     assert sm.session_valid is True
     mock_qr_el.screenshot.assert_called_once_with("data/cie_qr.png")
     auth_cb.assert_called_with("send_photo", path="data/cie_qr.png",
-                               caption="📲 <b>Accesso CIE (Livello 2)</b>\nScansiona questo QR Code con l'app CieID per completare l'accesso.")
+                               caption="📲 <b>Accesso CIE (Livello 2)</b>\nScansiona questo QR Code con l'app CieID (opzione <i>Scansiona codice QR</i>) per completare l'accesso.",
+                               buttons=[])
 
 
 def test_relogin_cie_direct_qr_mode(tmp_path, monkeypatch):
@@ -413,10 +414,15 @@ def test_relogin_cie_direct_qr_mode(tmp_path, monkeypatch):
     mock_qr_el = MagicMock()
     clicked_sels = []
 
+    # Facciamo in modo che qr_code non sia presente all'inizio, così prova a cliccare btn_smartphone
+    qr_calls = [0]
     def mock_find_element(d, sel):
         from core import selectors
         if sel == selectors.LOGIN_CIE["qr_code"]:
-            return mock_qr_el
+            qr_calls[0] += 1
+            if qr_calls[0] > 1:
+                return mock_qr_el
+            return None
         return None
 
     monkeypatch.setattr(sm, "_find_element", mock_find_element)
@@ -430,7 +436,46 @@ def test_relogin_cie_direct_qr_mode(tmp_path, monkeypatch):
     from core import selectors
     assert any(selectors.LOGIN_CIE["btn_smartphone"] == c for c in clicked_sels)
     auth_cb.assert_called_with("send_photo", path="data/cie_qr.png",
-                               caption="📲 <b>Accesso CIE (Livello 2)</b>\nScansiona questo QR Code con l'app CieID per completare l'accesso.")
+                               caption="📲 <b>Accesso CIE (Livello 2)</b>\nScansiona questo QR Code con l'app CieID (opzione <i>Scansiona codice QR</i>) per completare l'accesso.",
+                               buttons=[])
+
+
+def test_relogin_cie_with_deep_link_button(tmp_path, monkeypatch):
+    mock_browser = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_browser.start.return_value = mock_driver
+    mock_driver.current_url = "https://idserver.servizicie.interno.gov.it/idp/login/livello2"
+
+    sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    auth_state = [False, False, False, True]
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: auth_state.pop(0) if auth_state else True)
+
+    mock_qr_el = MagicMock()
+    mock_link_el = MagicMock()
+    mock_link_el.get_attribute.return_value = "https://ios.idserver.servizicie.interno.gov.it/idp/login/app?opId=123"
+
+    def mock_find_element(d, sel):
+        from core import selectors
+        if sel == selectors.LOGIN_CIE["qr_code"]:
+            return mock_qr_el
+        if sel == selectors.LOGIN_CIE["link_app_cie"]:
+            return mock_link_el
+        return None
+
+    monkeypatch.setattr(sm, "_find_element", mock_find_element)
+    monkeypatch.setattr(sm, "_find_and_click", lambda d, sel: True)
+
+    auth_cb = MagicMock()
+
+    driver = sm.relogin_cie(username="", password="", mode="qr", wait_otp_sec=30, auth_callback=auth_cb)
+    assert driver == mock_driver
+    assert sm.session_valid is True
+    call_args = auth_cb.call_args[1]
+    assert call_args["buttons"] == [[("📲 Apri in App CieID", "https://ios.idserver.servizicie.interno.gov.it/idp/login/app?opId=123")]]
+    assert "Da questo smartphone" in call_args["caption"]
 
 
 def test_relogin_cie_push_fallback_to_qr(tmp_path, monkeypatch):
@@ -477,7 +522,8 @@ def test_relogin_cie_push_fallback_to_qr(tmp_path, monkeypatch):
     from core import selectors
     assert any(selectors.LOGIN_CIE["btn_mostra_qr"] == c for c in clicked_sels)
     auth_cb.assert_any_call("send_photo", path="data/cie_qr.png",
-                            caption="📲 <b>Accesso CIE (Livello 2)</b>\nScansiona questo QR Code con l'app CieID per completare l'accesso.")
+                            caption="📲 <b>Accesso CIE (Livello 2)</b>\nScansiona questo QR Code con l'app CieID (opzione <i>Scansiona codice QR</i>) per completare l'accesso.",
+                            buttons=[])
 
 
 def test_relogin_cie_push_fallback_cancel(tmp_path, monkeypatch):

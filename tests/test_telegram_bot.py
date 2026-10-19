@@ -805,6 +805,29 @@ def test_telegram_send_photo_fallback_to_document(tmp_path):
         assert mock_app.bot.send_document.call_args[1]["caption"] == "fallback caption"
 
 
+def test_telegram_send_photo_with_buttons(tmp_path):
+    from services.telegram_bot import TelegramBot
+    test_file = tmp_path / "test.png"
+    test_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    bot = TelegramBot("dummy", "123")
+    with patch("telegram.ext.Application.builder") as mock_builder:
+        mock_app = MagicMock()
+        mock_builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app.__aenter__.return_value = mock_app
+        mock_app.__aexit__.return_value = None
+        mock_app.bot.send_photo = AsyncMock()
+
+        buttons = [[("Apri in App", "https://ios.idserver.servizicie.interno.gov.it/idp/login/app?opId=1")]]
+        bot.send_photo(str(test_file), caption="QR caption", buttons=buttons)
+        mock_app.bot.send_photo.assert_awaited_once()
+        call_kw = mock_app.bot.send_photo.call_args[1]
+        assert call_kw["caption"] == "QR caption"
+        kb = call_kw["reply_markup"].inline_keyboard
+        assert kb[0][0].text == "Apri in App"
+        assert kb[0][0].url == "https://ios.idserver.servizicie.interno.gov.it/idp/login/app?opId=1"
+
+
 def test_h_appuntamenti_renders_calendar_buttons():
     from services.telegram_bot import TelegramBot
     bot = TelegramBot.__new__(TelegramBot)
