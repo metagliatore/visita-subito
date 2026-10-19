@@ -711,8 +711,9 @@ class Controller:
             elif action == "send_photo":
                 path = kwargs.get("path", "")
                 caption = kwargs.get("caption", "")
+                buttons = kwargs.get("buttons", None)
                 if hasattr(self.bot, "send_photo"):
-                    return self.bot.send_photo(path, caption=caption)
+                    return self.bot.send_photo(path, caption=caption, buttons=buttons)
                 if hasattr(self.bot, "send_file"):
                     return self.bot.send_file(path, caption=caption)
             elif action == "send_file":

@@ -52,8 +52,7 @@ LOGIN_CIE = {
         ("xpath", "//button[contains(., 'credenziali') or contains(., 'Livello 1 e 2') or contains(., 'Entra con credenziali')]"),
     ],
     "btn_smartphone": [
-        ("css", "a[href*='login/app']"),
-        ("xpath", "//a[contains(., 'smartphone') or contains(., 'CieID')]"),
+        ("xpath", "//a[(contains(., 'smartphone') or contains(., 'CieID')) and not(contains(@href, 'login/app'))]"),
         ("xpath", "//button[contains(., 'smartphone') or contains(., 'CieID')]"),
     ],
     "btn_computer": [
@@ -82,7 +81,12 @@ LOGIN_CIE = {
         ("id", "prosegui"),
         ("xpath", "//button[contains(., 'Procedi') or contains(., 'Prosegui') or contains(., 'Entra')]"),
     ],
-    "link_app_cie": [("css", "a[href*='login/app']")],
+    "link_app_cie": [
+        ("css", "#loginwithappcard a"),
+        ("css", "a[href*='login/app']"),
+        ("css", "a[href*='idp/login/app']"),
+        ("xpath", "//a[contains(@href, 'login/app')]"),
+    ],
     # Second factor: OTP (SMS or app)
     "otp": [
         ("id", "otp"),

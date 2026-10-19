@@ -102,7 +102,8 @@ class TelegramBot:
             log.warning("TG non configurato, notifica con pulsanti non inviata")
             return []
         kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
+            InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://", "cieid://"))
+            else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
         ] for row in buttons])
         sent = []
         app = Application.builder().token(self.token).build()
@@ -200,25 +201,35 @@ class TelegramBot:
             log.error("send_file TG fallita: %s", e)
 
     # ---------- sending images / screenshots ----------
-    async def _send_photo(self, path: str, caption: str = "") -> None:
+    async def _send_photo(self, path: str, caption: str = "", buttons: list | None = None) -> None:
         if not (self.token and self.chat_ids):
             log.warning("TG non configurato, foto non inviata: %s", path)
             return
+        kb = None
+        if buttons:
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://", "cieid://"))
+                else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
+            ] for row in buttons])
         app = Application.builder().token(self.token).build()
         async with app:
             for cid in self.chat_ids:
                 try:
                     with open(path, "rb") as f:
-                        await app.bot.send_photo(chat_id=cid, photo=f, caption=caption, parse_mode=ParseMode.HTML)
+                        await app.bot.send_photo(chat_id=cid, photo=f, caption=caption,
+                                                 parse_mode=ParseMode.HTML, reply_markup=kb)
                 except Exception as e:  # noqa: BLE001
                     log.warning("invio photo TG a %s fallito (%s), provo send_document", cid, e)
                     try:
                         with open(path, "rb") as f:
-                            await app.bot.send_document(chat_id=cid, document=f, filename=path.split("/")[-1], caption=caption, parse_mode=ParseMode.HTML)
+                            await app.bot.send_document(chat_id=cid, document=f,
+                                                        filename=path.split("/")[-1],
+                                                        caption=caption, parse_mode=ParseMode.HTML,
+                                                        reply_markup=kb)
                     except Exception as e2:  # noqa: BLE001
                         log.error("invio fallback file TG a %s fallito: %s", cid, e2)
 
-    def send_photo(self, path: str, caption: str = "") -> None:
+    def send_photo(self, path: str, caption: str = "", buttons: list | None = None) -> None:
         """Send an image (e.g. PNG screenshot) from a flow or poller."""
         try:
             loop = asyncio.get_running_loop()
@@ -226,15 +237,15 @@ class TelegramBot:
             loop = None
 
         if loop is not None and loop.is_running():
-            asyncio.create_task(self._send_photo(path, caption))
+            asyncio.create_task(self._send_photo(path, caption, buttons=buttons))
             return
 
         try:
-            asyncio.run(self._send_photo(path, caption))
+            asyncio.run(self._send_photo(path, caption, buttons=buttons))
         except RuntimeError:
             loop = asyncio.new_event_loop()
             try:
-                loop.run_until_complete(self._send_photo(path, caption))
+                loop.run_until_complete(self._send_photo(path, caption, buttons=buttons))
             finally:
                 loop.close()
         except Exception as e:  # noqa: BLE001
@@ -249,7 +260,6 @@ class TelegramBot:
           - 'qr': user chose 'Invia QR Code'
           - 'otp': user chose 'Immetti codice OTP'
           - 'cancel' or None: cancelled or timed out
-        """
         """
         # If an OTP code was already received in chat in advance, consider it 'otp'
         if self._received_otp:
