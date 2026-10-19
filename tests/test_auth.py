@@ -64,6 +64,9 @@ def test_auth_config_describe_providers():
     cfg_cie_app = AuthConfig(method="cie", cie_mode="app")
     assert "CieID" in cfg_cie_app.describe()
 
+    cfg_cie_qr = AuthConfig(method="cie", cie_mode="qr")
+    assert "QR Code" in cfg_cie_qr.describe()
+
     cfg_manual = AuthConfig(method="manual")
     assert "Manuale" in cfg_manual.describe()
 

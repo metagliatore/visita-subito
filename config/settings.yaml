@@ -15,6 +15,7 @@ auth:
   cie:
     # Modalità CIE:
     #   - "app": App CieID con credenziali Livello 2 (CF/CIE + password) o QR Code a schermo
+    #   - "qr": Accesso diretto tramite QR Code inviato su Telegram da inquadrare con app CieID
     #   - "smartcard": Livello 3 (richiede lettore NFC e smartcard fisica)
     mode: "app"
     # Credenziali Livello 2 (opzionali in settings.yaml o via CIE_USERNAME / CIE_PASSWORD in .env):
