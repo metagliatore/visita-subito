@@ -62,3 +62,47 @@ def test_selectors_no_invalid_has_text():
         if attr.isupper():
             check_obj(getattr(sel, attr), attr)
 
+
+def test_browser_recovers_from_invalid_binary_path(monkeypatch):
+    from unittest.mock import MagicMock
+    from selenium.common.exceptions import NoSuchDriverException
+    import core.browser as browser_mod
+
+    mock_driver = MagicMock()
+    call_count = 0
+
+    def mock_chrome(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        options = kwargs.get("options")
+        # Il primo tentativo con il binary path inesistente fallisce
+        if call_count == 1 and getattr(options, "binary_location", "") == "/percorso/inesistente/chrome":
+            raise NoSuchDriverException("Unable to obtain driver for chrome")
+        return mock_driver
+
+    monkeypatch.setattr(browser_mod.webdriver, "Chrome", mock_chrome)
+    monkeypatch.setattr(browser_mod, "find_chrome_executable", lambda: "C:\\Windows\\chrome.exe")
+
+    b = Browser(BrowserSettings(binary_path="/percorso/inesistente/chrome"))
+    driver = b.start()
+    assert driver == mock_driver
+    assert call_count == 2
+
+
+def test_browser_fails_with_clear_error(monkeypatch):
+    from selenium.common.exceptions import NoSuchDriverException
+    import core.browser as browser_mod
+
+    def mock_chrome(*args, **kwargs):
+        raise NoSuchDriverException("Unable to obtain driver for chrome")
+
+    monkeypatch.setattr(browser_mod.webdriver, "Chrome", mock_chrome)
+    monkeypatch.setattr(browser_mod, "find_chromedriver_executable", lambda: None)
+    monkeypatch.setattr(browser_mod, "find_edge_executable", lambda: None)
+
+    b = Browser(BrowserSettings())
+    with pytest.raises(RuntimeError) as exc_info:
+        b.start()
+    assert "Impossibile avviare il driver Chrome" in str(exc_info.value)
+
+
