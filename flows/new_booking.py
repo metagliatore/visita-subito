@@ -1,22 +1,22 @@
-"""Flow A — Nuova prenotazione (visita specialistica) in PrenotaOnline.
+"""Flow A — New booking (specialist visit) in PrenotaOnline.
 
-Flusso reale mappato (Selenium):
-  1. dalla pagina Ricette apri "Prenota" della ricetta -> nuova scheda `prenotaonline`
-  2. bottone `ricettaCtrl.prenotaAppuntamento(ricetta)`
-  3. modale "Completa dati" (CONTROLLO/FOLLOW-UP): radio No -> conferma
-  4. modale informativa -> chiudi
-  5. Dove/Quando: provincia (da criteri), data, recapiti, consenso -> ricerca
-  6. lista disponibilità -> estrai slot (data/ora, azienda, comune, sede)
-  7. su match -> conferma Telegram (in base.py) -> verifica/conferma
+Mapped real workflow (Selenium):
+  1. From the Prescriptions tab open "Prenota" for prescription -> new `prenotaonline` tab
+  2. Button `ricettaCtrl.prenotaAppuntamento(ricetta)`
+  3. "Completa dati" modal (CONTROL/FOLLOW-UP): radio No -> confirm
+  4. Info modal -> close
+  5. Dove/Quando: province (from criteria), date, contact info, consent -> search
+  6. Availability list -> extract slots (date/time, company, municipality, facility)
+  7. On match -> Telegram confirmation (in base.py) -> verify/confirm
 
-Il contratto con Flow.poll_once():
-  - load_page()    esegue TUTTA la sequenza di ricerca (dal tab Ricette fino
-                   alla pagina risultati della provincia richiesta)
-  - extract_slots() legge gli slot risultati
-  - execute(slot)  seleziona lo slot e lo conferma (da chiarire col dettaglio)
+Contract with Flow.poll_once():
+  - load_page()    executes the ENTIRE search sequence (from Prescriptions tab up to
+                   the results page for the requested province)
+  - extract_slots() reads resulting slots
+  - execute(slot)  selects the slot and confirms it
 
-NB: campi Angular (ng-model) vanno valorizzati con eventi reali (angular
-trigger / click veri), altrimenti $invalid blocca la ricerca.
+Note: Angular (ng-model) fields must be populated with real events (angular
+trigger / real clicks), otherwise $invalid prevents search.
 """
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ class NewBookingFlow(Flow):
         self._ricetta = self.monitor.get("ricetta", "")
         self._nre = (self.monitor.get("nre") or "").strip()
         self.criteri = self.monitor.get("criteri", {})
-        # stato per non riavviare la ricerca se già sui risultati
+        # state to avoid restarting search if already on results
         self._ricerca_fatta = False
 
     # ================= helpers =================
@@ -93,10 +93,10 @@ class NewBookingFlow(Flow):
         return True
 
     def _set_ng(self, element_id, value):
-        """Imposta un campo Angular (per id) con evento reale input+change.
+        """Set an Angular field (by id) with real input+change events.
 
-        Robusto: se l'elemento non esiste ancora (form in renderizzazione)
-        ritorna None SENZA sollevare (angular.element(null) lancia
+        Robust: if element does not exist yet (form still rendering),
+        returns None WITHOUT raising (angular.element(null) throws
         'Cannot read properties of undefined (reading triggerHandler)').
         """
         import json
@@ -109,13 +109,12 @@ class NewBookingFlow(Flow):
             log.warning("_set_ng(%s): %s", element_id, e)
             return None
 
-    # ================= selezione ricetta (dal tab Ricette) =================
+    # ================= prescription selection (from Prescriptions tab) =================
     def _riduci_tab_a_una(self) -> None:
-        """Chiude TUTTE le tab tranne quella corrente.
+        """Close ALL tabs except current.
 
-        Ogni ciclo di monitoring apre una nuova tab (il portale apre su
-        target=_blank il click su 'Prenota'): senza pulizia i tab si
-        accumulano a ogni poll e la RAM esplode.
+        Each monitoring cycle opens a new tab (the portal opens 'Prenota' clicks
+        in target=_blank): without cleanup, tabs accumulate on every poll and RAM balloons.
         """
         d = self.driver
         try:
@@ -140,8 +139,8 @@ class NewBookingFlow(Flow):
             log.warning("pulizia tab: %s", e)
 
     def _applica_filtro_specialistiche(self):
-        """Applica il filtro 'Specialistiche' + 'Prescritte' per mostrare le visite.
-        La pagina Ricette di default mostra i farmaci; serve il submit del filtro.
+        """Apply 'Specialistiche' + 'Prescritte' filters to show specialist visits.
+        The Prescriptions page defaults to showing medications; submitting filter is required.
         """
         d = self.driver
         try:
@@ -157,18 +156,18 @@ class NewBookingFlow(Flow):
             log.warning("filtro specialistiche: %s", e)
 
     def _apri_ricetta_e_prenota(self) -> bool:
-        """Dal tab Ricette click 'Prenota' della card che matcha la ricetta.
+        """From Prescriptions tab, click 'Prenota' on the card matching the prescription.
 
-        Ritorna True se siamo sulla scheda prenotaonline pronta (Dove/Quando).
+        Returns True if we are on the ready prenotaonline tab (Dove/Quando).
         """
         d = self.driver
-        # assicura di essere sulla pagina Ricette
+        # Ensure we are on the Prescriptions page
         if "/web/areaprivata/ricette" not in d.current_url:
             d.get(selectors.RICETTE["url"])
             time.sleep(3)
-        # applica il filtro specialistiche per rendere visibili le visite
+        # Apply specialist filter to make visits visible
         self._applica_filtro_specialistiche()
-        # 1) match deterministico per NRE normalizzato (ignora trattini, spazi, maiuscole)
+        # 1) Deterministic match by normalized NRE (ignores dashes, spaces, case)
         done = False
         if self._nre:
             import re as _re
@@ -191,7 +190,7 @@ class NewBookingFlow(Flow):
             if done:
                 log.info("[%s] Ricetta aperta tramite NRE normalizzato (%s)", self.mid, self._nre)
 
-        # 2) match per testo prestazione (esatto e case-insensitive)
+        # 2) Match by service description text (exact and case-insensitive)
         if not done and self._ricetta:
             done = d.execute_script(
                 "var q = String(arguments[0]).toLowerCase();"
@@ -203,7 +202,7 @@ class NewBookingFlow(Flow):
                 "if (!a) return false; a.click(); return true;",
                 self._ricetta)
 
-        # 3) match per parole chiave significative della prestazione
+        # 3) Match by significant keywords of the service
         if not done and self._ricetta:
             import re as _re
             parole = [w.lower() for w in _re.findall(r"\b[a-zA-Z]{4,}\b", self._ricetta)
@@ -223,7 +222,7 @@ class NewBookingFlow(Flow):
                     log.info("[%s] Ricetta aperta tramite parole chiave (%s)", self.mid, parole)
         if not done:
             log.warning("ricetta '%s' non trovata sulla pagina Ricette", self._ricetta)
-            # diagnostica: stampa le card presenti per il debug
+            # Diagnostics: log available cards for debugging
             try:
                 cards = d.execute_script(
                     "return Array.from(document.querySelectorAll('a.cambia-visibilita[href*=prenotaonline]'))"
@@ -233,13 +232,12 @@ class NewBookingFlow(Flow):
             except Exception as ex:  # noqa: BLE001
                 log.debug("diagnostica card: %s", ex)
             return False
-        # la prenotazione si apre in una nuova tab:
-        # chiudi le tab residue del ciclo precedente e passa all'ultima
+        # Booking opens in a new tab: close leftover tabs from previous cycle and switch to latest
         time.sleep(3)
         hs = list(d.window_handles or [])
         ultima = hs[-1] if hs else d.current_window_handle
         current = d.current_window_handle
-        for h in hs:  # chiudi TUTTE tranne la nuova (evita accumulo RAM)
+        for h in hs:  # Close ALL except the new one (avoids RAM accumulation)
             if h == ultima:
                 continue
             try:
@@ -254,7 +252,7 @@ class NewBookingFlow(Flow):
         return True
 
     def _attiva_prenotazione(self) -> None:
-        """Click 'Prenota' (prenotaAppuntamento) + gestione modali fino a Dove/Quando."""
+        """Click 'Prenota' (prenotaAppuntamento) + handle modals up to Dove/Quando."""
         if not self._click_by(self.sel["btn_prenota_ricetta"], "prenotaAppuntamento"):
             return
         time.sleep(2)
@@ -264,17 +262,17 @@ class NewBookingFlow(Flow):
         time.sleep(1)
 
     def _gestisci_modale_completa(self, no=True) -> None:
-        """Modale 'Completa dati': radio (No) poi Conferma, gestendo l'auto-avvio.
+        """'Completa dati' modal: radio (No) then Confirm, handling auto-advance.
 
-        Il click sul radio 'No' può far avanzare da solo; se il bottone Conferma
-        è ancora presente (e abilitato) lo clicchiamo.
+        Clicking 'No' radio may advance automatically; if Confirm button
+        is still present (and enabled), click it.
         """
         # 1) radio
         radio = self._find(self.sel["modal_completa_dati"]["radio_no" if no else "radio_si"])
         if radio is not None:
             self._click_el(radio)
             time.sleep(1.2)
-        # 2) conferma (se ancora presente e abilitato)
+        # 2) confirm (if still present and enabled)
         conf = self._find(self.sel["modal_completa_dati"]["btn_conferma"])
         if conf is not None and not conf.get_attribute("disabled"):
             self._click_el(conf)
@@ -285,10 +283,9 @@ class NewBookingFlow(Flow):
 
     # ================= Dove/Quando =================
     def _attendi_form_dove_quando(self, timeout_s=20) -> bool:
-        """Attende che il form Dove/Quando sia renderizzato (select provincia +
-        campo data). Subito dopo la modale 'Completa dati' la nuova vista
-        impiega qualche secondo ad apparire: senza questa attesa i JS di
-        compilazione girano su elementi null e falliscono.
+        """Wait until Dove/Quando form is rendered (province select +
+        date field). Right after the 'Completa dati' modal, the new view
+        takes a few seconds to appear: without this wait, JS scripts fail on null elements.
         """
         from selenium.webdriver.support.ui import WebDriverWait
         from selenium.webdriver.support import expected_conditions as EC
@@ -303,13 +300,13 @@ class NewBookingFlow(Flow):
             return False
 
     def _compila_dove_quando(self):
-        """Compila provincia (a rotazione tra quelle configurate), data minima,
-        recapiti e consenso.
+        """Fill in province (rotating among configured), minimum date,
+        contact details, and consent.
 
-        NB: NON sovrascrive telefono/email se già valorizzati (default del
-        portale associati al profilo).
+        Note: does NOT overwrite phone/email if already present (portal
+        defaults associated with user profile).
         """
-        # attende il form prima di compilare (vista non pronta subito dopo la modale)
+        # Wait for form before filling (view not immediately ready after modal)
         if not self._attendi_form_dove_quando():
             log.warning("dove/quando: form non pronto, provo comunque")
         province = self.criteri.get("province") or selectors.PRENOTAONLINE["province"]
@@ -319,26 +316,26 @@ class NewBookingFlow(Flow):
             self._set_provincia(prov)
         d_dal = self._data_dal_effettiva(self.criteri)
         self._set_ng("quando", d_dal)
-        # recapiti: imposta SOLO se vuoti (rispettando i default del profilo)
+        # Contact details: set ONLY if empty (respecting profile defaults)
         tel = self.driver.find_elements(By.ID, "telefono")
         if tel and not tel[0].get_attribute("value"):
             self._set_ng("telefono", self.criteri.get("telefono", ""))
         em = self.driver.find_elements(By.ID, "email")
         if em and not em[0].get_attribute("value"):
-            # NON mettere placeholder: lascia vuoto se nessun default
+            # Do NOT use placeholder: leave empty if no default
             if self.criteri.get("email"):
                 self._set_ng("email", self.criteri["email"])
         self._click_consenso()
 
     def _click_consenso(self) -> None:
-        """Clicca il checkbox consenso solo se non ancora selezionato (con eventi Angular)."""
+        """Click consent checkbox only if not already selected (with Angular events)."""
         self.driver.execute_script(
             "var c=document.getElementById('consensoPrenotazione');if(c&&!c.checked){c.click();}"
             "return true;")
         time.sleep(0.3)
 
     def _ricerca(self) -> None:
-        """Clicca il bottone di ricerca disponibilità (se abilitato)."""
+        """Click availability search button (if enabled)."""
         btn = self._find(self.sel["btn_ricerca_disponibilita"])
         if btn is not None and not btn.get_attribute("disabled"):
             self._click_el(btn)
@@ -346,12 +343,12 @@ class NewBookingFlow(Flow):
         else:
             log.warning("bottone ricerca disabilitato (form invalido?)")
 
-    # ================= load_page (contratto Flow) =================
+    # ================= load_page (Flow contract) =================
     def load_page(self) -> None:
-        """Esegue l'intera ricerca: Ricette -> prenota -> Dove/Quando -> risultati."""
+        """Execute entire search workflow: Prescriptions -> prenota -> Dove/Quando -> results."""
         if self._ricerca_fatta:
             return
-        # pulizia preventiva: chiude le tab residue dei giri precedenti
+        # Preventive cleanup: close leftover tabs from previous cycles
         self._riduci_tab_a_una()
         if not self._apri_ricetta_e_prenota():
             log.warning("load_page: ricetta non aperta, interrompo")
@@ -361,23 +358,23 @@ class NewBookingFlow(Flow):
         self._attiva_prenotazione()
         self._compila_dove_quando()
         self._ricerca()
-        # attesa esito stabile (risultati o assenza) per la prima provincia
+        # Wait for stable outcome (results or no availability) for the first province
         st = self._attendi_esito(self._provincia_corrente, timeout_s=60)
         if st.get("stato") not in ("risultati", "no_risultati"):
             log.warning("new: ricerca %s non completata (%s)", self._provincia_corrente, st.get("stato"))
-        # reset: il prossimo giro (nuova provincia in rotazione) rifarà la ricerca
+        # Reset: next cycle (new rotating province) will rerun search
         self._ricerca_fatta = False
 
-    # ================= extract_slots (tutte le province o singola) =================
+    # ================= extract_slots (all provinces or single) =================
     def extract_slots_current_province(self) -> list[Slot]:
-        """Estrae gli slot della sola provincia attualmente visualizzata a schermo."""
+        """Extract slots for the single province currently displayed on screen."""
         return self._estrai_slots_corrente()
 
     def extract_slots(self) -> list[Slot]:
-        """Estrae gli slot dalla lista disponibilità.
+        """Extract slots from availability list.
 
-        La prima provincia è già stata cercata in load_page; per le restanti
-        configurate usa 'Modifica ricerca' -> provincia -> 'Aggiorna ricerca'.
+        The first province has already been searched in load_page; for remaining
+        configured provinces, uses 'Modifica ricerca' -> province -> 'Aggiorna ricerca'.
         """
         slots = self._estrai_slots_corrente()
         province = list(self.criteri.get("province") or [])
@@ -391,10 +388,10 @@ class NewBookingFlow(Flow):
         return slots
 
     def _estrai_slots_corrente(self) -> list[Slot]:
-        """Estrae gli slot dalla vista risultati CORRENTE.
+        """Extract slots from the CURRENT results view.
 
-        La provincia viene letta dalla TESTATA dei risultati (fonte vera),
-        non da self._provincia_corrente (variabile Python soggetta alla race).
+        The province is read from the results HEADER (source of truth),
+        not from self._provincia_corrente (Python variable subject to race).
         """
         prov_attesa = getattr(self, "_provincia_corrente", "") or (self.criteri.get("province") or [""])[0]
         st = self._attendi_esito(prov_attesa, timeout_s=60)
@@ -446,13 +443,13 @@ class NewBookingFlow(Flow):
             log.info("new: 0 blocchi in vista risultati (prov %s)", prov_reale)
         return slots
 
-    # ================= execute (prenotazione) =================
+    # ================= execute (booking) =================
     def _data_dir(self):
         from pathlib import Path
         return Path(__file__).resolve().parent.parent / "data"
 
     def _invia_riepilogo(self, info):
-        """Invia il riepilogo dell'appuntamento estratto su Telegram (formato HTML)."""
+        """Send appointment summary to Telegram (HTML format)."""
         import html as _html
         e = _html.escape
         lines = [
@@ -473,18 +470,18 @@ class NewBookingFlow(Flow):
         self.bot.notify("\n".join(lines))
 
     def execute(self, slot) -> None:
-        """Seleziona lo slot (Verifica e conferma) e completa la prenotazione.
+        """Select slot (Verifica e conferma) and complete booking.
 
-        1. click 'Verifica e conferma' sullo slot target
-        2. nella modale 'Vuoi confermare': spunta 'Confermo lettura'
+        1. click 'Verifica e conferma' on the target slot
+        2. in 'Vuoi confermare' modal: check 'Confermo lettura'
         3. click Conferma
         """
         import time
         prov = (slot.extra or {}).get("provincia", "")
-        # 1) 'Verifica e conferma' sullo slot che matcha (data/ora)
+        # 1) 'Verifica e conferma' on matching slot (date/time)
         found = False
         for btn in self._find(self.sel["btn_verifica_conferma"], mult=True) or []:
-            # trova il contenitore dello slot e controlla che contenga data/ora
+            # Find slot container and verify it contains date/time
             try:
                 container = btn.find_element(By.XPATH, "ancestor::*[contains(@class,'appuntamento')][1]")
             except Exception:  # noqa: BLE001
@@ -498,7 +495,7 @@ class NewBookingFlow(Flow):
                 found = True
                 break
         if not found:
-            # se lo slot ha provincia e la UI non la mostra, cambia provincia
+            # If slot has province and UI does not display it, switch province
             if prov and self._cambia_provincia_e_ricerca(prov).get("stato") == "risultati":
                 for btn in self._find(self.sel["btn_verifica_conferma"], mult=True) or []:
                     try:
@@ -514,17 +511,17 @@ class NewBookingFlow(Flow):
             raise RuntimeError(
                 f"Slot {slot.date_str} {slot.time_str} non trovato (fallback disabilitato)")
         time.sleep(2)
-        # 2) spunta 'Confermo lettura'
+        # 2) Check 'Confermo lettura'
         chk = self._find(self.sel["modal_conferma_prenota"]["checkbox_lettura"])
         if chk is not None and not chk.is_selected():
             self._click_el(chk)
             time.sleep(1)
-        # estrai le info dalla modale (per Telegram + .ics)
+        # Extract info from modal (for Telegram + .ics)
         info = parse_conferma(self.driver.page_source)
         info.data_ora = f"{slot.date_str} - {slot.time_str}" or info.data_ora
         if not info.prestazione:
             info.prestazione = self._ricetta
-        # 3) Conferma
+        # 3) Confirm
         conf = self._find(self.sel["modal_conferma_prenota"]["btn_conferma"])
         if conf is not None and not conf.get_attribute("disabled"):
             self._click_el(conf)
@@ -533,13 +530,13 @@ class NewBookingFlow(Flow):
         else:
             raise RuntimeError("Bottone 'Conferma' non trovato nella modale di conferma")
 
-        # 4) Controllo rigoroso conferma dal portale
+        # 4) Rigorous portal confirmation check
         ok_conf, cod, err_conf = self._attendi_conferma_prenotazione(timeout_s=30)
         if not ok_conf:
             raise RuntimeError(f"Conferma prenotazione non riuscita: {err_conf}")
         info.codice = cod or info.codice or ""
 
-        # 5) Controllo finale di riscontro su 'I miei appuntamenti'
+        # 5) Final verification check in 'I miei appuntamenti'
         log.info("[%s] Controllo finale di riscontro in 'I miei appuntamenti'...", self.mid)
         riscontro_ok = self._verifica_riscontro_miei_appuntamenti(slot, codice=info.codice)
         if not riscontro_ok:
@@ -548,7 +545,7 @@ class NewBookingFlow(Flow):
                 f"non risulta presente nella sezione 'I miei appuntamenti'"
             )
 
-        # 6) Prenotazione verificata con successo -> salvataggio e notifiche
+        # 6) Successfully verified booking -> persistence and notifications
         try:
             self.store.record_prenotazione(
                 self.mid, info.codice or "",
@@ -558,9 +555,9 @@ class NewBookingFlow(Flow):
             log.info("[%s] prenotazione registrata nello store (cod %s)", self.mid, info.codice)
         except Exception as e:  # noqa: BLE001
             log.warning("salvataggio prenotazione nello store: %s", e)
-        # --- invia riepilogo su Telegram ---
+        # --- send summary to Telegram ---
         self._invia_riepilogo(info)
-        # --- genera e invia evento calendario .ics ---
+        # --- generate and send calendar event .ics ---
         try:
             ics_path = write_ics(info, self._data_dir() / "ics")
             cap = f"📅 Evento calendario appuntamento {info.data_ora}"

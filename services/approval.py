@@ -1,8 +1,8 @@
-"""Coda di approvazione: sincronizza il bot Telegram (asincrono) con il
-poller Selenium (sincrono) tramite un file JSON condiviso.
+"""Approval queue: synchronizes asynchronous Telegram bot with synchronous
+Selenium poller via a shared JSON file.
 
-Può girare su 2 processi (bot e poller separati) o 1 solo; il polling del
-file è abbastanza semplice da non richiedere lock.
+Can run in 2 processes (separate bot and poller) or a single one; file polling
+is simple enough to not require inter-process locking.
 """
 from __future__ import annotations
 
@@ -36,10 +36,10 @@ class ApprovalQueue:
             self.path.write_text(
                 json.dumps(data, indent=2, default=str), encoding="utf-8")
 
-    # ---- API usate dal poller (Flusso) ----
+    # ---- API used by poller (Flow) ----
     def create(self, monitor_id: str, payload: dict) -> str:
-        """Crea una richiesta di approvazione in attesa. Ritorna un id CORTO
-        (per non superare i 64 byte dei callback_data di Telegram)."""
+        """Create a pending approval request. Returns a SHORT id
+        (to avoid exceeding Telegram's 64-byte callback_data limit)."""
         import uuid
         req_id = uuid.uuid4().hex[:10]
         data = self._read()
@@ -54,7 +54,7 @@ class ApprovalQueue:
         return req_id
 
     def wait_decision(self, req_id: str) -> Optional[dict]:
-        """Attende (polling) la decisione dell'utente via bot. Bloccante."""
+        """Wait (polling) for user decision via bot. Blocking."""
         deadline = time.time() + self.timeout
         while time.time() < deadline:
             data = self._read()
@@ -74,7 +74,7 @@ class ApprovalQueue:
             data[req_id]["status"] = "cancelled"
             self._write(data)
 
-    # ---- API usate dal bot (Telegram) ----
+    # ---- API used by bot (Telegram) ----
     def get_pending(self) -> dict:
         return {k: v for k, v in self._read().items() if v["status"] == "pending"}
 

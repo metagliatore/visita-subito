@@ -1,7 +1,7 @@
-"""State store: snapshot della lista disponibilità per evitare notifiche doppie.
+"""State store: availability snapshot to avoid duplicate notifications.
 
-Salva, per ogni monitor id, l'ultimo set di slot visti + lo stato dell'azione
-(prenotato/riprogrammato) così da non riproporre la stessa cosa.
+Saves, per monitor id, the last set of seen slots + action state
+(booked/rescheduled) so as not to propose the same slot twice.
 """
 from __future__ import annotations
 
@@ -60,10 +60,10 @@ class Store:
 
     def record_prenotazione(self, monitor_id: str, codice: str, data_ora: str,
                             info: dict = None) -> None:
-        """Memorizza che per questo monitor è stata effettuata una prenotazione.
+        """Record that a booking has been executed for this monitor.
 
-        Una volta prenotata, la ricetta non è più 'da prenotare': il monitor
-        diventa un appuntamento esistente, gestibile via Flusso B (spostamento).
+        Once booked, the prescription is no longer 'to book': the monitor
+        becomes an existing appointment manageable via Flow B (rescheduling).
         """
         entry = self._entry(monitor_id)
         entry["prenotato"] = True
@@ -87,7 +87,7 @@ class Store:
     def get_action(self, monitor_id: str) -> str:
         return self._entry(monitor_id).get("action_state", "idle") or "idle"
 
-    # ---- blacklist disponibilità rifiutate ----
+    # ---- rejected slots blacklist ----
     def add_blacklist_entry(
         self,
         monitor_id: str,
@@ -95,13 +95,13 @@ class Store:
         nre: str = "",
         data_ricetta: str = "",
     ) -> dict:
-        """Aggiunge uno slot rifiutato alla blacklist per il monitor indicato.
+        """Add a rejected slot to the blacklist for the specified monitor.
 
-        La voce resta valida per tutta la durata di validità della ricetta
-        (1 anno / 365 giorni dalla data ricetta, oppure 1 anno dalla data rifiuto).
+        The entry remains valid for the duration of prescription validity
+        (1 year / 365 days from prescription date, or 1 year from rejection date).
         """
         now = time.time()
-        valid_until = now + 365 * 86400  # default 1 anno
+        valid_until = now + 365 * 86400  # default 1 year
 
         if data_ricetta:
             try:
@@ -114,7 +114,7 @@ class Store:
             except Exception:
                 valid_until = now + 365 * 86400
 
-        # Estrai i campi da Slot o da dict
+        # Extract fields from Slot or dict
         slot_key = ""
         date_str = ""
         time_str = ""
@@ -152,7 +152,7 @@ class Store:
         entry_data = self.data.setdefault(monitor_id, {})
         bl = entry_data.setdefault("blacklist", [])
 
-        # Se già presente con la stessa slot_key, aggiorna
+        # If already present with same slot_key, update
         for existing in bl:
             if existing.get("slot_key") and existing.get("slot_key") == slot_key:
                 existing["rejected_at"] = now
@@ -177,7 +177,7 @@ class Store:
             "nre": nre,
         }
         bl.append(new_entry)
-        # Assicura che la slot_key sia anche in seen per non riproporla subito
+        # Ensure slot_key is also in seen to avoid immediate re-proposal
         if slot_key:
             merged = list(dict.fromkeys([*entry_data.get("seen", []), slot_key]))
             entry_data["seen"] = merged
@@ -185,9 +185,9 @@ class Store:
         return new_entry
 
     def get_blacklist(self, monitor_id: str, clean_expired: bool = True) -> list[dict]:
-        """Ritorna la blacklist attiva per il monitor.
+        """Return active blacklist for monitor.
 
-        Se clean_expired=True, rimuove le voci con validità scaduta.
+        If clean_expired=True, removes expired entries.
         """
         raw = self.data.get(monitor_id, {}).get("blacklist", [])
         if not clean_expired:
@@ -211,11 +211,11 @@ class Store:
         return active
 
     def get_blacklist_keys(self, monitor_id: str) -> set[str]:
-        """Set delle slot_key attualmente in blacklist per monitor_id."""
+        """Set of slot_keys currently in blacklist for monitor_id."""
         return {item["slot_key"] for item in self.get_blacklist(monitor_id) if item.get("slot_key")}
 
     def remove_blacklist_entry(self, monitor_id: str, entry_id: str) -> dict | None:
-        """Rimuove una specifica entry dalla blacklist e da seen_slots."""
+        """Remove specific entry from blacklist and from seen_slots."""
         bl = self.data.get(monitor_id, {}).get("blacklist", [])
         removed = None
         remaining = []
@@ -235,7 +235,7 @@ class Store:
         return removed
 
     def clear_blacklist(self, monitor_id: str) -> int:
-        """Svuota l'intera blacklist per il monitor e rimuove le relative chiavi da seen."""
+        """Clear entire blacklist for monitor and remove corresponding keys from seen."""
         bl = self.data.get(monitor_id, {}).get("blacklist", [])
         count = len(bl)
         keys_to_remove = {item.get("slot_key") for item in bl if item.get("slot_key")}
@@ -246,7 +246,7 @@ class Store:
         self._flush()
         return count
 
-    # ---- preferenze utente (configurabili da Telegram) ----
+    # ---- user preferences (configurable via Telegram) ----
     def set_preferenza(self, key: str, value) -> None:
         self.data.setdefault("_preferenze", {})[key] = value
         self._flush()
@@ -255,17 +255,16 @@ class Store:
         prefs = self.data.get("_preferenze")
         return prefs if isinstance(prefs, dict) else {}
 
-    # ---- monitor dinamici (creati da Telegram) ----
+    # ---- dynamic monitors (created via Telegram) ----
     def add_monitor(self, monitor: dict) -> None:
         self.data.setdefault("_monitors", {})
         self.data["_monitors"][monitor["id"]] = monitor
-        # rimuove dai disabilitati se era stato disabilitato
+        # remove from disabled list if it was previously disabled
         disabled = self.data.get("_disabled_monitors", [])
         if monitor["id"] in disabled:
             disabled = [m for m in disabled if m != monitor["id"]]
             self.data["_disabled_monitors"] = disabled
-        # se il monitor era precedentemente marcato done o done_pending_choice,
-        # la riattivazione/creazione deve ripristinare action_state a idle
+        # if monitor was previously marked done or done_pending_choice, reset action_state to idle
         entry = self._entry(monitor["id"])
         if entry.get("action_state") in ("done", "done_pending_choice"):
             entry["action_state"] = "idle"
@@ -277,7 +276,7 @@ class Store:
         disabled = self.data.setdefault("_disabled_monitors", [])
         if monitor_id not in disabled:
             disabled.append(monitor_id)
-        # marca anche action_state come terminato/rimosso
+        # mark action_state as terminated/removed
         self.mark_action(monitor_id, "done", "monitor rimosso/fermato")
         self._flush()
 

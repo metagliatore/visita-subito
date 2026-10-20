@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Entrypoint: avvia il monitor in modalità poller e/o bot Telegram.
+"""Entrypoint: launches the monitor in poller and/or Telegram bot mode.
 
-Uso:
-    python main.py            # poller + bot (bot bloccante in foreground)
-    python main.py --nobot    # solo poller (avvia il bot in un altro processo)
+Usage:
+    python main.py            # poller + bot (blocking bot in foreground)
+    python main.py --nobot    # poller only (runs bot in another process)
 
-Config via env (soprattutto per Docker):
+Config via env (especially for Docker):
     TG_TOKEN, TG_CHAT_ID, TG_CHAT_ID_SECONDARY
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ def setup_logging(cfg: Config) -> None:
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
         handlers=[logging.StreamHandler()],
     )
-    # eventuale file log
+    # Optional file logging
     logfile = lconf.get("file")
     if logfile:
         fh = logging.FileHandler(logfile, encoding="utf-8")

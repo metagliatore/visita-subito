@@ -5,14 +5,14 @@ from services.scheduler import Controller
 
 
 def test_nome_leggibile():
-    # Monitor con resti del portale da pulire
+    # Monitor with leftover portal text to clean up
     mon1 = {"ricetta": "VISITA CARDIOLOGICA = 1 --> vedi tutti i dettagli", "type": "new"}
     nome1 = Controller._nome_leggibile(mon1)
     assert "VISITA-CARDIOLOGICA" in nome1
     assert "prenotazione" in nome1
     assert "vedi" not in nome1
 
-    # Monitor di tipo reschedule (spostamento)
+    # Reschedule monitor type
     mon2 = {"ricetta": "VISITA DERMATOLOGICA", "type": "reschedule"}
     nome2 = Controller._nome_leggibile(mon2)
     assert "spostamento" in nome2
@@ -20,21 +20,21 @@ def test_nome_leggibile():
 
 
 def test_status_text_variations(tmp_path):
-    # Mockiamo le parti necessarie del controller per verificare la formattazione dello stato
+    # Mock necessary controller parts to verify status formatting
     ctrl = MagicMock()
     ctrl._flows = []
     ctrl.cfg.settings = {"session": {"max_idle_seconds": 3600}}
     ctrl.store.get_monitors.return_value = []
     ctrl._nome_leggibile = Controller._nome_leggibile
 
-    # Caso 1: Login bloccato per troppi tentativi
+    # Case 1: Login blocked due to too many attempts
     ctrl.login_bloccato = True
     ctrl.login_in_corso = False
     ctrl.sess.session_valid = False
     text = Controller.status_text(ctrl)
     assert "⛔ Bloccata" in text
 
-    # Caso 2: Login in corso (push inviata)
+    # Case 2: Login in progress (push sent)
     ctrl.auth_config = MagicMock()
     ctrl.auth_config.describe.return_value = "SPID (SielteID)"
     ctrl.login_bloccato = False
@@ -43,7 +43,7 @@ def test_status_text_variations(tmp_path):
     text = Controller.status_text(ctrl)
     assert "🔄 Login in corso (SPID (SielteID))" in text
 
-    # Caso 3: Sessione attiva e autenticata
+    # Case 3: Active and authenticated session
     ctrl.login_bloccato = False
     ctrl.login_in_corso = False
     ctrl.sess.session_valid = True
@@ -51,7 +51,7 @@ def test_status_text_variations(tmp_path):
     text = Controller.status_text(ctrl)
     assert "✅ Attiva e autenticata" in text
 
-    # Caso 4: Sessione fallita / non attiva
+    # Case 4: Failed / inactive session
     ctrl.login_bloccato = False
     ctrl.login_in_corso = False
     ctrl.sess.session_valid = False
@@ -151,18 +151,18 @@ def test_converti_in_reschedule():
     ok = Controller.converti_in_reschedule(ctrl, "new-visita-1")
 
     assert ok is True
-    # Il vecchio flusso è stato sostituito
+    # The old flow was replaced
     assert f_old not in ctrl._flows
     assert len(ctrl._flows) == 1
-    # Lo store ha registrato il monitor aggiornato come reschedule
+    # The store recorded the updated monitor as reschedule
     ctrl.store.add_monitor.assert_called_once()
     saved_mon = ctrl.store.add_monitor.call_args[0][0]
     assert saved_mon["type"] == "reschedule"
     assert saved_mon["codice_appuntamento"] == "PREN999"
     assert saved_mon["data_attuale"] == "20/10/2026 11:30"
-    # data_a viene ristretta alla data dell'appuntamento prenotato
+    # data_a is tightened to the booked appointment date
     assert saved_mon["criteri"]["data_a"] == "20/10/2026"
-    # action_state viene ripristinato a idle per continuare a monitorare
+    # action_state is reset to idle to continue monitoring
     ctrl.store.mark_action.assert_called_once_with(
         "new-visita-1", "idle", "convertito a reschedule (data 20/10/2026 11:30)"
     )
@@ -174,7 +174,7 @@ def test_converti_in_reschedule_tightens_existing_data_a():
         "codice": "PREN123",
         "data_ora": "15/10/2026 - 09:00",
     }
-    # Caso 1: data_a esistente è posteriore (es. 31/12/2026) -> deve essere ristretta a 15/10/2026
+    # Case 1: existing data_a is later (e.g. 31/12/2026) -> must be tightened to 15/10/2026
     ctrl.store.get_monitors.return_value = [
         {"id": "m1", "type": "new", "criteri": {"data_a": "31/12/2026"}},
     ]
@@ -184,7 +184,7 @@ def test_converti_in_reschedule_tightens_existing_data_a():
     saved_mon = ctrl.store.add_monitor.call_args[0][0]
     assert saved_mon["criteri"]["data_a"] == "15/10/2026"
 
-    # Caso 2: data_a esistente è già anteriore (es. 01/10/2026) -> non deve essere allargata
+    # Case 2: existing data_a is already earlier (e.g. 01/10/2026) -> must not be widened
     ctrl.store.get_monitors.return_value = [
         {"id": "m2", "type": "new", "criteri": {"data_a": "01/10/2026"}},
     ]
@@ -239,22 +239,22 @@ def test_build_flows_dedup_and_disabled():
         {"id": "m1", "enabled": True, "type": "new"},
         {"id": "m2", "enabled": True, "type": "new"},
     ]
-    # m1 nello store dinamico sovrascrive quello statico
+    # m1 in dynamic store overrides static one
     ctrl.store.get_monitors.return_value = [
         {"id": "m1", "enabled": True, "type": "reschedule"},
     ]
-    # m2 risulta disabilitato
+    # m2 is disabled
     ctrl.store.is_disabled.side_effect = lambda mid: mid == "m2"
     ctrl.store.is_prenotato.return_value = False
     ctrl.store.get_action.return_value = "done"
 
     Controller._build_flows(ctrl)
 
-    # Solo m1 deve essere istanziato (m2 scartato perché disabilitato, m1 non duplicato)
+    # Only m1 must be instantiated (m2 skipped as disabled, m1 not duplicated)
     assert len(ctrl._flows) == 1
     assert ctrl._flows[0].mid == "m1"
     assert ctrl._flows[0].type == "reschedule"
-    # m1 era 'done', deve essere stato riarmato ad 'idle'
+    # m1 was 'done', must have been reset to 'idle'
     ctrl.store.mark_action.assert_called_once_with("m1", "idle", "riarmo all'avvio")
 
 
@@ -279,13 +279,13 @@ def test_controller_pause_resume_toggle():
     ctrl.store.set_preferenza.assert_called_with("polling_paused", False)
     assert ctrl._force.is_set()
 
-    # Test toggle: da False diventa True
+    # Test toggle: from False to True
     ctrl._force.clear()
     is_paused = ctrl.toggle_pause()
     assert is_paused is True
     assert ctrl.paused is True
 
-    # Test toggle: da True diventa False
+    # Test toggle: from True to False
     is_paused = ctrl.toggle_pause()
     assert is_paused is False
     assert ctrl.paused is False

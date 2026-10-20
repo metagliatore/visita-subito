@@ -29,11 +29,11 @@ def test_flow_poll_once_skips_when_done():
 
     res = flow.poll_once(manual=False)
     assert res == ""
-    # Non deve chiamare nè browser nè bot se la visita è già prenotata
+    # Must not call browser or bot if the appointment is already booked
     bot.notify.assert_not_called()
     bot.notify_buttons.assert_not_called()
 
-    # In caso di poll manuale, notifica lo stato all'utente con pulsanti per decidere
+    # In case of manual poll, notify status to the user with decision buttons
     res_man = flow.poll_once(manual=True)
     assert res_man == ""
     assert bot.notify_buttons.called or bot.notify.called
@@ -47,7 +47,7 @@ def test_reschedule_flow_poll_once_rearms_when_done():
     queue = MagicMock()
     bot = MagicMock()
     store = MagicMock()
-    # Simula monitor reschedule che si ritrova in stato 'done'
+    # Simulate reschedule monitor that is in 'done' state
     store.get_action.return_value = "done"
 
     flow = DummyFlow(monitor, browser, queue, bot, store)
@@ -57,7 +57,7 @@ def test_reschedule_flow_poll_once_rearms_when_done():
     flow.extract_slots = MagicMock(return_value=[])
 
     res = flow.poll_once(manual=False)
-    # Deve aver riarmato lo stato ad 'idle' e proseguito con load_page
+    # Must have reset state to 'idle' and continued with load_page
     store.mark_action.assert_called_with("reschedule-visita-1", "idle", "riarmo monitor reschedule")
     flow.load_page.assert_called_once()
     flow.extract_slots.assert_called_once()
@@ -83,12 +83,12 @@ def test_flow_request_approval_and_post_booking_prompt():
 
     assert res == "ok"
     flow.execute.assert_called_once_with(slot)
-    # Lo stato dell'azione viene marcato done_pending_choice
+    # Action state is marked done_pending_choice
     store.mark_action.assert_called_once_with("m1", "done_pending_choice", str(slot))
-    # Viene notificato il completamento della prenotazione
+    # Booking completion is notified
     assert any("prenotato" in str(c) for c in bot.notify.call_args_list)
-    # Viene inviato il messaggio con i bottoni ferma/continua
-    assert bot.notify_buttons.call_count == 2  # prima proposta approvazione, poi scelta post-prenotazione
+    # Message with stop/continue buttons is sent
+    assert bot.notify_buttons.call_count == 2  # first approval prompt, then post-booking choice
     second_call_buttons = bot.notify_buttons.call_args_list[1][0][1]
     assert any("postbook:stop:m1" in btn[1] for btn in second_call_buttons[0])
     assert any("postbook:continue:m1" in btn[1] for btn in second_call_buttons[0])
@@ -105,7 +105,7 @@ def test_flow_rejection_adds_to_blacklist():
     slot = Slot(datetime=datetime(2026, 10, 25, 9, 30))
 
     queue.create.return_value = "req_deny"
-    # Rifiuto da parte dell'utente
+    # User rejection
     queue.wait_decision.return_value = {"cancelled": False, "decision": False, "extra": {"azione": "deny"}}
     bot.notify_buttons.return_value = [("chat1", 123)]
 
@@ -130,7 +130,7 @@ def test_flow_poll_once_ignores_blacklisted_slots():
 
     store.get_action.return_value = "idle"
     store.seen_slots.return_value = set()
-    # slot1 è in blacklist!
+    # slot1 is in blacklist!
     store.get_blacklist_keys.return_value = {slot1.key}
 
     queue.create.return_value = "req2"
@@ -139,7 +139,7 @@ def test_flow_poll_once_ignores_blacklisted_slots():
 
     flow.poll_once(manual=False)
 
-    # Solo slot2 deve essere stato proposto, non slot1!
+    # Only slot2 must be proposed, not slot1!
     queue.create.assert_called_once()
     payload = queue.create.call_args[0][1]
     assert payload["slot"]["datetime"] == slot2.datetime
@@ -159,23 +159,23 @@ def test_flow_request_approval_execution_failure_resets_to_idle():
     queue.wait_decision.return_value = {"cancelled": False, "decision": True, "extra": {"azione": "approve"}}
     bot.notify_buttons.return_value = [("chat1", 123)]
 
-    # execute fallisce per disponibilità non più presente
+    # execute fails because availability is no longer present
     flow.execute = MagicMock(side_effect=RuntimeError("La disponibilità selezionata non è più disponibile"))
 
     res = flow._request_approval(slot)
 
     assert res == "errore"
     flow.execute.assert_called_once_with(slot)
-    # L'azione deve essere ripristinata a idle (e NON done_pending_choice)
+    # Action must be reset to idle (and NOT done_pending_choice)
     store.mark_action.assert_called_once()
     args = store.mark_action.call_args[0]
     assert args[0] == "m1"
     assert args[1] == "idle"
     assert "fallita prenotazione" in args[2]
 
-    # Notifica di errore inviata all'utente
+    # Error notification sent to user
     assert any("Prenotazione non riuscita" in str(c) for c in bot.notify.call_args_list)
-    # Nessun prompt di continua monitoraggio (secondo notify_buttons)
+    # No continue monitoring prompt (second notify_buttons)
     assert bot.notify_buttons.call_count == 1
 
 
@@ -183,14 +183,14 @@ def test_attendi_conferma_prenotazione_success():
     flow = DummyFlow({"id": "m1"}, MagicMock(), MagicMock(), MagicMock(), MagicMock())
     flow._is_autenticato = MagicMock(return_value=True)
 
-    # Simula HTML di successo con codice prenotazione
+    # Simulate success HTML with booking code
     mock_driver = MagicMock()
     mock_driver.page_source = (
         '<div class="success-feedback-title">Prenotazione effettuata con successo!</div>'
         '<div class="appuntamento-field-title"><span>Codice prenotazione</span></div>'
         '<div class="appuntamento-field-value"><span>260076159770</span></div>'
     )
-    # 1° call per err_msg (nessun errore), 2° call per has_success_el (True)
+    # 1st call for err_msg (no error), 2nd call for has_success_el (True)
     mock_driver.execute_script.side_effect = ["", True]
     flow.browser.driver = mock_driver
 
@@ -206,7 +206,7 @@ def test_attendi_conferma_prenotazione_portal_error():
 
     mock_driver = MagicMock()
     mock_driver.page_source = "<html><body>Errore</body></html>"
-    # JS trova una modale di errore con messaggio
+    # JS finds an error modal with message
     mock_driver.execute_script.return_value = "Attenzione: la disponibilità non è più disponibile"
     flow.browser.driver = mock_driver
 
@@ -224,7 +224,7 @@ def test_verifica_riscontro_miei_appuntamenti_success():
 
     mock_driver = MagicMock()
     mock_driver.page_source = "<html>TC MASSICCIO FACCIALE 04/06/2027</html>"
-    # Cards JS ritorna una lista di testi card
+    # Cards JS returns a list of card texts
     mock_driver.execute_script.side_effect = [
         True,  # opened Gestisci
         None,  # switch tab
@@ -396,11 +396,11 @@ def test_flow_request_approval_timeout_edits_message_without_blacklisting():
 
     res = flow._request_approval(slot)
     assert "non confermata" in res
-    # Deve modificare il messaggio su Telegram segnalando la scadenza
+    # Must edit the message on Telegram indicating expiration
     bot.edit_message.assert_called_once()
     msg_edited = bot.edit_message.call_args[0][0]
     assert "Proposta scaduta" in msg_edited
-    # NON deve inserire lo slot in blacklist perché era solo scaduto il timeout
+    # Must NOT add slot to blacklist because timeout simply expired
     store.add_blacklist_entry.assert_not_called()
 
 
@@ -408,24 +408,24 @@ def test_flow_notifica_poll_vuoto_formatting():
     bot = MagicMock()
     slot = Slot(datetime=datetime(2026, 11, 20, 10, 0))
 
-    # Caso 1: entrambi dal e al presenti
+    # Case 1: both from and to present
     flow1 = DummyFlow({"id": "m1", "criteri": {"data_dal": "01/10/2026", "data_a": "31/10/2026"}}, MagicMock(), MagicMock(), bot, MagicMock())
     flow1._notifica_poll_vuoto([slot])
     assert "da 01/10/2026 a 31/10/2026" in bot.notify.call_args[0][0]
 
-    # Caso 2: solo data_dal
+    # Case 2: only data_dal
     bot.notify.reset_mock()
     flow2 = DummyFlow({"id": "m2", "criteri": {"data_dal": "01/10/2026"}}, MagicMock(), MagicMock(), bot, MagicMock())
     flow2._notifica_poll_vuoto([slot])
     assert "a partire da 01/10/2026" in bot.notify.call_args[0][0]
 
-    # Caso 3: solo data_a
+    # Case 3: only data_a
     bot.notify.reset_mock()
     flow3 = DummyFlow({"id": "m3", "criteri": {"data_a": "31/10/2026"}}, MagicMock(), MagicMock(), bot, MagicMock())
     flow3._notifica_poll_vuoto([slot])
     assert "fino a 31/10/2026" in bot.notify.call_args[0][0]
 
-    # Caso 4: nessun criterio di data
+    # Case 4: no date criteria
     bot.notify.reset_mock()
     flow4 = DummyFlow({"id": "m4", "criteri": {}}, MagicMock(), MagicMock(), bot, MagicMock())
     flow4._notifica_poll_vuoto([slot])
@@ -456,11 +456,11 @@ def test_reschedule_flow_card_selection_safe_and_keyword_matching():
     flow._gestisci_completa_dati = MagicMock()
     flow._compila_dove_quando_e_cerca = MagicMock()
 
-    # Naviga e seleziona
+    # Navigate and select
     with patch("selenium.webdriver.support.ui.WebDriverWait.until", return_value=MagicMock()):
         flow.load_page()
 
-    # DEVE aver selezionato b2 (Urologica), NON b1
+    # MUST have selected b2 (Urology), NOT b1
     flow._click_el.assert_any_call(b2)
     assert not any(call[0][0] == b1 for call in flow._click_el.call_args_list)
 
@@ -478,7 +478,7 @@ def test_reschedule_flow_card_selection_aborts_when_no_match():
     c2.text = "VISITA DERMATOLOGICA"
     b2.find_element.return_value = c2
 
-    # Monitor cerca OCULISTICA
+    # Monitor searches for OCULISTICA
     flow = RescheduleFlow(
         {"id": "res-ocu", "ricetta": "VISITA OCULISTICA"},
         MagicMock(), MagicMock(), MagicMock(), MagicMock()
@@ -512,7 +512,7 @@ def test_new_booking_flow_apri_ricetta_normalizes_nre():
     res = flow._apri_ricetta_e_prenota()
     assert res is True
 
-    # Verifica che il primo script execute_script abbia passato l'NRE pulito (senza trattino)
+    # Verify that the first execute_script passed clean NRE (without hyphen)
     args = driver_mock.execute_script.call_args_list[0][0]
     script_str, nre_arg = args[0], args[1]
     assert "clean" in script_str
@@ -522,7 +522,7 @@ def test_new_booking_flow_apri_ricetta_normalizes_nre():
 def test_reschedule_flow_poll_once_unblocks_done_or_pending_choice():
     from flows.reschedule import RescheduleFlow
     store = MagicMock()
-    # Simula monitor reschedule con action_state 'done' (precedentemente bloccato)
+    # Simulate reschedule monitor with action_state 'done' (previously blocked)
     store.get_action.return_value = "done"
     store.get_prenotazione.return_value = {"data_ora": "25/10/2026 10:00"}
 
@@ -535,10 +535,10 @@ def test_reschedule_flow_poll_once_unblocks_done_or_pending_choice():
     flow._cambia_provincia_e_ricerca = MagicMock(return_value={"stato": "risultati", "provincia": ""})
     flow.check_availability = MagicMock(return_value=[])
 
-    # Esegui poll_once sia automatico che manuale
+    # Run poll_once both automatic and manual
     flow.poll_once(manual=False)
 
-    # Verifica che sia stato riarmato a idle per consentire la continuazione del monitoraggio
+    # Verify it was reset to idle to allow continued monitoring
     store.mark_action.assert_called_with("res-1", "idle", "riarmo monitor reschedule")
     flow.load_page.assert_called_once()
 
@@ -559,7 +559,7 @@ def test_new_booking_flow_poll_once_manual_auto_promotes_done_pending_choice():
     flow._cambia_provincia_e_ricerca = MagicMock(return_value={"stato": "risultati", "provincia": ""})
     flow.check_availability = MagicMock(return_value=[])
 
-    # Un poll manuale su monitor in attesa scelta deve promuovere automaticamente a reschedule
+    # A manual poll on monitor waiting choice must automatically promote to reschedule
     flow.poll_once(manual=True)
 
     assert flow.type == "reschedule"
@@ -595,13 +595,13 @@ def test_flow_search_strategy_first_match_stops_at_first_province(tmp_path):
     flow._is_autenticato = MagicMock(return_value=True)
     flow.load_page = MagicMock()
     flow._cambia_provincia_e_ricerca = MagicMock()
-    # La prima provincia ha già uno slot valido
+    # First province already has a valid slot
     flow.extract_slots_current_province = MagicMock(return_value=[slot_p1])
 
     res = flow.poll_once(manual=False)
 
     flow.load_page.assert_called_once()
-    # first_match non deve cambiare provincia se la prima ha già uno slot valido
+    # first_match must not switch province if the first already has a valid slot
     flow._cambia_provincia_e_ricerca.assert_not_called()
     queue.create.assert_called_once()
     assert queue.create.call_args[0][1]["slot"]["datetime"] == slot_p1.datetime
@@ -632,12 +632,12 @@ def test_flow_search_strategy_first_match_advances_when_no_match():
     flow._is_autenticato = MagicMock(return_value=True)
     flow.load_page = MagicMock()
     flow._cambia_provincia_e_ricerca = MagicMock(return_value={"stato": "risultati", "provincia": "MILANO PROVINCIA"})
-    # La prima provincia non ha slot; la seconda sì
+    # First province has no slot; second does
     flow.extract_slots_current_province = MagicMock(side_effect=[[], [slot_p2]])
 
     flow.poll_once(manual=False)
 
-    # Ha cambiato provincia per passare a MILANO PROVINCIA ma NON a MONZA
+    # Switched province to MILANO PROVINCIA but NOT to MONZA
     flow._cambia_provincia_e_ricerca.assert_called_once_with("MILANO PROVINCIA")
     queue.create.assert_called_once()
     assert queue.create.call_args[0][1]["slot"]["datetime"] == slot_p2.datetime
@@ -668,13 +668,13 @@ def test_flow_search_strategy_best_match_scans_all_provinces():
     flow = DummyFlow(monitor, browser, queue, bot, store)
     flow._is_autenticato = MagicMock(return_value=True)
     flow.load_page = MagicMock()
-    # In best_match usa extract_slots() aggregando tutti
+    # In best_match use extract_slots() aggregating all
     flow.extract_slots = MagicMock(return_value=[slot_late, slot_early])
 
     flow.poll_once(manual=False)
 
     flow.extract_slots.assert_called_once()
-    # Deve aver scelto la data più prossima (02/11/2026 anziché 10/11/2026)
+    # Must have picked the nearest date (02/11/2026 instead of 10/11/2026)
     assert queue.create.call_args[0][1]["slot"]["datetime"] == slot_early.datetime
 
 

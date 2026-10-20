@@ -1,11 +1,11 @@
-"""Matcher: confronta una lista di disponibilità con i criteri dell'utente.
+"""Matcher: compares a list of available slots with user criteria.
 
-Criteri possibili (da monitors.yaml -> criteri):
-    giorni          -> giorno della settimana preferito, ['MON','WED',...]
-    escludi_giorni  -> giorni sempre esclusi
+Possible criteria (from monitors.yaml -> criteri):
+    giorni          -> preferred days of the week, ['MON','WED',...]
+    escludi_giorni  -> days always excluded
     ora_min         -> "08:00"
     ora_max         -> "13:00"
-    ricetta_match   -> filtro aggiuntivo opzionale sul contenuto (es. testo sede)
+    ricetta_match   -> optional additional filter on content (e.g. facility name)
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ DAYS = {
 }
 WEEKDAYS = list(DAYS.keys())
 
-# alias nomi italiani (corti e completi) -> codice ISO
+# Italian day name aliases (short and full) -> ISO code
 _IT_DAYS = {
     "lun": "MON", "lunedi": "MON", "lunedì": "MON", "monday": "MON", "mon": "MON",
     "mar": "TUE", "martedi": "TUE", "martedì": "TUE", "tuesday": "TUE", "tue": "TUE",
@@ -30,11 +30,11 @@ _IT_DAYS = {
 
 
 def _norm_day(g) -> str:
-    """Normalizza un giorno (IT corto/completo o ISO) al codice ISO (MON..SUN)."""
+    """Normalize day name (Italian short/full or ISO) to ISO code (MON..SUN)."""
     s = str(g).lower().replace("'", "")
     if s in _IT_DAYS:
         return _IT_DAYS[s]
-    # accetta anche 'MON'/'TUE' ecc.
+    # also accept 'MON'/'TUE' etc.
     s2 = str(g).upper()
     if s2 in DAYS:
         return s2
@@ -42,7 +42,7 @@ def _norm_day(g) -> str:
 
 
 def _norm_time(t: str | int | None) -> str | None:
-    """Normalizza un orario al formato HH:MM a due cifre per confronti ordinati sicuri."""
+    """Normalize a time to two-digit HH:MM format for reliable ordered comparisons."""
     if not t:
         return None
     s = str(t).strip()
@@ -65,9 +65,9 @@ def _norm_time(t: str | int | None) -> str | None:
 
 @dataclass
 class Slot:
-    """Una disponibilità estratta dal portale."""
-    datetime: datetime          # data e ora della visita candidata
-    extra: dict = None          # sede, reparto, link, ecc.
+    """An available appointment slot extracted from portal."""
+    datetime: datetime          # date and time of candidate appointment
+    extra: dict = None          # facility, department, link, etc.
 
     def __post_init__(self):
         if self.extra is None:
@@ -87,19 +87,18 @@ class Slot:
 
     @property
     def key(self) -> str:
-        """Identificatore univoco per dedup (data+ora+extra)."""
+        """Unique identifier for deduplication (date+time+extra)."""
         base = self.datetime.strftime("%Y%m%dT%H%M")
         extra = "|".join(f"{k}={v}" for k, v in sorted(self.extra.items()))
         return base if not extra else f"{base}|{extra}"
 
 
 def match_slot(slot: Slot, criteri: dict) -> tuple[bool, str]:
-    """Ritorna (True, '') se lo slot soddisfa i criteri, altrimenti (False, motivo).
+    """Return (True, '') if slot satisfies criteria, else (False, reason).
 
-    Nota: giorni/fascia qui filtrati a VALLE (in Python) e non sull'interfaccia
-    web: si estraggono tutti gli slot e si scartano qui. I giorni possono essere
-    in formato corto ('mon','tue') o esteso ('MON','TUE'). La fascia può essere
-    'mattina' (07-13) o 'pomeriggio' (>13).
+    Note: days/time range are filtered in Python downstream from portal extraction.
+    Days can be short ('mon','tue') or uppercase ('MON','TUE'). Time slots can be
+    'mattina' (07-13) or 'pomeriggio' (>13).
     """
     giorni = criteri.get("giorni") or []
     escludi = [_norm_day(d) for d in (criteri.get("escludi_giorni") or [])]
@@ -110,7 +109,7 @@ def match_slot(slot: Slot, criteri: dict) -> tuple[bool, str]:
     wd = slot.weekday  # 'MON'..'SUN'
     preferiti = [_norm_day(g) for g in giorni]
 
-    # ---- range temporale (data_dal / data_a, GG/MM/AAAA o AAAA-MM-GG) ----
+    # ---- time range (data_dal / data_a, DD/MM/YYYY or YYYY-MM-DD) ----
     from datetime import datetime as _dt
     def _parsedata(s):
         if not s:
@@ -135,7 +134,7 @@ def match_slot(slot: Slot, criteri: dict) -> tuple[bool, str]:
     if al and sd > al:
         return False, f"dopo il range ({slot.date_str})"
 
-    # ---- verifica miglioramento per anticipo appuntamento attuale ----
+    # ---- verify improvement over current appointment date ----
     data_att_raw = criteri.get("data_attuale")
     if data_att_raw:
         def _parse_data_e_ora(val):
@@ -186,10 +185,9 @@ def match_slot(slot: Slot, criteri: dict) -> tuple[bool, str]:
 
 
 def best_match(slots: list[Slot], criteri: dict) -> Slot | None:
-    """Restituisce il primo slot valido, ordinando per preferenza.
+    """Return the first valid slot ordered by preference.
 
-    Ordina per: giorni nell'ordine in cui l'utente li elenca (se presenti),
-    poi data/ora. I giorni vanno normalizzati a forma estesa.
+    Sorts by: user-preferred days in listed order, then date/time.
     """
     valid = [s for s in slots if match_slot(s, criteri)[0]]
     if not valid:
@@ -199,8 +197,8 @@ def best_match(slots: list[Slot], criteri: dict) -> Slot | None:
     return valid[0]
 
 
-# Messaggi che il portale mostra quando NON ci sono disponibilità.
-# NON sono errori: equivalgono a 0 slot per quella ricerca.
+# Messages shown by the portal when there are NO availabilities.
+# These are NOT errors: they represent 0 slots for that query.
 NESSUN_MESSAGGI = (
     "Non sono state trovate disponibilità",
     "non ci sono disponibilità online idonee",
@@ -211,10 +209,10 @@ NESSUN_MESSAGGI = (
 
 
 def nessuna_disponibilita(page_text: str) -> bool:
-    """True se la pagina/testo indica assenza di disponibilità (0 slot).
+    """True if page text indicates absence of available slots (0 slots).
 
-    Usato per distinguere un esito VALIDO '0 disponibilità' (per la provincia
-    nel dato momento) da un errore reale di interazione.
+    Used to distinguish a VALID '0 availability' outcome (for that province
+    at that moment) from a genuine interaction error.
     """
     low = (page_text or "").lower()
     return any(m.lower() in low for m in NESSUN_MESSAGGI)

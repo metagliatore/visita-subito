@@ -53,8 +53,8 @@ def test_parse_ricette_html_card():
 
 
 def test_parse_ricette_inverted_attributes():
-    # Verifica resilienza se il portale inverte l'ordine degli attributi (class prima di id)
-    # o ha un ordine diverso di classi CSS
+    # Verify resilience if portal inverts attribute order (class before id)
+    # or has a different CSS class order
     sample_html = """
     <div class="row prescrizioni-row visite-row" id="0400B9876543210">
         <span id="codiceRicetta">0400B9876543210</span>
@@ -115,7 +115,7 @@ def test_ricette_sort_order_mixed_date_formats():
     """
     res = parse_ricette(html)
     assert len(res) == 3
-    # La più recente (2026) deve essere in cima, poi 2025, infine quella senza data
+    # Most recent (2026) must be first, then 2025, and finally undated
     assert res[0]["codice"] == "R_NEW"
     assert res[1]["codice"] == "R_OLD"
     assert res[2]["codice"] == "R_NODATE"

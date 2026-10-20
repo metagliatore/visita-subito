@@ -1,20 +1,16 @@
-"""Flow B — Aggiornamento/Riprogrammazione (anticipa/posticipa) di una visita
-già prenotata.
+"""Flow B — Rescheduling / updating (earlier/later) an already booked
+appointment.
 
-Differenze col Flow A:
-  - si parte dall'elenco degli appuntamenti ESISTENTI (non da una ricetta)
-  - per ogni appuntamento c'è l'azione anticipa/posticipa
-  - il sistema chiede una conferma EXTRA (scegliere tra 'anticipa' e
-    'posticipa') che si aggiunge alla conferma standard della prenotazione
+Differences from Flow A:
+  - Starts from the list of EXISTING appointments (not from a prescription)
+  - For each appointment, there is an advance/postpone action
+  - System asks for EXTRA confirmation (choose between 'anticipa' and
+    'posticipa') added to standard booking confirmation
 
-Questo file è predisposto strutturalmente; il dettaglio reale delle schermate
-(come si apre l'appuntamento, l'elenco disponibilità per l'aggiornamento, le
-conferme) verrà compilato dopo che l'utente mostra il flusso live.
-
-Il contratto con Flow.poll_once():
-  - load_page()    apre l'appuntamento esistente e la finestra di aggregamento
-  - extract_slots() legge gli slot disponibili per anticipa/posticipa
-  - execute(slot)  seleziona + conferma (incluse le conferme extra del sistema)
+Contract with Flow.poll_once():
+  - load_page()    opens existing appointment and rescheduling view
+  - extract_slots() reads available slots for rescheduling
+  - execute(slot)  selects + confirms (including extra system confirmations)
 """
 from __future__ import annotations
 
@@ -39,7 +35,7 @@ class RescheduleFlow(Flow):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.sel = selectors.RESCHEDULE
-        self.po = selectors.PRENOTAONLINE  # riusa i selettori della lista disponibilità
+        self.po = selectors.PRENOTAONLINE  # reuse availability list selectors
         self._appuntamento = self.monitor.get("appuntamento", self.monitor.get("ricetta", ""))
         self.criteri = self.monitor.get("criteri", {})
 
@@ -76,27 +72,27 @@ class RescheduleFlow(Flow):
 
     # ---------------- load_page ----------------
     def load_page(self) -> None:
-        """Apre l'appuntamento esistente e la finestra di riprogrammazione.
+        """Open existing appointment and rescheduling window.
 
-        Flusso reale mappato:
-          1. menu Gestisci Prenotazioni -> 'I miei appuntamenti'
-          2. trova la card dell'appuntamento (match per prestazione/ricetta)
-          3. click 'Dettaglio' -> modale Dettaglio appuntamento
-          4. click 'Anticipa/Posticipa' (riprenota)
-          5. modale 'Completa dati' (CONTROLLO/FOLLOW-UP): radio No -> Conferma
-          6. (atteso) step Dove/Quando con provincia/data -> ricerca disponibilità
+        Mapped real workflow:
+          1. Gestisci Prenotazioni menu -> 'I miei appuntamenti'
+          2. Find appointment card (match by service/prescription)
+          3. Click 'Dettaglio' -> Appointment detail modal
+          4. Click 'Anticipa/Posticipa' (riprenota)
+          5. 'Completa dati' modal (CONTROL/FOLLOW-UP): radio No -> Confirm
+          6. Dove/Quando step with province/date -> search availability
         """
         d = self.driver
         time.sleep(1)
-        # 0) Pulisci eventuali tab residue e naviga alla SPA prenotaonline
+        # 0) Clean up leftover tabs and navigate to prenotaonline SPA
         self._riduci_tab_a_una()
         d.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
         time.sleep(4)
         if not self._is_autenticato():
             raise RuntimeError("Sessione scaduta o non valida: reindirizzato a pagina di login")
 
-        # 1) apri 'Gestisci Prenotazioni' (I miei appuntamenti)
-        # Click via script JS (più affidabile per Angular), con fallback su selettori
+        # 1) Open 'Gestisci Prenotazioni' (I miei appuntamenti)
+        # Click via JS script (more reliable for Angular), with selector fallback
         opened = False
         try:
             opened = d.execute_script("""
@@ -115,7 +111,7 @@ class RescheduleFlow(Flow):
                     raise RuntimeError("Sessione scaduta: menu Gestisci non raggiungibile (redirect login)")
 
         time.sleep(1)
-        # Assicura chiusura modali e switch al tab 'I miei appuntamenti'
+        # Ensure modal closure and switch to 'I miei appuntamenti' tab
         try:
             d.execute_script("""
                 var b = document.querySelector("button[ng-click*='messaggiCtrl']");
@@ -127,7 +123,7 @@ class RescheduleFlow(Flow):
         except Exception:
             pass
 
-        # 2) attesa dinamica delle card appuntamento (default 30 secondi, configurabile via env)
+        # 2) Dynamic wait for appointment cards (default 30 seconds, configurable via env)
         timeout_attesa = int(os.environ.get("RESCHEDULE_WAIT_TIMEOUT", "30"))
         dettagli = []
         for _ in range(max(1, timeout_attesa)):
@@ -143,7 +139,7 @@ class RescheduleFlow(Flow):
             time.sleep(1)
 
         if not dettagli:
-            # salva dump pagina per debug
+            # Save page dump for debugging
             dump = self._salva_debug_dump("reschedule_cards_not_found")
             dump_msg = f" ({dump['message']})" if dump else ""
             if not self._is_autenticato():
@@ -151,7 +147,7 @@ class RescheduleFlow(Flow):
             log.warning("flow B: nessuna card appuntamento trovata dopo attesa")
             raise RuntimeError(f"Nessuna card appuntamento trovata per {self._appuntamento}{dump_msg}")
 
-        # apri il dettaglio del monitor: match per NRE, codice, data attuale o parole chiave
+        # Open monitor detail: match by NRE, code, current date, or keywords
         target = None
         ric = (self.monitor.get("ricetta") or "").strip()
         nre = (self.monitor.get("nre") or "").strip()
@@ -170,7 +166,7 @@ class RescheduleFlow(Flow):
                     txt = (card.text or "").lower()
                     txt_clean = _re.sub(r"[^a-zA-Z0-9]", "", txt)
 
-                    # 1) Match deterministico per NRE o codice appuntamento (puliti da trattini)
+                    # 1) Deterministic match by NRE or appointment code (clean of dashes)
                     if nre_clean and nre_clean in txt_clean:
                         target = b
                         log.info("[%s] Match card appuntamento per NRE (%s)", self.mid, nre)
@@ -180,13 +176,13 @@ class RescheduleFlow(Flow):
                         log.info("[%s] Match card appuntamento per codice (%s)", self.mid, cod)
                         break
 
-                    # 2) Match esatto per termine completo
+                    # 2) Exact match by full term
                     if any(st in txt for st in search_terms):
                         target = b
                         log.info("[%s] Match card appuntamento per termine completo", self.mid)
                         break
 
-                    # 3) Match per parole chiave significative della prestazione
+                    # 3) Match by significant keywords of the service
                     if ric:
                         parole = [w for w in _re.findall(r"\b[a-zA-Z]{4,}\b", ric.lower())
                                   if w not in ("senza", "con", "della", "delle", "degli", "visita", "prima")]
@@ -195,7 +191,7 @@ class RescheduleFlow(Flow):
                             log.info("[%s] Match card appuntamento per parole chiave (%s)", self.mid, parole)
                             break
 
-                    # 4) Match per data attuale fissata
+                    # 4) Match by currently booked date
                     if data_att:
                         m_dt = _re.search(r"(\d{2}/\d{2}/\d{4})", data_att)
                         if m_dt and m_dt.group(1) in txt:
@@ -217,10 +213,10 @@ class RescheduleFlow(Flow):
 
         self._click_el(target)
         time.sleep(2)
-        # controlla se l'appuntamento è gestibile in autonomia
+        # Check if appointment is autonomously manageable
         if self._find(self.sel["non_gestibile"]):
             log.warning("flow B: appuntamento NON gestibile in autonomia")
-        # 3) click Anticipa/Posticipa (riprenota) con attesa esplicita che la modale sia aperta
+        # 3) Click Anticipa/Posticipa (riprenota) with explicit wait for modal to open
         from selenium.webdriver.support.ui import WebDriverWait
         from selenium.webdriver.support import expected_conditions as EC
         riprenota_btn = None
@@ -238,10 +234,10 @@ class RescheduleFlow(Flow):
             log.warning("flow B: bottone Anticipa/Posticipa non cliccabile")
             raise RuntimeError("Modale Dettaglio: bottone Anticipa/Posticipa non cliccabile")
         time.sleep(2)
-        # 4) modale completa-dati: radio No poi Conferma (con attesa cliccabile se presente)
+        # 4) 'Completa dati' modal: radio No then Confirm
         self._gestisci_completa_dati(no=True)
         time.sleep(1)
-        # 5) compila Dove/Quando (provincia da criteri) e cerca disponibilità
+        # 5) Fill Dove/Quando (province from criteria) and search availability
         try:
             WebDriverWait(d, 15).until(
                 lambda drv: drv.find_elements(By.ID, "provincia") and drv.find_elements(By.ID, "quando"))
@@ -263,18 +259,18 @@ class RescheduleFlow(Flow):
         return True
 
     def _gestisci_completa_dati(self, no=True):
-        """Modale 'Completa dati': radio No/Si poi Conferma (con WebDriverWait)."""
+        """'Completa dati' modal: radio No/Yes then Confirm (with WebDriverWait)."""
         d = self.driver
         from selenium.webdriver.support.ui import WebDriverWait
         from selenium.webdriver.support import expected_conditions as EC
-        # Se siamo già al form Dove/Quando, la modale non è presente
+        # If already on Dove/Quando form, modal is not present
         if d.find_elements(By.ID, "provincia"):
             return
         sel_radio = self.po["modal_completa_dati"]["radio_no" if no else "radio_si"]
         r = self._find(sel_radio)
         if r is not None:
             self._click_el(r)
-        # attende che il bottone Conferma sia cliccabile e lo clicca
+        # Wait until Confirm button is clickable and click it
         for by, val in self.po["modal_completa_dati"]["btn_conferma"]:
             try:
                 el = WebDriverWait(d, 5).until(EC.element_to_be_clickable((self._by(by), val)))
@@ -286,7 +282,7 @@ class RescheduleFlow(Flow):
             log.warning("flow B: bottone conferma completa-dati non trovato")
 
     def _chiudi_modale_info(self):
-        """Chiude eventuale modale informativa (messaggiCtrl)."""
+        """Close optional info modal (messaggiCtrl)."""
         d = self.driver
         try:
             els = d.find_elements(By.CSS_SELECTOR,
@@ -305,10 +301,10 @@ class RescheduleFlow(Flow):
             return False
 
     def _compila_dove_quando_e_cerca(self, provincia=None):
-        """Compila Dove/Quando per UNA provincia (default la prima configurata),
-        poi ricerca disponibilità.
+        """Fill in Dove/Quando for ONE province (defaults to first configured),
+        then search availability.
 
-        NB: NON sovrascrive email/telefono se già valorizzati dal profilo.
+        Note: does NOT overwrite email/phone if already populated by profile.
         """
         d = self.driver
         province = self.criteri.get("province") or selectors.PRENOTAONLINE["province"]
@@ -323,23 +319,23 @@ class RescheduleFlow(Flow):
         d.execute_script(
             "var el=document.getElementById('quando');if(el){angular.element(el).val(arguments[0]).triggerHandler('input');}return true;",
             self._data_dal_effettiva(self.criteri))
-        # recapiti: NON sovrascrivere i default (email/telefono già valorizzati).
-        # Se il campo è vuoto e non c'è un valore configurato nei criteri,
-        # lo lascia vuoto: NON inserire placeholder, il portale userà il default.
+        # Contact details: do NOT overwrite defaults (already populated email/phone).
+        # If field is empty and no value is configured in criteria,
+        # leave empty: do NOT insert placeholder, portal will use default.
         tel = d.find_elements(By.ID, "telefono")
         if tel and not tel[0].get_attribute("value") and self.criteri.get("telefono"):
             d.execute_script("var el=document.getElementById('telefono');angular.element(el).val(arguments[0]).triggerHandler('input');return true;", self.criteri["telefono"])
         em = d.find_elements(By.ID, "email")
         if em and not em[0].get_attribute("value") and self.criteri.get("email"):
             d.execute_script("var el=document.getElementById('email');angular.element(el).val(arguments[0]).triggerHandler('input');return true;", self.criteri["email"])
-        # consenso (necessario per validazione): click reale se non ancora checked
+        # Consent (required for validation): real click if not checked yet
         d.execute_script(
             "var c=document.getElementById('consensoPrenotazione');if(c&&!c.checked){c.click();}return true;")
-        # forzare anche l'update Angular del consenso se serve
+        # Force Angular update of consent if needed
         d.execute_script(
             "var c=document.getElementById('consensoPrenotazione');if(c){angular.element(c).triggerHandler('change');}return true;")
         time.sleep(1)
-        # ricerca disponibilità: prova più bottoni (ricercaDisponibilita, conferma, aggiorna)
+        # Availability search: try multiple buttons (ricercaDisponibilita, conferma, aggiorna)
         avanzo = None
         for sel in [self.po["btn_ricerca_disponibilita"],
                     [("css", "button[ng-click*='doveQuandoCtrl.conferma']")],
@@ -354,22 +350,22 @@ class RescheduleFlow(Flow):
         else:
             log.warning("nessun bottone ricerca/conferma abilitato (form invalido)")
             raise RuntimeError("Form Dove/Quando: nessun bottone ricerca/conferma abilitato")
-        # ATTESA esito stabile (vista risultati o modale assenza) - NON testi residui
+        # WAIT for stable outcome (results view or absence modal) - NOT leftover text
         st = self._attendi_esito(prov, timeout_s=60)
         if st.get("stato") not in ("risultati", "no_risultati"):
             log.warning("reschedule: ricerca per %s non completata (stato %s)", prov, st.get("stato"))
             self._salva_debug_dump(f"reschedule_zero_slots_{prov}")
 
-    # ---------------- extract_slots (tutte le province o singola) --------------
+    # ---------------- extract_slots (all provinces or single) --------------
     def extract_slots_current_province(self) -> list[Slot]:
-        """Estrae gli slot della sola provincia attualmente visualizzata a schermo."""
+        """Extract slots for the single province currently displayed on screen."""
         return self._estrai_slots_pagina_corrente()
 
     def extract_slots(self) -> list[Slot]:
-        """Estrae gli slot per TUTTI le province configurate (aggregando i risultati).
-        
-        La prima provincia è già stata cercata in load_page; per le restanti usa
-        'Modifica ricerca' -> cambia provincia -> 'Aggiorna ricerca'.
+        """Extract slots for ALL configured provinces (aggregating results).
+
+        The first province has already been searched in load_page; for remaining ones, uses
+        'Modifica ricerca' -> switch province -> 'Aggiorna ricerca'.
         """
         slots = self._estrai_slots_pagina_corrente()
         province = list(self.criteri.get("province") or [])
@@ -383,11 +379,11 @@ class RescheduleFlow(Flow):
         return slots
 
     def _estrai_slots_pagina_corrente(self) -> list[Slot]:
-        """Estrae gli slot dalla vista risultati CORRENTE.
+        """Extract slots from the CURRENT results view.
 
-        La provincia NON e' presa da self._provincia_corrente (variabile
-        Python che puo' restare indietro per la race): viene letta dalla
-        TESTATA dei risultati esposta dal portale in questo momento.
+        The province is NOT taken from self._provincia_corrente (Python variable
+        subject to race conditions): it is read from the results HEADER
+        displayed by the portal at this moment.
         """
         prov_attesa = getattr(self, "_provincia_corrente", "") or (self.criteri.get("province") or [""])[0]
         st = self._attendi_esito(prov_attesa, timeout_s=60)
@@ -446,13 +442,12 @@ class RescheduleFlow(Flow):
                 "/anticipa oppure /posticipa (attaccato alla conferma).")
 
     def execute(self, slot) -> None:
-        """Seleziona lo slot della provincia GIUSTA e conferma la riprogrammazione.
+        """Select slot for the RIGHT province and confirm rescheduling.
 
-        - azione = self._ultima_azione ('anticipa' | 'posticipa' | 'approve')
-        - porta la UI sulla provincia dello slot (se serve), poi match esatto
-          data/ora (MAI fallback cieco: eviterebbe di cliccare uno slot di un'al
-         provincia diversa)
-        - dopo la conferma estrai e invia luogo+note (+ICS)
+        - action = self._ultima_azione ('anticipa' | 'posticipa' | 'approve')
+        - navigate UI to slot's province (if needed), then exact match date/time
+          (NEVER blind fallback: avoids clicking a slot in another province)
+        - after confirmation, extract and send location + notes (+ ICS)
         """
         import time
         azione = getattr(self, "_ultima_azione", "approve")
@@ -463,7 +458,7 @@ class RescheduleFlow(Flow):
                 f"Slot {slot.date_str} {slot.time_str} non trovato sulla provincia della UI")
         self._click_el(target)
         time.sleep(2)
-        # 2) modale conferma prenotazione: checkbox lettura + conferma
+        # 2) Booking confirmation modal: reading checkbox + confirm
         chk = self._find(self.po["modal_conferma_prenota"]["checkbox_lettura"])
         if chk is not None and not chk.is_selected():
             self._click_el(chk)
@@ -483,13 +478,13 @@ class RescheduleFlow(Flow):
         else:
             raise RuntimeError("Bottone 'Conferma' non trovato nella modale di conferma")
 
-        # 3) Controllo rigoroso conferma dal portale
+        # 3) Rigorous portal confirmation check
         ok_conf, cod, err_conf = self._attendi_conferma_prenotazione(timeout_s=30)
         if not ok_conf:
             raise RuntimeError(f"Riprogrammazione non riuscita dal portale: {err_conf}")
         info.codice = cod or info.codice or ""
 
-        # 4) Controllo finale di riscontro su 'I miei appuntamenti'
+        # 4) Final verification check in 'I miei appuntamenti'
         log.info("[%s] Controllo finale di riscontro in 'I miei appuntamenti'...", self.mid)
         riscontro_ok = self._verifica_riscontro_miei_appuntamenti(slot, codice=info.codice)
         if not riscontro_ok:
@@ -498,23 +493,23 @@ class RescheduleFlow(Flow):
                 f"non risulta presente nella sezione 'I miei appuntamenti'"
             )
 
-        # 5) Invio riepilogo + ICS + salvataggio nello store
+        # 5) Send summary + ICS + persist in store
         self._invia_riepilogo_dopo_modifica(slot, info=info)
         log.info("flow B: riprogrammazione (%s) confermata %s", azione, slot)
 
     def _trova_bottone_slot(self, slot):
-        """Trova il pulsante 'Verifica e conferma' dello slot esatto (data+ora).
+        """Find 'Verifica e conferma' button for the exact slot (date+time).
 
-        Se lo slot ha una provincia e la UI non la mostra, cambia provincia
-        (Modifica ricerca -> provincia -> Aggiorna) e ritenta.
+        If the slot has a province and the UI does not display it, switch province
+        (Modifica ricerca -> province -> Aggiorna) and retry.
         """
         import time
         prov = (slot.extra or {}).get("provincia", "")
-        # match base
+        # Base match
         target = self._match_verifica_sulla_pagina(slot)
         if target is not None:
             return target
-        # se lo slot indica una provincia e la UI è su un'altra, cambia provincia
+        # If slot specifies a province and UI is on another, switch province
         if prov:
             log.info("flow B: cambio UI sulla provincia %s (slot proposto)", prov)
             if self._cambia_provincia_e_ricerca(prov).get("stato") == "risultati":
@@ -522,7 +517,7 @@ class RescheduleFlow(Flow):
         return target
 
     def _match_verifica_sulla_pagina(self, slot):
-        """Match esatto data+ora sul pulsante 'Verifica e conferma' corrente."""
+        """Exact date+time match on current 'Verifica e conferma' buttons."""
         bs = self._find(self.po["btn_verifica_conferma"], mult=True)
         for b in bs or []:
             try:
@@ -535,7 +530,7 @@ class RescheduleFlow(Flow):
         return None
 
     def _invia_riepilogo_dopo_modifica(self, slot, info=None):
-        """Estrae e invia luogo+note dell'appuntamento confermato (+ ICS)."""
+        """Extract and send location + notes of confirmed appointment (+ ICS)."""
         from services.appuntamento import parse_conferma, parse_successo
         from services.calendar import write_ics
         if info is None:
@@ -544,7 +539,7 @@ class RescheduleFlow(Flow):
             if not info.prestazione:
                 info.prestazione = self.monitor.get("ricetta", "")
             info.codice = parse_successo(self.driver.page_source) or ""
-        # invia riepilogo con luogo e note
+        # Send summary with location and notes
         import html as _html
         e = _html.escape
         lines = [
@@ -570,7 +565,7 @@ class RescheduleFlow(Flow):
             self.bot.send_file(str(ics), caption=f"📅 Evento calendario {info.data_ora}")
         except Exception as ex:  # noqa: BLE001
             log.warning("ICS reschedule: %s", ex)
-        # Memorizza prenotazione aggiornata nello store
+        # Store updated appointment in store
         try:
             self.store.record_prenotazione(
                 self.mid, info.codice or "",

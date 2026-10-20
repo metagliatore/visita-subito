@@ -1,8 +1,7 @@
-"""Wrapper Selenium.
+"""Selenium wrapper.
 
-Gestisce l'avvio del browser (headless o visibile), il riuso della stessa
-istanza e l'helper per log schermata. Selenium Manager scarica da solo il
-chromedriver compatibile puntando a binary_path.
+Manages browser startup (headless or visible), instance reuse, and screenshot logging.
+Selenium Manager automatically resolves and downloads matching chromedrivers pointing to binary_path.
 """
 from __future__ import annotations
 
@@ -23,7 +22,7 @@ log = logging.getLogger(__name__)
 
 
 def is_valid_executable(path: Path) -> bool:
-    """Verifica se il file esiste ed è un eseguibile valido per la piattaforma corrente."""
+    """Checks if the file exists and is a valid executable for the current platform."""
     if not path.is_file():
         return False
     if sys.platform == "win32":
@@ -32,10 +31,10 @@ def is_valid_executable(path: Path) -> bool:
 
 
 def find_chrome_executable(configured_path: str = "") -> str | None:
-    """Risolve il percorso dell'eseguibile Chrome o Chromium.
+    """Resolves the Chrome or Chromium executable path.
 
-    Verifica se il percorso configurato è valido per la piattaforma corrente;
-    in caso contrario esegue una scansione automatica dei percorsi standard di sistema.
+    Checks whether the configured path is valid for the current platform;
+    otherwise scans standard system installation directories.
     """
     if configured_path:
         p = Path(configured_path).expanduser()
@@ -45,12 +44,12 @@ def find_chrome_executable(configured_path: str = "") -> str | None:
         if which_path and is_valid_executable(Path(which_path)):
             return which_path
         log.warning(
-            "Percorso Chrome configurato '%s' non valido o inesistente per l'ambiente %s. Ricerca automatica...",
+            "Configured Chrome path '%s' is invalid or not found on %s. Searching automatically...",
             configured_path,
             sys.platform,
         )
 
-    # 1. Ricerca nel PATH di sistema
+    # 1. Search in system PATH
     names = ["chrome.exe", "msedge.exe", "brave.exe"] if sys.platform == "win32" else [
         "google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"
     ]
@@ -59,7 +58,7 @@ def find_chrome_executable(configured_path: str = "") -> str | None:
         if found and is_valid_executable(Path(found)):
             return found
 
-    # 2. Percorsi standard per sistema operativo
+    # 2. Standard paths per operating system
     candidates: list[Path] = []
     if sys.platform == "win32":
         prog_files = os.environ.get("PROGRAMFILES", "C:\\Program Files")
@@ -81,7 +80,7 @@ def find_chrome_executable(configured_path: str = "") -> str | None:
             Path("/Applications/Chromium.app/Contents/MacOS/Chromium"),
             Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         ])
-    else:  # Linux e altri Unix / Docker
+    else:  # Linux and other Unix / Docker environments
         candidates.extend([
             Path("/usr/bin/google-chrome"),
             Path("/usr/bin/google-chrome-stable"),
@@ -100,7 +99,7 @@ def find_chrome_executable(configured_path: str = "") -> str | None:
 
 
 def find_chromedriver_executable() -> str | None:
-    """Ricerca un binario chromedriver nel PATH o nella cache locale."""
+    """Searches for a chromedriver binary in system PATH or local cache."""
     names = ["chromedriver.exe", "chromedriver"] if sys.platform == "win32" else ["chromedriver"]
     for name in names:
         found = shutil.which(name)
@@ -122,7 +121,7 @@ def find_chromedriver_executable() -> str | None:
 
 
 def find_edge_executable() -> str | None:
-    """Ricerca l'eseguibile di Microsoft Edge su Windows come fallback Chromium."""
+    """Searches for Microsoft Edge executable on Windows as a Chromium fallback."""
     if sys.platform != "win32":
         return None
     names = ["msedge.exe", "msedge"]
@@ -156,11 +155,11 @@ class Browser:
         if self.settings.binary_path:
             o.binary_location = self.settings.binary_path
 
-        o.add_argument("--no-sandbox")  # necessario in container / come root
-        o.add_argument("--disable-dev-shm-usage")  # /dev/shm piccolo nei container
+        o.add_argument("--no-sandbox")  # Required in containers / when running as root
+        o.add_argument("--disable-dev-shm-usage")  # Smaller /dev/shm in containers
         o.add_argument("--disable-gpu")
         o.add_argument("--window-size=%d,%d" % self.settings.window_size)
-        # eager: ritorna appena il DOM è pronto (non attende subresources)
+        # Eager: returns as soon as the DOM is ready (does not wait for subresources)
         o.page_load_strategy = "eager"
         if self.settings.headless:
             o.add_argument("--headless=new")
@@ -168,7 +167,7 @@ class Browser:
         return o
 
     def is_alive(self) -> bool:
-        """Verifica se il driver è attivo e risponde al WebDriver."""
+        """Checks if the driver is active and responsive to WebDriver commands."""
         if self.driver is None:
             return False
         try:
@@ -189,14 +188,14 @@ class Browser:
         log.info("Avvio Chrome (headless=%s)", self.settings.headless)
         options = self._options()
 
-        # 1. Tentativo standard tramite Selenium Manager
+        # 1. Standard attempt using Selenium Manager
         try:
             self.driver = webdriver.Chrome(options=options)
         except Exception as first_err:
             log.warning("Avvio iniziale Chrome fallito (%s). Tento strategie di recupero...", first_err)
             started = False
 
-            # Strategia 1: Se era impostato un binary_path non valido, proviamo senza o con auto-detect
+            # Strategy 1: If an invalid binary_path was set, retry without it or with auto-detected binary
             if getattr(options, "binary_location", None):
                 detected = find_chrome_executable()
                 fallback_opts = self._options()
@@ -212,7 +211,7 @@ class Browser:
                 except Exception as second_err:
                     log.warning("Tentativo di recupero con Chrome di sistema fallito: %s", second_err)
 
-            # Strategia 2: Se fallisce la ricerca del driver, proviamo a passare un chromedriver locale
+            # Strategy 2: If driver discovery fails, retry with locally discovered chromedriver
             if not started:
                 driver_bin = find_chromedriver_executable()
                 if driver_bin:
@@ -223,7 +222,7 @@ class Browser:
                     except Exception as third_err:
                         log.warning("Fallback con chromedriver locale fallito: %s", third_err)
 
-            # Strategia 3: Se ancora fallisce e siamo su Windows, proviamo Microsoft Edge
+            # Strategy 3: If still failing on Windows, try Microsoft Edge Chromium fallback
             if not started and sys.platform == "win32":
                 try:
                     from selenium.webdriver.edge.options import Options as EdgeOptions
@@ -265,12 +264,12 @@ class Browser:
                 self.driver = None
 
     def restart(self) -> webdriver.Chrome:
-        """Forza il riavvio completo del browser."""
+        """Forces a complete browser restart."""
         self.stop()
         return self.start()
 
     def set_headless(self, headless: bool) -> None:
-        """Cambia la modalità headless riavviando il driver se necessario."""
+        """Toggles headless mode, restarting the driver if needed."""
         if self.settings.headless != headless:
             self.settings.headless = headless
             if self.driver is not None:
@@ -284,11 +283,10 @@ class Browser:
         return EC
 
     def screenshot(self, path: str) -> None:
-        """Schermata per debugging / prova."""
+        """Captures a screenshot for debugging or inspection."""
         if self.driver is None:
             return
         try:
             self.driver.save_screenshot(path)
         except Exception as e:  # noqa: BLE001
             log.warning("screenshot fallita: %s", e)
-

@@ -13,7 +13,7 @@ def test_fold():
     long_line = "DESCRIPTION:" + "A" * 100
     folded = _fold(long_line, limit=50)
     assert "\r\n " in folded
-    # Ogni riga (tranne la prima) inizia con spazio
+    # Every line (except the first) starts with a space
     lines = folded.split("\r\n")
     assert len(lines) > 1
     assert lines[1].startswith(" ")

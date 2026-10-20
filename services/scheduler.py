@@ -1,7 +1,7 @@
-"""Orchestratore: tiene viva la sessione e fa polling dei flussi.
+"""Orchestrator: keeps session alive and polls booking flows.
 
-Può girare come 2 processi (bot e poller) o, in modalità semplificata, in un
-singolo processo con il bot in un thread.
+Can run as 2 separate processes (bot and poller) or in simplified single-process
+mode with the bot running in a thread.
 """
 from __future__ import annotations
 
@@ -43,13 +43,13 @@ class Controller:
 
         s = cfg.settings.get("session", {})
         self.sess = SessionManager(self.browser, Path_like(s.get("cookie_files", "data/cookies")))
-        # le notifiche di login (avvisi Telegram) passano dal bot
+        # login notifications (Telegram alerts) pass through the bot
         self.sess.on_notify = lambda msg: self.bot.notify(msg)
         self.sess.on_auth_fallback = lambda: self.bot.ask_auth_fallback()
         self.sess.on_otp_prompt = lambda prompt="": self.bot.ask_otp(prompt)
 
         a = cfg.settings.get("approval", {})
-        # timeout di attesa decisione su TG: override via env APPROVAL_TIMEOUT_SECONDS
+        # decision wait timeout on TG: override via env APPROVAL_TIMEOUT_SECONDS
         import os as _os
         try:
             timeout_seconds = int(_os.environ.get(
@@ -72,7 +72,7 @@ class Controller:
         self.auth_config = AuthConfig.from_settings_and_env(cfg.settings)
         self.auth_provider = get_auth_provider(self.auth_config)
         self._build_flows()
-        # --- retry login ---
+        # --- login retries ---
         self.login_retries = 0
         self.login_bloccato = False
         self.login_in_corso = False
@@ -81,12 +81,12 @@ class Controller:
             self.max_login_retries = int(os.environ.get("MAX_LOGIN_RETRIES", "3"))
         except Exception:  # noqa: BLE001
             self.max_login_retries = 3
-        # --- stato pausa polling ---
+        # --- polling pause state ---
         self.paused = bool(self.store.get_preferenze().get("polling_paused", False))
 
     def _build_flows(self):
         self._flows = []
-        # Deduplica: i monitor nello store dinamico hanno priorità rispetto a config statico
+        # Deduplication: monitors in dynamic store take precedence over static config
         monitors_dict = {m["id"]: m for m in self.cfg.active_monitors if m.get("enabled", True)}
         for m in self.store.get_monitors():
             monitors_dict[m["id"]] = m
@@ -94,11 +94,11 @@ class Controller:
         for m in monitors_dict.values():
             if self.store.is_disabled(m["id"]):
                 continue
-            # se la ricetta è già stata prenotata o è di tipo reschedule, usa RescheduleFlow
+            # if prescription has already been booked or is of type reschedule, use RescheduleFlow
             is_reschedule = self.store.is_prenotato(m["id"]) or m.get("type") == "reschedule"
             if is_reschedule:
                 cls = RescheduleFlow
-                # Se un monitor reschedule attivo è rimasto in stato 'done', riarmalo a 'idle'
+                # If an active reschedule monitor stayed in 'done' state, rearm to 'idle'
                 if self.store.get_action(m["id"]) == "done":
                     log.info("[%s] Riarmo monitor reschedule all'avvio: stato da done a idle", m["id"])
                     self.store.mark_action(m["id"], "idle", "riarmo all'avvio")
@@ -110,21 +110,21 @@ class Controller:
             log.info("Nessun monitor configurato all'avvio: reset automatico della pausa")
             self.resume()
 
-    # ---- API per il bot ----
+    # ---- Bot API ----
     def assicura_sessione_attiva(self, force_login: bool = False, reset_blocchi: bool = True) -> bool:
-        """Assicura una sessione autenticata prima dei comandi che toccano il portale.
+        """Ensure authenticated session before commands that touch the portal.
 
-        Ritorna True se autenticato (o dopo nuovo login).
+        Returns True if authenticated (or after new login).
         """
         driver = self.ensure_session(force_login=force_login, reset_blocchi=reset_blocchi)
         return driver is not None and self.sess.session_valid
 
     def get_appuntamenti(self) -> list | None:
-        """Legge gli appuntamenti esistenti dalla sezione 'I miei appuntamenti'.
+        """Read existing appointments from 'I miei appuntamenti' section.
 
-        Ritorna una lista di dict con tutti i dati esposti dalla card:
+        Returns a list of dicts with all card fields:
           codice, prestazione, data_ora, azienda, presentarsi_in, comune
-        (i campi mancanti nella card non vengono inseriti), oppure None se fallisce il login.
+        or None if login fails.
         """
         import re
         import time
@@ -135,21 +135,21 @@ class Controller:
         lock.acquire()
         try:
             driver = self.browser.start()
-            # naviga SEMPRE a prenotaonline/riservata (stato home della SPA)
+            # ALWAYS navigate to prenotaonline/riservata (SPA home state)
             driver.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
             time.sleep(4)
             if not self.sess.is_autenticato(driver):
                 log.warning("get_appuntamenti: sessione non valida o reindirizzata al login")
                 self.sess.session_valid = False
                 return None
-            # clicca Gestisci Prenotazioni -> 'I miei appuntamenti'
+            # Click Gestisci Prenotazioni -> 'I miei appuntamenti'
             try:
                 el = driver.find_element(By.CSS_SELECTOR, "a[ng-click*='clickGestisciAppuntamenti']")
                 driver.execute_script("arguments[0].click();", el)
                 time.sleep(4)
             except Exception as e:  # noqa: BLE001
                 log.warning("get_appuntamenti: click Gestisci: %s", e)
-            # chiudi eventuale modale info
+            # Close optional info modal
             try:
                 driver.execute_script("var b=document.querySelector('button[ng-click*=messaggiCtrl]');if(b)b.click();")
             except Exception:  # noqa: BLE001
@@ -217,15 +217,15 @@ class Controller:
             lock.release()
 
     def _dump_pagina_per_debug(self, name, driver):
-        """Salva un dump della pagina corrente per debug."""
+        """Save a dump of current page for debugging."""
         from core.debug import salva_debug_dump
         return salva_debug_dump(driver, tag=name)
 
     def get_ricette(self) -> list | None:
-        """Legge la pagina Ricette e ritorna le card classificate.
+        """Read Prescriptions page and return classified cards.
 
-        Mostra sia le ricette attive/prenotabili sia quelle prenotate non
-        ancora erogate (con link download), oppure None se fallisce il login.
+        Shows active/bookable prescriptions and booked pending prescriptions,
+        or None if login fails.
         """
         import time
         from selenium.webdriver.common.by import By
@@ -235,19 +235,19 @@ class Controller:
         lock.acquire()
         try:
             driver = self.browser.start()
-            # naviga SEMPRE alla pagina ricette
+            # ALWAYS navigate to Prescriptions page
             driver.get(selectors.RICETTE["url"])
             time.sleep(4)
             if not self.sess.is_autenticato(driver):
                 log.warning("get_ricette: sessione non valida o reindirizzata al login")
                 self.sess.session_valid = False
                 return None
-            # ELIMINA I FILTRI: così compaiono TUTTE le ricette (non solo vecchie/parziali)
+            # Remove filters: reveals ALL prescriptions
             try:
                 driver.execute_script(
                     "var l=document.getElementById('eliminaFiltriLink');"
                     "if(l){l.click();return true}return false;", )
-                # fallback: chiama la funzione JS se il link non è un id
+                # Fallback: call JS function if link is not found by ID
                 driver.execute_script("try{eliminaFiltri()}catch(e){}")
                 time.sleep(3)
             except Exception as e:  # noqa: BLE001
@@ -266,21 +266,21 @@ class Controller:
         self.queue.decide(req_id, approved, extra)
 
     def force_poll(self):
-        """Poll forzato richiesto dall'utente (/poll): oltre a svegliare il
-        loop, marca il giro come MANUALE (le notifiche di fine-giro 'nessuna
-        disponibilità' arrivano solo in questo caso, non nei tick automatici)."""
+        """Forced poll requested by user (/poll): wakes the loop and marks
+        cycle as MANUAL (end-of-cycle "no availability" notifications are sent
+        only in this case)."""
         self._poll_manual = True
         self._force.set()
 
     def pause(self) -> bool:
-        """Mette in pausa il polling automatico."""
+        """Pause automatic polling."""
         self.paused = True
         self.store.set_preferenza("polling_paused", True)
         log.info("Polling automatico messo IN PAUSA")
         return True
 
     def resume(self) -> bool:
-        """Riprende il polling automatico."""
+        """Resume automatic polling."""
         self.paused = False
         self.store.set_preferenza("polling_paused", False)
         log.info("Polling automatico RIPRESO")
@@ -288,7 +288,7 @@ class Controller:
         return True
 
     def toggle_pause(self) -> bool:
-        """Alterna lo stato di pausa. Ritorna True se ora è in pausa, False se attivo."""
+        """Toggle pause state. Returns True if now paused, False if active."""
         if getattr(self, "paused", False):
             self.resume()
             return False
@@ -296,20 +296,20 @@ class Controller:
             self.pause()
             return True
 
-    # ---- API di configurazione (per il bot) ----
+    # ---- Configuration API (for the bot) ----
     def lista_province(self) -> list:
-        """Le province selezionabili (dal dropdown del portale)."""
+        """Selectable provinces (from portal dropdown)."""
         return selectors.PRENOTAONLINE["province"]
 
     def set_provincia_default(self, provincia: str) -> bool:
-        """Imposta la provincia di default per i nuovi monitor (salva nello store)."""
+        """Set default province for new monitors (persisted in store)."""
         if provincia not in self.lista_province():
             return False
         self.store.set_preferenza("provincia_default", provincia)
         return True
 
     def set_data_dal_default(self, data_dal: str) -> bool:
-        """Imposta la data minima 'a partire da' di default."""
+        """Set default minimum 'starting from' date."""
         import re
         if not re.fullmatch(r"\d{2}/\d{2}/\d{4}", data_dal or ""):
             return False
@@ -317,18 +317,16 @@ class Controller:
         return True
 
     def aggiungi_monitor(self, tipo: str, descrizione: str, nre: str = "", criteri: dict = None, data_ricetta: str = "", data_attuale: str = "") -> str:
-        """Aggiunge un monitor dinamico (nuova prenotazione o appuntamento).
+        """Add dynamic monitor (new booking or reschedule).
 
-        Ritorna l'id del monitor creato, oppure '' se fallisce.
-        `nre` e' il codice ricetta: serve al flow per individuare l'unica
-        card corretta (il solo match testuale puo' fallire se la descrizione
-        non e' esaustiva).
+        Returns created monitor ID, or '' on failure.
+        `nre` is prescription code: used by flow to target the exact card.
         """
         if tipo not in FLOW_TYPES:
             return ""
         crit = dict(self.criteri_default())
         crit.update(criteri or {})
-        # ID leggibile: tipo + parola chiave ricetta + progressivo
+        # Human-readable ID: type + recipe keyword + sequence number
         import re as _re
         parola = _re.sub(r"[^A-Za-z0-9]+", "-", (descrizione or "").strip())[:28].strip("-")
         if not parola:
@@ -350,7 +348,7 @@ class Controller:
             self.store.mark_action(mid, "idle", "monitor reschedule pronto")
         self._flows.append(FLOW_TYPES[tipo](monitor, self.browser, self.queue, self.bot, self.store))
 
-        # Se il monitoraggio era in pausa, l'avvio di un nuovo monitor resetta automaticamente la pausa
+        # If monitoring was paused, starting a new monitor automatically resets pause
         if getattr(self, "paused", False) is True:
             log.info("Avviato nuovo monitor: reset automatico della pausa del polling")
             self.resume()
@@ -358,7 +356,7 @@ class Controller:
         return mid
 
     def rimuovi_monitor(self, monitor_id: str) -> bool:
-        """Rimuove un monitor (dinamico o statico) arrestando i flussi attivi."""
+        """Remove a monitor (dynamic or static), stopping active flows."""
         self.store.remove_monitor(monitor_id)
         self._flows = [f for f in self._flows if f.mid != monitor_id]
         if not self._flows and getattr(self, "paused", False) is True:
@@ -367,12 +365,12 @@ class Controller:
         return True
 
     def converti_in_reschedule(self, monitor_id: str) -> bool:
-        """Converte un monitor da prima visita a spostamento o aggiorna la data di riferimento."""
+        """Convert monitor from new booking to reschedule, or update reference date."""
         pren = self.store.get_prenotazione(monitor_id)
         codice = pren.get("codice") or ""
         data_ora = pren.get("data_ora") or ""
 
-        # Trova il monitor configurato
+        # Find configured monitor
         mon = next((m for m in self.store.get_monitors() if m.get("id") == monitor_id), None)
         if mon is None:
             mon = next((m for m in self.cfg.active_monitors if m.get("id") == monitor_id), None)
@@ -401,15 +399,14 @@ class Controller:
             if data_ora:
                 self.store.record_prenotazione(monitor_id, codice, data_ora, {"prestazione": mon.get("ricetta", monitor_id)})
 
-        # Aggiorna a tipo reschedule
+        # Update to reschedule type
         mon["type"] = "reschedule"
         if codice:
             mon["codice_appuntamento"] = codice
         if data_ora:
             mon["data_attuale"] = data_ora
             mon.setdefault("criteri", {})["data_attuale"] = data_ora
-            # Se la visita è fissata per una certa data, imposta data_a alla data prenotata
-            # per cercare esclusivamente date migliorative (anticipo)
+            # If appointment has date, set data_a to current appointment date to search exclusively for earlier dates
             try:
                 import re as _re
                 from datetime import datetime as _dt
@@ -430,13 +427,13 @@ class Controller:
             except Exception:  # noqa: BLE001
                 pass
 
-        # Salva nello store
+        # Persist in store
         self.store.add_monitor(mon)
 
-        # Ripristina action_state a idle per consentire le future ricerche
+        # Reset action_state to idle to allow future searches
         self.store.mark_action(monitor_id, "idle", f"convertito a reschedule (data {data_ora})")
 
-        # Ricrea il flusso corrispondente in self._flows
+        # Recreate corresponding flow in self._flows
         self._flows = [f for f in self._flows if f.mid != monitor_id]
         self._flows.append(RescheduleFlow(mon, self.browser, self.queue, self.bot, self.store))
         if getattr(self, "paused", False) is True:
@@ -446,19 +443,19 @@ class Controller:
         return True
 
     def monitors_attivi(self) -> list:
-        """Ritorna i monitor attivi (dallo store) non disabilitati per lista/stop."""
+        """Return active monitors (from store) that are not disabled."""
         return [m for m in self.store.get_monitors() if not self.store.is_disabled(m.get("id", ""))]
 
     def get_blacklist(self, monitor_id: str) -> list[dict]:
-        """Ritorna le voci in blacklist per il monitor specificato."""
+        """Return blacklist entries for the specified monitor."""
         return self.store.get_blacklist(monitor_id)
 
     def rimuovi_da_blacklist(self, monitor_id: str, entry_id: str) -> dict | None:
-        """Rimuove una voce dalla blacklist consentendo al bot di riproporla."""
+        """Remove an entry from blacklist allowing the bot to repropose it."""
         return self.store.remove_blacklist_entry(monitor_id, entry_id)
 
     def svuota_blacklist(self, monitor_id: str) -> int:
-        """Cancella interamente la blacklist per un monitor."""
+        """Clear entire blacklist for a monitor."""
         return self.store.clear_blacklist(monitor_id)
 
     def criteri_default(self) -> dict:
@@ -470,21 +467,20 @@ class Controller:
             "giorni": [], "escludi_giorni": [], "fascia": "",
         }
 
-
     @staticmethod
     def _nome_leggibile(monitor) -> str:
-        """Nome comprensibile: usa il campo ricetta/descrizione e il tipo."""
+        """Human-readable name: uses prescription/description and type."""
         import re as _re
-        # estrai la descrizione (pulita)
+        # extract description (cleaned)
         desc = ""
         for key in ("ricetta", "descrizione"):
             v = (monitor.get(key) or "").strip() if isinstance(monitor, dict) else str(getattr(monitor, key, "") or "").strip()
             if v:
                 desc = v
                 break
-        # salta suffissi tipo "= 1 --> vedi" (resti del portale)
-        desc = _re.sub(r"=\s*\d+.*", "", desc)          # toglie "= 1 --> vedi..." (tutto dopo =)
-        desc = _re.sub(r"---*|&gt;|&lt;|-->", " ", desc)  # pulisce frecce/entity
+        # strip suffixes like "= 1 --> see" (portal leftovers)
+        desc = _re.sub(r"=\s*\d+.*", "", desc)          # removes "= 1 --> see..." (everything after =)
+        desc = _re.sub(r"---*|&gt;|&lt;|-->", " ", desc)  # clean arrows and entities
         desc = _re.sub(r"\s*chiudi.*", "", desc, flags=_re.IGNORECASE)
         desc = _re.sub(r"\s*vedi tutte le.*", "", desc, flags=_re.IGNORECASE)
         desc = _re.sub(r"\s+", " ", desc).strip(" -")
@@ -495,10 +491,10 @@ class Controller:
     def status_text(self) -> str:
         tipo_nome = {"new": "nuova prenotazione", "reschedule": "appuntamento esistente"}
         lines = [f"🤖 Monitor attivi: {len(self._flows)}"]
-        # modalità autenticazione
+        # authentication method
         auth_desc = getattr(self.auth_config, "describe", lambda: "SPID")() if hasattr(self, "auth_config") else "SPID"
         lines.append(f"🔑 Autenticazione: {auth_desc}")
-        # stato sessione
+        # session status
         if self.login_bloccato:
             sess = "⛔ Bloccata (raggiunti max tentativi falliti. Invia /poll o un comando per sbloccare)"
         elif getattr(self, "login_in_corso", False):
@@ -512,7 +508,7 @@ class Controller:
         else:
             sess = "❌ Non attiva / fallita (invia /poll per riautenticare)"
         lines.append(f"🔐 Stato sessione: {sess}")
-        # prossimo controllo programmato
+        # next scheduled check
         if getattr(self, "paused", False):
             lines.append("⏱ Stato polling: ⏸️ IN PAUSA (nessun controllo automatico. Usa /resume o /pause per riattivare)")
         elif getattr(self, "polling_in_corso", False):
@@ -527,10 +523,9 @@ class Controller:
         if not self._flows:
             lines.append("\nNessun monitor configurato. Usa /monitora per crearne uno.")
         for f in self._flows:
-            # trova il monitor corrispondente per il nome leggibile
+            # find corresponding monitor for human-readable name
             mon = next((m for m in self.store.get_monitors() if m.get("id") == f.mid), None)
-            # unifica i dati: i monitor dinamici sono dict; quelli statici
-            # vengono già passati come dict di ricetto/type/criteri
+            # unify data: dynamic monitors are dicts; static ones are dicts of prescription/type/criteria
             if mon is None:
                 mon = {"ricetta": f.monitor.get("ricetta", ""), "criteri": f.monitor.get("criteri", {}), "type": f.type}
             nome = self._nome_leggibile(mon)
@@ -553,9 +548,9 @@ class Controller:
                 }.get(stato, stato)
             crit = mon.get("criteri", {}) if isinstance(mon, dict) else {}
             riga = f"\n• {nome}"
-            # ricetta reale (la riga "nome" potrebbe essere generica, es. 'monitor')
+            # real prescription (the "nome" line might be generic, e.g. 'monitor')
             ricetta = (mon.get("ricetta") or "").strip() if isinstance(mon, dict) else ""
-            # pulisce i resti del portale dal testo della ricetta
+            # strip portal leftovers from prescription text
             import re as _re
             ricetta = _re.sub(r"=\s*\d+.*", "", ricetta)
             ricetta = _re.sub(r"\s+chiudi.*", "", ricetta, flags=_re.IGNORECASE)
@@ -584,13 +579,13 @@ class Controller:
             lines.append(riga)
         return "\n".join(lines)
 
-    # ---- bootstrap sessione ----
+    # ---- session bootstrap ----
     def ensure_session(self, force_login: bool = False, reset_blocchi: bool = False):
-        """Assicura una sessione autenticata.
+        """Ensure an authenticated session.
 
-        Se i cookie non bastano o force_login=True, fa il login con un numero MASSIMO di
-        tentativi (MAX_LOGIN_RETRIES, default 3). Se supera i retry ferma i
-        tentativi e resta in ascolto (un comando Telegram lo risveglia).
+        If cookies are insufficient or force_login=True, logs in with up to
+        MAX_LOGIN_RETRIES attempts (default 3). If exceeded, stops automatic
+        attempts and awaits a user command.
         """
         if reset_blocchi:
             self.login_bloccato = False
@@ -678,7 +673,7 @@ class Controller:
             log.warning("MAX_LOGIN_RETRIES raggiunto (%s): login bloccato", self.max_login_retries)
 
     def risveglia(self, manual_poll: bool = True) -> bool:
-        """Riavvio login dopo blocco: resetta il contatore e prova subito."""
+        """Resume login after block: resets counter and tries immediately."""
         b_lock = getattr(self, "_browser_lock", None) or threading.RLock()
         l_lock = getattr(self, "_login_lock", None) or threading.Lock()
         with b_lock:
@@ -702,7 +697,7 @@ class Controller:
                 return ok
 
     def _avvia_login(self) -> bool:
-        """Avvia il login secondo la modalità configurata (SPID Sielte, altri SPID, CIE, Manuale)."""
+        """Start login according to configured method (SPID Sielte, other SPID, CIE, Manual)."""
         self.login_in_corso = True
 
         def _auth_cb(action: str, **kwargs):
@@ -772,17 +767,17 @@ class Controller:
 
     # ---- polling loop ----
     def _poll_loop(self):
-        # intervallo configurabile via env POLL_INTERVAL_SECONDS (default dagli YAML)
+        # interval configurable via env POLL_INTERVAL_SECONDS (default from YAML)
         iv = int(os.environ.get("POLL_INTERVAL_SECONDS",
                 self.cfg.settings.get("scheduler", {}).get("poll_interval_seconds", 300)))
         log.info("Polling attivo: tick ogni %s secondi (%s)", iv, "; env POLL_INTERVAL_SECONDS" if "POLL_INTERVAL_SECONDS" in os.environ else "config")
         self._next_poll_time = time.time() + iv
         self._poll_manual = False
-        # serve per forzare il primo giro subito (bootstrap, NON manuale) solo se non in pausa
+        # trigger immediate first run (bootstrap, NOT manual) only if not paused
         if not getattr(self, "paused", False):
             self._force.set()
         while not self._stop.is_set():
-            # attesa con polling ogni 1s per reagire subito a /poll
+            # 1s polling sleep to react promptly to /poll
             atteso = 0.0
             while not self._force.is_set():
                 if self._stop.is_set():
@@ -802,15 +797,13 @@ class Controller:
             self._next_poll_time = time.time() + iv
 
     def _run_poll(self, manual: bool = False):
-        """Esegue un giro di controllo su tutti i monitor attivi.
+        """Execute a check cycle across all active monitors.
 
-        manual=True se il giro è stato richiesto esplicitamente con /poll:
-        solo in quel caso i flow inviano le notifiche di fine-giro "nessuna
-        disponibilità".
+        manual=True if explicitly requested with /poll:
+        only in that case do flows send "no availability" end-of-cycle notifications.
 
-        Se /poll è arrivato durante il giro (self._force settato), interrompe
-        i flow rimanenti: il loop ricomincia subito (l'utente ha chiesto un
-        nuovo controllo).
+        If /poll arrived during cycle (self._force set), stops remaining flows:
+        the loop restarts immediately.
         """
         self.polling_in_corso = True
         try:
@@ -835,11 +828,11 @@ class Controller:
                             return
 
                 for i, f in enumerate(list(self._flows)):
-                    # interruzione: /poll richiesto durante il giro -> esci subito
+                    # Interruption: /poll requested during cycle -> exit immediately
                     if self._force.is_set():
                         log.info("Polling interrotto a metà: /poll richiesto dall'utente")
                         break
-                    # Sincronizza il flusso se il tipo monitor è variato nello store (es. promozione a reschedule)
+                    # Synchronize flow if monitor type changed in store (e.g. promoted to reschedule)
                     mon_stored = next((m for m in self.store.get_monitors() if m.get("id") == f.mid), None)
                     if mon_stored and mon_stored.get("type") and mon_stored.get("type") != f.type and mon_stored.get("type") in FLOW_TYPES:
                         log.info("[%s] Tipo monitor variato nello store (%s -> %s): ricreo il flusso", f.mid, f.type, mon_stored["type"])
@@ -857,7 +850,7 @@ class Controller:
                                 self.sess.invalidate()
                         if hasattr(self.browser, "is_alive") and not self.browser.is_alive():
                             self.browser.stop()
-                    # ricontrolla anche dopo un flow lungo (il /poll può essere arrivato)
+                    # Check again after a long flow (a new /poll might have arrived)
                     if self._force.is_set():
                         log.info("Polling interrotto:a fine %s: /poll richiesto dall'utente", f.mid)
                         break
@@ -873,7 +866,7 @@ class Controller:
         for t in threads:
             t.start()
         if run_bot:
-            self.bot.run()  # bloccante
+            self.bot.run()  # blocking
         else:
             log.info("Modalità poller-only (avvia il bot in un altro processo)")
             try:

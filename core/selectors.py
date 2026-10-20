@@ -1,35 +1,34 @@
-"""MAPPA SELEZIONI DOM per portale Fascicolo Sanitario Regione Lombardia.
+"""DOM SELECTOR MAP for the Lombardy Region Health Record (Fascicolo Sanitario) portal.
 
-Questo è l'unico file da compilare durante la sessione di studio con Selenium.
-Ogni selettore è una coppia (strategia, valore). Le strategie valide:
+Each selector is a (strategy, value) tuple. Valid strategies:
     "id", "name", "css", "xpath", "class"
 
-Convenzione: un selettore può essere stringa (unico) oppure list di stringhe
-(alternative provate in ordine) per robustezza.
+Convention: a selector can be a tuple or a list of tuples
+(tried in sequence as fallbacks) for resilience.
 """
 from __future__ import annotations
 
 # ------------------------------------------------------------------
-# Login SPID — IdPC Regione Lombardia (/PublisherMetadata/SSOService)
+# Login SPID — Lombardy Region IdPC (/PublisherMetadata/SSOService)
 # ------------------------------------------------------------------
 LOGIN_SPID = {
     "url_accedi": "https://www.fascicolosanitario.regione.lombardia.it/web/areaprivata/homepage",
     "url_idpc": "https://idpcwrapper.crs.lombardia.it/PublisherMetadata/SSOService",
-    # form che esegue submit verso l'IdP scelto
+    # Form submitting to chosen IdP
     "form_spid": [("id", "SPIDform")],
     "field_indexIdp": [("id", "indexIdp")],
-    # lista IdP verificata su IdPC Regione Lombardia
+    # IdP index list verified on Lombardy Region IdPC
     "idp": {
         "Infocert": 0, "Register": 1, "Lepida": 2, "IntesiGroupSpid": 3,
         "Aruba": 4, "Namirial": 5, "Poste": 6, "InfoCamere": 7,
         "Tim": 8, "Sielte": 9, "TeamSystemId": 10, "EtnaID": 11,
     },
-    # selettore dei box provider (il click imposta indexIdp e fa submit)
+    # Selector for provider boxes (click sets indexIdp and submits)
     "box_idp": [("css", "a.home-box-fornitore")],
 }
 
 # ------------------------------------------------------------------
-# Login CIE — Carta d'Identità Elettronica (Ministero dell'Interno)
+# Login CIE — Electronic Identity Card (Ministry of the Interior)
 # ------------------------------------------------------------------
 LOGIN_CIE = {
     "url_landing": "https://idserver.servizicie.interno.gov.it/idp/login/livello2",
@@ -44,7 +43,7 @@ LOGIN_CIE = {
         ("xpath", "//a[contains(@href, 'cie') or contains(@href, 'CIE') or contains(@href, 'Cie')]"),
         ("xpath", "//button[contains(., 'CIE') or contains(., 'Carta')]"),
     ],
-    # Selezione modalità su idserver (Livello 1/2 credenziali vs smartphone/QR vs computer)
+    # Mode selection on idserver (Level 1/2 credentials vs smartphone/QR vs computer)
     "btn_credenziali": [
         ("css", "a[href*='livello2']"),
         ("css", "a[href*='credenziali']"),
@@ -61,7 +60,7 @@ LOGIN_CIE = {
         ("xpath", "//a[contains(., 'computer') or contains(., 'Smart') or contains(., 'smartcard')]"),
         ("xpath", "//button[contains(., 'computer') or contains(., 'Smart') or contains(., 'smartcard')]"),
     ],
-    # Form credenziali Livello 1 e 2
+    # Level 1 and 2 credentials form
     "form": [("id", "loginUP"), ("css", "form#loginUP"), ("css", "form[action*='login']")],
     "username": [
         ("id", "username"),
@@ -84,7 +83,7 @@ LOGIN_CIE = {
         ("xpath", "//button[contains(., 'Procedi') or contains(., 'Prosegui') or contains(., 'Entra')]"),
     ],
     "link_app_cie": [("css", "a[href*='login/app']")],
-    # Secondo fattore: OTP (SMS o app)
+    # Second factor: OTP (SMS or app)
     "otp": [
         ("id", "otp"),
         ("name", "otp"),
@@ -104,7 +103,7 @@ LOGIN_CIE = {
     "btn_richiedi_sms_otp": [
         ("xpath", "//*[contains(., 'Ricevi codice via SMS') or contains(., 'Invia OTP via SMS') or contains(., 'SMS')]"),
     ],
-    # QR Code per app CieID
+    # QR Code for CieID app
     "qr_code": [
         ("css", "#qrcode img"),
         ("css", ".qr-code img"),
@@ -114,11 +113,11 @@ LOGIN_CIE = {
         ("css", "#qrcode canvas"),
         ("css", ".qr-code canvas"),
     ],
-    # Notifica push in attesa
+    # Pending push notification
     "push_waiting": [
         ("xpath", "//*[contains(., 'notifica') and (contains(., 'inviata') or contains(., 'apri') or contains(., 'CieID'))]"),
     ],
-    # Schermata consenso trasmissione dati (IdP CIE o Regione)
+    # Consent screen for data transmission (CIE IdP or Regional portal)
     "consenso": [
         ("css", "button[name='confirm']"),
         ("css", "button[name='_eventId_proceed']"),
@@ -212,7 +211,7 @@ LOGIN_IDP_NAMIRIAL = {
 # ------------------------------------------------------------------
 # IdP: SielteID
 # STEP 1 — loginform (identity.sieltecloud.it/simplesaml/.../loginform.php)
-# username = Codice Fiscale; dopo il submit l'IdP chiede conferma via app/OTP.
+# username = Tax Code; after submit the IdP requests confirmation via app/OTP.
 # ------------------------------------------------------------------
 LOGIN_IDP_SIELTEID = {
     "url_matcher": "identity.sieltecloud.it",
@@ -259,36 +258,36 @@ LOGIN_IDP_SIELTEID = {
 }
 
 # ------------------------------------------------------------------
-# Pagina Ricette (/web/areaprivata/ricette) — elenco ricette prenotabili
+# Prescriptions Page (/web/areaprivata/ricette) — list of bookable prescriptions
 # ------------------------------------------------------------------
 RICETTE = {
     "url": "https://www.fascicolosanitario.regione.lombardia.it/web/areaprivata/ricette",
-    # checkbox di filtro
+    # Filter checkboxes
     "filtro_specialistiche": [("id", "specialisticheID")],
     "filtro_prescritte": [("id", "prescritteID")],
-    # ogni card ricetta "Prenota" porta a prenotaonline con token hash
+    # Each prescription card 'Prenota' links to prenotaonline with token hash
     "card_prenota": [("css", "a.cambia-visibilita[href*='prenotaonline']")],
 }
 
 # ------------------------------------------------------------------
-# App prenotaonline — SPA (da studiare: menu area + lista disponibilità)
+# prenotaonline App — Single Page Application (area menu + availability list)
 # ------------------------------------------------------------------
 PRENOTAONLINE = {
     "url": "https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/le-tue-ricette",
-    # --- step 1: scelta ricetta -> click su "Prenota" della ricetta specialistica (visita) ---
+    # --- Step 1: select prescription -> click 'Prenota' on specialist visit ---
     "btn_prenota_ricetta": [("css", "button[ng-click*='prenotaAppuntamento']")],
-    # --- modale "Completa dati" (CONTROLLO/FOLLOW-UP?) : radio Si/No + Conferma ---
+    # --- Modal 'Completa dati' (CONTROL/FOLLOW-UP?): radio Yes/No + Confirm ---
     "modal_completa_dati": {
         "radio_si": [("css", "input[name=controllo][value=true]")],
         "radio_no": [("css", "input[name=controllo][value=false]")],
-        # NB: il controller reale è prenotaCompletaDatiCtrl (C maiuscola)
+        # Note: actual Angular controller is prenotaCompletaDatiCtrl (capital C)
         "btn_conferma": [("css", "button[ng-click*='CompletaDatiCtrl.conferma']")],
     },
-    # --- modale informativa da chiudere ---
+    # --- Informational modal to dismiss ---
     "modal_info_chiudi": [("css", "button[ng-click*='messaggiCtrl.close']")],
-    # --- step 2: Dove/Quando ---
+    # --- Step 2: Where/When ---
     "sel_provincia": [("id", "provincia")],
-    # province disponibili nel dropdown (da proporre all'utente su Telegram)
+    # Available provinces in dropdown
     "province": [
         "BERGAMO", "BRESCIA", "COMO", "CREMONA", "LECCO", "LODI",
         "MANTOVA", "MILANO CITTA'", "MILANO PROVINCIA", "MONZA E DELLA BRIANZA",
@@ -298,22 +297,22 @@ PRENOTAONLINE = {
     "input_telefono": [("id", "telefono")],
     "input_email": [("id", "email")],
     "checkbox_consenso": [("id", "consensoPrenotazione")],
-    # bottone Conferma dopo i recapiti che porta alla lista disponibilità
+    # Confirm button after contact info taking to availability list
     "btn_conferma_dove_quando": [("css", "button[ng-click*='doveQuandoCtrl.conferma']"), ("xpath", "//button[contains(., 'Conferma')]")],
-    # bottone che invia la ricerca dopo Dove/Quando (abilita solo se form VALID)
+    # Button submitting search after Where/When (enabled only when form is valid)
     "btn_ricerca_disponibilita": [("css", "button[ng-click*='doveQuandoCtrl.ricercaDisponibilita']")],
-    # --- step 3: LISTA DISPONIBILITA' ---
-    # alcuni pulsanti compaiono sia nella vista risultati che nella modale di modifica
-    "btn_modifica_ricerca": [("css", "button[ng-click*='prenotaDisponibilitaCtrl.modificaCriteri']")],  # apre la modale
-    "btn_aggiorna_ricerca": [("css", "button[ng-click*='doveQuandoModalCtrl.aggiorna']")],          # nella modale, rilancia la ricerca
+    # --- Step 3: AVAILABILITY LIST ---
+    # Buttons appearing both in results view and modification modal
+    "btn_modifica_ricerca": [("css", "button[ng-click*='prenotaDisponibilitaCtrl.modificaCriteri']")],  # Opens modal
+    "btn_aggiorna_ricerca": [("css", "button[ng-click*='doveQuandoModalCtrl.aggiorna']")],          # In modal, refreshes search
     "btn_chiudi_modale_dove": [("css", "button[ng-click*='doveQuandoModalCtrl.chiudi']")],
-    # --- modale "Modifica ricerca": criteri configurabili (utilizzati dal bot) ---
+    # --- Modal 'Modifica ricerca': configurable criteria ---
     "giorni_settimana": {
         "tutti": [("id", "tutti")],
         "lun": [("id", "lun")], "mar": [("id", "mar")], "mer": [("id", "mer")],
         "gio": [("id", "gio")], "ven": [("id", "ven")], "sab": [("id", "sab")],
         "dom": [("id", "dom")],
-        # ng-model usato da Angular (per binding corretto)
+        # ng-model used by Angular (for proper binding)
         "model": ["doveQuandoCtrl.criteria.vincoliTemporali.lunedi",
                    "doveQuandoCtrl.criteria.vincoliTemporali.martedi",
                    "doveQuandoCtrl.criteria.vincoliTemporali.mercoledi",
@@ -335,72 +334,72 @@ PRENOTAONLINE = {
         "gio": "giovedi", "ven": "venerdi", "sab": "sabato", "dom": "domenica"
     },
     "lista_disponibilita": [("css", "[ng-repeat*='in disponibilitaCtrl.valori']")],
-    # blocco di un singolo slot (data/ora + azienda + sede); i campi sono ger archi
+    # Single slot block (date/time + healthcare provider + facility)
     "slot_disponibilita": [("css", "[ng-repeat*='disponibilita in disponibilitaCtrl.valori']")],
-    # campi dentro ogni slot
+    # Fields within each slot
     "slot_data_ora": [("css", "span[ng-if*='isClassico']")],              # 'DD/MM/YYYY - HH:MM'
     "slot_azienda": [("css", "[ng-repeat*='disponibilita in disponibilitaCtrl.valori'] .appuntamento-field-value span")],
     "slot_none_msg": [("xpath", "//h5[contains(., 'Non sono state trovate disponibilità')]")],
-    # pulsante "Verifica e conferma" per uno slot
+    # 'Verifica e conferma' button for a slot
     "btn_verifica_conferma": [("css", "button[ng-click*='setAzioneRichiestaConfermaDisponibilita']")],
-    # --- modale conferma prenotazione (dopo 'Verifica e conferma') ---
+    # --- Modal booking confirmation (after 'Verifica e conferma') ---
     "modal_conferma_prenota": {
         "checkbox_lettura": [("id", "presaVisioneNote")],
         "btn_conferma": [("css", "button[ng-click*='verificaPrenotazioneCtrl.conferma']")],
         "btn_annulla": [("css", "button[ng-click*='verificaPrenotazioneCtrl.annulla']")],
     },
-    # schermata di successo prenotazione
+    # Booking success screen
     "esito_successo": [("xpath", "//*[contains(., 'Prenotazione effettuata con successo')]")],
     "esito_codice": [("xpath", "//*[contains(., 'Codice prenotazione')]")],
-    # area appuntamento confermato (per annullo/aggiornamento)
+    # Confirmed appointment area (for cancellation/update)
     "btn_annulla_appuntamento": [("xpath", "//button[contains(., 'Annulla appuntamento')]")],
-    # pulsanti per ridurre/cercare altre date/orari
+    # Buttons for more dates/times
     "btn_ricerca_altre_date": [("css", "button[ng-click*='ricercaUlterioriDisponibilita'][ng-click*=\"'D'\"]")],
     "btn_ricerca_altri_orari": [("css", "button[ng-click*='ricercaUlterioriDisponibilita'][ng-click*=\"'O'\"]")],
 }
 
 # ------------------------------------------------------------------
-# Sezione agende appuntamenti
+# Booking agenda section
 # ------------------------------------------------------------------
 BOOKING = {
-    # voce di menu / link per aprire le prenotazioni
+    # Menu entry / link to open bookings
     "apri_prenotazioni": [("css", "a[href*='prenotazioni'], a[aria-label*='prenotazione']")],
-    # per Flow A: campo/elenco ricetta da selezionare
+    # For Flow A: prescription dropdown/field to select
     "sel_ricetta": [("css", "select[name*='ricetta'], #ricetta, [data-testid*='ricetta']")],
-    # menu a tendina dell'area/specialità
+    # Specialty / area dropdown
     "sel_area": [("css", "select[name*='area'], #area, [data-testid*='area']")],
-    # pulsante che carica la pagina delle disponibilità
+    # Button that loads availability page
     "btn_cerca": [("css", "button[type='submit'], #cerca"), ("xpath", "//button[contains(., 'Cerca')]")],
-    # contenitore della lista delle disponibilità (righe = slot)
+    # Availability list container
     "lista_disponibilita": [("css", "[data-testid*='disponibilita'], .lista-appuntamenti, body")],
-    # singola riga di disponibilità (usato dal parser)
+    # Single availability row (used by parser)
     "riga_disponibilita": [("css", "tr, [data-testid*='slot'], .slot")],
-    # pulsante per confermare/prenotare lo slot scelto
+    # Button to confirm/book chosen slot
     "btn_conferma": [("css", ".conferma, #conferma"), ("xpath", "//button[contains(., 'Conferma')]")],
 }
 
 # ------------------------------------------------------------------
-# Flow B — riprogrammazione (anticipa/posticipa) di una visita già prenotata
+# Flow B — Rescheduling (bring forward / postpone) an existing appointment
 # ------------------------------------------------------------------
 RESCHEDULE = {
-    # voce di menu / apertura "I miei appuntamenti" (Gestisci Prenotazioni)
+    # Menu entry / open "I miei appuntamenti" (Manage Bookings)
     "menu_gestisci": [("css", "a[ng-click*='clickGestisciAppuntamenti']")],
     "menu_gestisci_alt": [("css", "a[ng-click*='clickGestisci']")],
-    # card dell'appuntamento esistente (mostra cod. prenotazione, prestazione, data)
+    # Existing appointment card (shows booking code, service, date)
     "card_appuntamento": [("css", "[ng-repeat*='in listaRicetteAppuntamentiCtrl'], .appuntamento, .appuntamento-ssn")],
-    # bottone Dettaglio (apre la modale Dettaglio appuntamento)
+    # Detail button (opens appointment detail modal)
     "btn_dettaglio": [("css", "button[ng-click*='dettaglioAppuntamento']")],
-    # modale Dettaglio appuntamento: dati + azioni
+    # Appointment detail modal: data + actions
     "modal_dettaglio": {
-        "btn_riprenota": [("css", "button[ng-click*='riprenota']")],   # Anticipa/Posticipa
+        "btn_riprenota": [("css", "button[ng-click*='riprenota']")],   # Bring forward / Postpone
         "btn_scarica": [("css", "button[ng-click*='AppuntamentoDettaglioModalCtrl.scarica']")],
         "btn_email": [("css", "button[ng-click*='AppuntamentoDettaglioModalCtrl.email']")],
         "btn_chiudi": [("css", "button[ng-click*='AppuntamentoDettaglioModalCtrl.chiudi']")],
     },
-    # avviso "non gestibile in autonomia" (alcuni appuntamenti)
+    # Warning "not manageable autonomously" (certain appointments)
     "non_gestibile": [("xpath", "//*[contains(., \"Non e' possibile gestire in autonomia\") or contains(., \"Non è possibile gestire in autonomia\")]")],
 
-    # NB: dalla modale 'Anticipa/Posticipa' si rientra negli step comuni del
-    # flusso di prenotazione (modale completa-dati, Dove/Quando, lista
-    # disponibilità) mappati in PRENOTAONLINE. I selettori sono riusabili.
+    # Note: from the 'Anticipa/Posticipa' modal, the flow returns to common
+    # booking steps (complete-data modal, Where/When, availability list)
+    # mapped in PRENOTAONLINE.
 }

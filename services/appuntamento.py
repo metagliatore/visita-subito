@@ -1,13 +1,13 @@
-"""Estrazione e riepilogo dei dati dell'appuntamento dalla modale di conferma.
+"""Extraction and summary of appointment data from the confirmation modal.
 
-La modale 'Vuoi confermare l'appuntamento?' (schermata PrenotaOnline) espone:
-  - Data e ora            es. '26/10/2026 - 11:15'
-  - Prestazione           es. 'VISITA SPECIALISTICA'
-  - Azienda               es. 'AZIENDA OSPEDALIERA ESEMPIO'
-  - Presentarsi in        nome struttura + indirizzo
-  - Ulteriori indicazioni es. 'Via Roma, 1 - 20100 Milano (MI)'
-  - Note di preparazione  (collassate)
-Tutto va estratto per (a) inviarlo su Telegram e (b) generare il calendario .ics.
+The modal 'Vuoi confermare l'appuntamento?' (PrenotaOnline screen) displays:
+  - Data e ora            e.g. '26/10/2026 - 11:15'
+  - Prestazione           e.g. 'VISITA SPECIALISTICA'
+  - Azienda               e.g. 'AZIENDA OSPEDALIERA ESEMPIO'
+  - Presentarsi in        facility name + address
+  - Ulteriori indicazioni e.g. 'Via Roma, 1 - 20100 Milano (MI)'
+  - Note di preparazione  (collapsible notes)
+Extracted to (a) send via Telegram and (b) generate .ics calendar event.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ class AppuntamentoInfo:
     presentarsi_in: str = ""
     indirizzo: str = ""
     note: list = field(default_factory=list)
-    codice: str = ""  # dalla schermata di successo, opzionale
+    codice: str = ""  # From success screen, optional
 
     @property
     def datetime(self) -> datetime | None:
@@ -39,7 +39,7 @@ def _clean(s: str) -> str:
 
 
 def _tr_api_a(s: str, stops: list[str]) -> str:
-    """Tronca una stringa al primo marker tra quelli dati (rimuove rumore)."""
+    """Truncate a string at the first matching stop marker (strips noise)."""
     low = s.lower()
     pos = len(s)
     for st in stops:
@@ -47,8 +47,7 @@ def _tr_api_a(s: str, stops: list[str]) -> str:
         if 0 <= k < pos:
             pos = k
     out = s[:pos]
-    # se il troncamento avviene a metà parola (es. 'Present' di Presentarsi),
-    # togli l'ultimo token parziale
+    # If truncated mid-word, strip incomplete last token
     if pos < len(s):
         toks = out.split()
         if toks:
@@ -57,7 +56,7 @@ def _tr_api_a(s: str, stops: list[str]) -> str:
 
 
 def _snippet(text: str, label: str, stop: str | None = None) -> str:
-    """Cerca 'label' nel testo e restituisce il valore fino a 'stop'."""
+    """Search for 'label' in text and return value up to 'stop'."""
     idx = text.find(label)
     if idx < 0:
         return ""
@@ -66,24 +65,24 @@ def _snippet(text: str, label: str, stop: str | None = None) -> str:
         m = re.match(r"\s*(.*?)\s*" + re.escape(stop), rest, re.S)
         if m:
             return _clean(m.group(1))
-    # altrimenti prendi fino alla fine (o fino a riga)
+    # Otherwise capture to end of line
     m = re.match(r"\s*([^\n]+)", rest)
     return _clean(m.group(1)) if m else ""
 
 
 def _modale_testo(html: str) -> str:
-    """Isola il testo della sola modale di conferma (verificaPrenotazioneCtrl)."""
+    """Isolate text of confirmation modal only (verificaPrenotazioneCtrl)."""
     html = html.replace(r'\"', '"').replace(r'\n', '\n')
-    # trova il modal-render che contiene 'verificaPrenotazioneCtrl'
+    # Find modal-render containing 'verificaPrenotazioneCtrl'
     i = html.find("verificaPrenotazioneCtrl.nrDisponibilita")
     if i < 0:
         return re.sub(r"<[^>]+>", " ", html)
     start = html.rfind("<div modal-render", 0, i)
     if start < 0:
         start = max(0, i - 2000)
-    # fine: fino a fine blocco modale (modal-backdrop successivo o inizio navbar)
+    # End: up to end of modal block (subsequent modal-backdrop or navbar)
     end = i + 20000
-    nxt = html.find("screen-reader-text", i)  # inizio body/navbar
+    nxt = html.find("screen-reader-text", i)  # Start of body/navbar
     for marker in ["modal-backdrop", "navbar-toggle"]:
         k = html.find(marker, i + 5000)
         if 0 < k < end:
@@ -93,18 +92,18 @@ def _modale_testo(html: str) -> str:
 
 
 def parse_conferma(html: str) -> AppuntamentoInfo:
-    """Estrae i campi dalla modale di conferma (html della pagina)."""
+    """Extract fields from confirmation modal (page HTML)."""
     text = re.sub(r"\s+", " ", _modale_testo(html))
 
     info = AppuntamentoInfo()
     info.data_ora = _snippet(text, "Data e ora", "Prestazione").lstrip(": ")
     info.prestazione = _snippet(text, "Prestazione", "Azienda").lstrip(": ")
     info.azienda = _snippet(text, "Azienda", "Comune").lstrip(": ")
-    # tronca ai successivi marcatori (evita rumore flat dalla lista sotto)
+    # Truncate at subsequent markers (avoid noise from lower list)
     info.prestazione = _tr_api_a(info.prestazione, ["Azienda", "Presentarsi", "Comune"]).lstrip(": ")
     info.azienda = _tr_api_a(info.azienda, ["Presentarsi", "Comune", "Ulteriori"]).lstrip(": ")
 
-    # 'Presentarsi in' fino a 'Ulteriori indicazioni'
+    # 'Presentarsi in' up to 'Ulteriori indicazioni'
     p = _snippet(text, "Presentarsi in", "Ulteriori indicazioni")
     p = _tr_api_a(p, ["Ulteriori", "Note di preparazione", "Comune"])
     if p:
@@ -114,12 +113,12 @@ def parse_conferma(html: str) -> AppuntamentoInfo:
             if len(righe) > 1:
                 info.indirizzo = " ".join(righe[1:]).strip(" -").lstrip(": ")
 
-    # 'Ulteriori indicazioni' -> indirizzo completo (fallback)
+    # 'Ulteriori indicazioni' -> full address (fallback)
     info.indirizzo = info.indirizzo or _snippet(text, "Ulteriori indicazioni", "Note di preparazione")
     info.indirizzo = info.indirizzo or _snippet(text, "Ulteriori indicazioni")
     info.indirizzo = _tr_api_a(info.indirizzo, ["Note di preparazione", "Note operatore"]).lstrip(": ")
 
-    # note di preparazione: tutto dopo 'Note di preparazione' fino al prossimo marker
+    # Preparation notes: everything after 'Note di preparazione' up to next marker
     ni = text.find("Note di preparazione")
     if ni >= 0:
         stop_i = len(text)
@@ -131,7 +130,7 @@ def parse_conferma(html: str) -> AppuntamentoInfo:
         if note_txt:
             info.note = [x.strip("- ") for x in note_txt.split("-") if x.strip("- ")]
 
-    # 'Note operatore / Altre note' -> nota bassa (memo presentarsi)
+    # Operator / other notes
     nio = text.find("Note operatore")
     if nio >= 0:
         stop_i = len(text)
@@ -147,7 +146,7 @@ def parse_conferma(html: str) -> AppuntamentoInfo:
 
 
 def parse_successo(html: str) -> str:
-    """Estrae il codice prenotazione dalla schermata di successo (opzionale)."""
+    """Extract booking code from success screen (optional)."""
     html = html.replace(r'\"', '"').replace(r'\n', '\n')
     m = re.search(r"Codice prenotazione\s*[:\-]?\s*([A-Za-z0-9\-]+)", re.sub(r"<[^>]+>", " ", html), re.IGNORECASE)
     return m.group(1).strip() if m else ""

@@ -1,32 +1,32 @@
-"""Catalogo ricette: legge la lista delle ricette prenotabili dalla pagina
-`/web/areaprivata/ricette`, le classifica e le marca per la gestione Telegram.
+"""Prescription catalog: reads prescription list from `/web/areaprivata/ricette`,
+classifies items and prepares them for Telegram interaction.
 
-Classificazione:
-    farmaceutica   -> ricetta di farmaci (ARCOXIA, CLEXANE, ...). Non prenotabile.
-    laboratorio    -> esame di analisi/laboratorio (URINE, URINOCOLTURA...).
-                      Ha un flusso DIFFERENTE (prenotaLaboratorio): lo mostriamo
-                      ma NON lo automatizziamo.
-    specialistica  -> visita/esame specialistico: automatizzabile (Flow A).
+Classification:
+    farmaceutica   -> medication prescription (ARCOXIA, CLEXANE, ...). Not bookable.
+    laboratorio    -> laboratory / lab analysis tests (URINE, URINOCOLTURA...).
+                      Uses a different workflow (prenotaLaboratorio): listed
+                      but not automated.
+    specialistica  -> specialist visit / exam: automatable (Flow A).
 
-La distinzione "laboratorio" è la più affidabile quando la ricetta è aperta nel
-portale via `ricettaCtrl.ricetta.isEsameLaboratorio()`, ma nella lista la
-inferiamo anche da keyword nella descrizione della prestazione.
+The "laboratorio" distinction is most reliable when prescription is open in the portal
+via `ricettaCtrl.ricetta.isEsameLaboratorio()`, but in the list we also infer it
+from service description keywords.
 """
 from __future__ import annotations
 
 import re
 
-# Keyword tipiche di esami/analisi di laboratorio (inferite dalla prestazione).
+# Keywords typical of laboratory exams/analyses (inferred from service description).
 _LAB_KEYWORDS = (
     "esame", "urino", "urinoc", "chimico", "microscopic", "emocromo",
     "emocito", "glicem", "colesterol", "triglicer", "esami", "analisi",
     "azotem", "creatinin", "transaminas", "bilirubin", "emoculture",
     "biopsia", "tampone rino", "test rapido",
 )
-# Keyword tipiche di ricette farmaceutiche (farmaci)
+# Keywords typical of pharmaceutical prescriptions (drugs)
 _FARM_KEYWORDS = ("mg", "cpr", "cps", "sir", "flacon", "fiale", "gtt", "unit.")
 
-# Pattern frammento: una "prestazione" è spesso separata da virgola o ";".
+# Fragment pattern: a "prestazione" is often separated by comma or semicolon.
 
 
 def _norm(txt: str) -> str:
@@ -34,7 +34,7 @@ def _norm(txt: str) -> str:
 
 
 def classify(prestazioni: list[str]) -> str:
-    """Ritorna 'farmaceutica' | 'laboratorio' | 'specialistica'."""
+    """Return 'farmaceutica' | 'laboratorio' | 'specialistica'."""
     blob = _norm(" ".join(prestazioni))
     if any(_norm(k) in blob for k in _LAB_KEYWORDS):
         return "laboratorio"
@@ -44,23 +44,22 @@ def classify(prestazioni: list[str]) -> str:
 
 
 def prenotabile_in_automatico(categoria: str) -> bool:
-    """Solo le specialistiche (visite) vengono automatizzate."""
+    """Only specialist visits are automated."""
     return categoria == "specialistica"
 
 
 def parse_ricette(html: str) -> list[dict]:
-    """Estrae le card ricette dalla pagina `/web/areaprivata/ricette`.
+    """Extract prescription cards from `/web/areaprivata/ricette`.
 
-    Ogni card è un <div id="NRE" class="prescrizioni-row ricette-row row">
-    Il marcatore primario di classificazione è il testo esplicito
-    "Ricetta specialistica" / "Ricetta farmaceutica" dentro la card;
-    le specialistiche vengono poi riclassificate come 'laboratorio' se la
-    prestazione matcha keyword di analisi (per escluderle dall'automazione).
+    Each card is a <div id="NRE" class="prescrizioni-row ricette-row row">.
+    The primary classification marker is explicit text "Ricetta specialistica" /
+    "Ricetta farmaceutica" inside the card; specialist items are then reclassified
+    as 'laboratorio' if the service matches lab analysis keywords.
     """
     html = html.replace(r'\"', '"').replace(r'\n', '\n')
     out = []
     cards: list[tuple[str, str]] = []
-    # Cerca i div card gestendo qualsiasi ordine di id e class e qualsiasi variante di classi CSS
+    # Search card divs supporting any order of id/class and any CSS class variant
     tag_matches = list(re.finditer(
         r'<div\b(?=[^>]*\bid=["\']([A-Za-z0-9_\-]+)["\'])(?=[^>]*\bclass=["\'][^"\']*prescrizioni-row[^"\']*["\'])[^>]*>',
         html,
@@ -73,7 +72,7 @@ def parse_ricette(html: str) -> list[dict]:
             end_content = tag_matches[idx + 1].start() if idx + 1 < len(tag_matches) else len(html)
             cards.append((rid, html[start_content:end_content]))
     else:
-        # Fallback retrocompatibilità su split legacy
+        # Backwards compatibility fallback on legacy split
         parts = re.split(
             r'<div[^>]*id="([A-Za-z0-9_\-]+)"[^>]*class="prescrizioni-row (?:ricette-row|visite-row) row"',
             html)
@@ -82,9 +81,8 @@ def parse_ricette(html: str) -> list[dict]:
 
     for rid, content in cards:
 
-        # codice ricetta (NRE): sta nello <span id="codiceRicetta"> NASCOSTO,
-        # NON nel primo <b> dopo "Codice ricetta:" (in quello c'è l'idPrescrizione
-        # interno a 16 cifre, es. 0300A...) che confonderebbe il flow.
+        # Prescription code (NRE): located inside HIDDEN <span id="codiceRicetta">,
+        # NOT in the first <b> after "Codice ricetta:" (which holds internal 16-digit idPrescrizione).
         cod = None
         m = re.search(r'<span[^>]*id="codiceRicetta"[^>]*>([^<]+)</span>', content)
         if m and m.group(1).strip():
@@ -98,13 +96,13 @@ def parse_ricette(html: str) -> list[dict]:
                 if re.fullmatch(r'[0-9A-Z]{5,}', sc.strip()):
                     cod = sc.strip(); break
 
-        # marcatore testuale di tipologia
+        # Textual type marker
         if 'Ricetta farmaceutica' in content:
             tipologia = 'farmaceutica'
         else:
             tipologia = 'specialistica'
 
-        # stato: estrazione da div stato-text (con b, span o testo diretto) o da icona SVG
+        # Status: extracted from div stato-text or SVG icon
         stato = None
         m = re.search(r'stato-text[^>]*>\s*(?:<b>|<span[^>]*>)?([^<]+)', content)
         if m and m.group(1).strip() and not m.group(1).strip().startswith("%"):
@@ -119,7 +117,7 @@ def parse_ricette(html: str) -> list[dict]:
                     stato = "Accettata /Prenotata"
                 elif "erogata" in icon_tag:
                     stato = "Erogata"
-        # data ricetta: da <time datetime="YYYY-MM-DD"> o testo DD/MM/YYYY / YYYY-MM-DD
+        # Prescription date: from <time datetime="..."> or text
         data_ricetta = ""
         m = re.search(r'Data(?:\s+ricetta)?.*?datetime=["\'](\d{4}-\d{2}-\d{2})["\']', content, re.I)
         if m:
@@ -133,14 +131,14 @@ def parse_ricette(html: str) -> list[dict]:
                     data_ricetta = f"{y}-{mo}-{d}"
                 else:
                     data_ricetta = raw_d
-        # regime / prescrittore
+        # Healthcare system regime / prescriber
         regime = None; prescrittore = None
         m = re.search(r'Regime:</b>\s*<b>([^<]+)</b>', content)
         if m: regime = m.group(1).strip()
         m = re.search(r'Prescrittore:</b>\s*<b>([^<]+)</b>', content)
         if m: prescrittore = m.group(1).strip()
 
-        # prestazioni: i <b> nel blocco "Prestazione:" (o testo semplice)
+        # Services: <b> in "Prestazione:" block (or plain text)
         m = re.search(r'Prestazione:(.*?)(?:</p>|<p\b|</div>|Prescrittore)', content, re.S)
         if m:
             prestazioni = [re.sub(r'\s+', ' ', s).strip() for s
@@ -153,18 +151,18 @@ def parse_ricette(html: str) -> list[dict]:
         else:
             prestazioni = []
 
-        # link prenota
+        # Booking link
         link = None
         m = re.search(r'href="([^"]*prenotaonline[^"]*)"[^>]*class="cambia-visibilita"', content)
         if m:
             link = m.group(1)
-        # link scarica (download ricetta)
+        # Download link (recipe PDF)
         link_download = None
         m = re.search(r'href="(javascript:addCurrentPage\([^)]*step=downloadRicetta[^)]*)\)"', content)
         if m:
             link_download = m.group(1) + ")"
 
-        # categoria finale
+        # Final category
         if tipologia == 'farmaceutica':
             categoria = 'farmaceutica'
         elif len(prestazioni) and classify(prestazioni) == 'laboratorio':
@@ -186,7 +184,7 @@ def parse_ricette(html: str) -> list[dict]:
             "link": link,
             "link_download": link_download,
         })
-    # ordina per data ricetta decrescente (più recenti in alto); senza data in fondo
+    # Sort by prescription date descending (most recent first); missing dates at end
     def _datakey(r):
         d = (r.get("data_ricetta") or "").strip()
         if not d:
@@ -197,6 +195,6 @@ def parse_ricette(html: str) -> list[dict]:
                 return _dt.datetime.strptime(d[:10], fmt).timestamp()
             except Exception:
                 continue
-        return -1e18  # senza data valida -> fondo (più vecchio)
+        return -1e18  # without valid date -> bottom (oldest)
     out.sort(key=_datakey, reverse=True)
     return out

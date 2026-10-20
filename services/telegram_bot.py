@@ -1,10 +1,10 @@
-"""Bot Telegram: notifiche + flusso di conferma prenotazioni.
+"""Telegram Bot: notifications and booking confirmation flow.
 
-Comandi base:
-  /status   -> stato dei monitor e della sessione
-  /poll     -> forza il polling adesso
-  /relogin  -> chiede di avviare il re-login manuale nel prompt di chi esegue
-  /approve <id> / /deny <id> -> conferma/rifiuta una richiesta pendente
+Basic commands:
+  /status   -> status of monitors and session
+  /poll     -> force polling now
+  /relogin  -> request manual re-login in terminal
+  /approve <id> / /deny <id> -> approve/deny a pending request
 """
 from __future__ import annotations
 
@@ -48,10 +48,10 @@ class TelegramBot:
         self.token = token
         self.chat_ids = [c for c in (chat_id, chat_id_secondary) if c]
         self.app = None
-        self.controller = None  # collegato da main per /poll /status /relogin
-        # stato wizard monitoraggio per chat
-        self._wizard = {}  # chat_id -> snapshot per il wizard /monitora
-        # stato interazioni autenticazione (fallback push / richiesta OTP)
+        self.controller = None  # connected by main for /poll /status /relogin
+        # monitor wizard state per chat
+        self._wizard = {}  # chat_id -> snapshot for /monitora wizard
+        # authentication interaction state (push fallback / OTP prompt)
         self._auth_event = None
         self._auth_choice = None
         self._otp_event = None
@@ -59,7 +59,7 @@ class TelegramBot:
         self._pending_otp = False
         self._received_otp = None
 
-    # ---------- invio (usato dal poller/flussi) ----------
+    # ---------- sending (used by poller/flows) ----------
     async def _send(self, text: str) -> None:
         if not (self.token and self.chat_ids):
             log.warning("TG non configurato, notifica non inviata: %s", text)
@@ -74,7 +74,7 @@ class TelegramBot:
                     log.error("invio TG a %s fallito: %s", cid, e)
 
     def notify(self, text: str) -> None:
-        """Callback sincrona/asincrona da flussi/poller o handler (gestisce loop attivi)."""
+        """Synchronous/asynchronous callback from flows/poller or handlers (handles active event loops)."""
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -95,10 +95,9 @@ class TelegramBot:
         except Exception as e:  # noqa: BLE001
             log.error("notify TG fallita: %s", e)
 
-    # ---------- invio con pulsanti inline (da flussi/poller) ----------
+    # ---------- sending with inline buttons (from flows/poller) ----------
     async def _send_buttons(self, text: str, buttons: list) -> list:
-        """Invia testo + pulsanti inline; ritorna [(chat_id, message_id), ...]
-        cosi' il chiamante puo' editare il messaggio in seguito (es. scadenza)."""
+        """Send text + inline buttons; returns [(chat_id, message_id), ...] so caller can edit message later (e.g. expiration)."""
         if not (self.token and self.chat_ids):
             log.warning("TG non configurato, notifica con pulsanti non inviata")
             return []
@@ -118,10 +117,10 @@ class TelegramBot:
         return sent
 
     def notify_buttons(self, text: str, buttons: list) -> list:
-        """Invia messaggio con pulsanti inline (sincrono).
+        """Send message with inline buttons (synchronous).
 
-        Ritorna la lista [(chat_id, message_id)] dei messaggi inviati
-        (per eventuali edit successivi, es. marcare la proposta scaduta).
+        Returns list [(chat_id, message_id)] of sent messages
+        (for subsequent edits, e.g. marking proposal expired).
         """
         try:
             return asyncio.run(self._send_buttons(text, buttons))
@@ -135,9 +134,9 @@ class TelegramBot:
             log.error("notify_buttons TG fallita: %s", e)
             return []
 
-    # ---------- edit messaggi inviati (es. scadenza proposta) ----------
+    # ---------- edit sent messages (e.g. proposal expiration) ----------
     async def _edit_message(self, text: str, destinations: list) -> None:
-        """Sostituisce il testo (e rimuove i pulsanti) dei messaggi inviati."""
+        """Replace text (and remove buttons) of sent messages."""
         if not (self.token and destinations):
             return
         app = Application.builder().token(self.token).build()
@@ -152,7 +151,7 @@ class TelegramBot:
                     log.error("edit TG %s/%s fallito: %s", cid, mid, e)
 
     def edit_message(self, text: str, destinations: list) -> None:
-        """Sincrono: edita i messaggi (usato da flussi/poller)."""
+        """Synchronous: edit messages (used by flows/poller)."""
         try:
             asyncio.run(self._edit_message(text, destinations))
         except RuntimeError:
@@ -164,7 +163,7 @@ class TelegramBot:
         except Exception as e:  # noqa: BLE001
             log.error("edit_message TG fallita: %s", e)
 
-    # ---------- invio file (es. .ics) ----------
+    # ---------- sending files (e.g. .ics) ----------
     async def _send_file(self, path: str, caption: str = "") -> None:
         if not (self.token and self.chat_ids):
             log.warning("TG non configurato, file non inviato: %s", path)
@@ -179,7 +178,7 @@ class TelegramBot:
                     log.error("invio file TG a %s fallito: %s", cid, e)
 
     def send_file(self, path: str, caption: str = "") -> None:
-        """Invia un documento (es. event .ics) da un flusso/poller."""
+        """Send a document (e.g. .ics event) from a flow or poller."""
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -200,7 +199,7 @@ class TelegramBot:
         except Exception as e:  # noqa: BLE001
             log.error("send_file TG fallita: %s", e)
 
-    # ---------- invio immagini / screenshot ----------
+    # ---------- sending images / screenshots ----------
     async def _send_photo(self, path: str, caption: str = "") -> None:
         if not (self.token and self.chat_ids):
             log.warning("TG non configurato, foto non inviata: %s", path)
@@ -220,7 +219,7 @@ class TelegramBot:
                         log.error("invio fallback file TG a %s fallito: %s", cid, e2)
 
     def send_photo(self, path: str, caption: str = "") -> None:
-        """Invia un'immagine (es. screenshot PNG) da un flusso o poller."""
+        """Send an image (e.g. PNG screenshot) from a flow or poller."""
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -241,16 +240,16 @@ class TelegramBot:
         except Exception as e:  # noqa: BLE001
             log.error("send_photo TG fallita: %s", e)
 
-    # ---------- interazioni autenticazione (fallback push / otp) ----------
+    # ---------- authentication interactions (push fallback / otp) ----------
     def ask_auth_fallback(self, prompt: str = "", timeout_s: int = 120) -> str | None:
-        """Chiede all'utente via pulsanti Telegram se inviare di nuovo notifica o immettere OTP.
+        """Prompt user via Telegram inline buttons to resend push notification or enter OTP code.
 
-        Ritorna:
-          - 'notify': l'utente ha scelto 'Invia notifica'
-          - 'otp': l'utente ha scelto 'Immetti codice OTP'
-          - 'cancel' o None: annullato o timeout
+        Returns:
+          - 'notify': user chose 'Invia notifica'
+          - 'otp': user chose 'Immetti codice OTP'
+          - 'cancel' or None: cancelled or timed out
         """
-        # Se avevamo già ricevuto un codice OTP testuale in anticipo, consideriamo 'otp'
+        # If an OTP code was already received in chat in advance, consider it 'otp'
         if self._received_otp:
             return "otp"
 
@@ -258,7 +257,7 @@ class TelegramBot:
             log.warning("Telegram non configurato per ask_auth_fallback")
             return None
 
-        # Reset stati
+        # Reset state
         self._auth_choice = None
         self._auth_event = threading.Event()
 
@@ -285,11 +284,11 @@ class TelegramBot:
         return scelta
 
     def ask_otp(self, prompt: str = "", timeout_s: int = 120) -> str | None:
-        """Chiede all'utente su Telegram di digitare il codice OTP.
+        """Prompt user on Telegram to type their OTP code.
 
-        Ritorna la stringa del codice OTP (pulita da spazi/trattini) oppure None.
+        Returns the OTP code string (cleaned of spaces/dashes) or None.
         """
-        # Se abbiamo già un OTP ricevuto in chat durante il fallback
+        # If an OTP was already received in chat during fallback
         if self._received_otp:
             code = self._received_otp
             self._received_otp = None
@@ -322,18 +321,18 @@ class TelegramBot:
 
         return code
 
-    # ---------- helper autorizzazione ----------
+    # ---------- authorization helper ----------
     def _autorizzato(self, update: Update) -> bool:
-        """Solo i chat_id autorizzati (config) possono usare il bot."""
+        """Only authorized chat_ids (from config) can use the bot."""
         chat = update.effective_chat
         if chat is None:
             return False
-        # confronto robusto: accetta sia int che str (chat.id è int, config str)
+        # Robust comparison: accept both int and str (chat.id is int, config is str)
         return str(chat.id) in {str(c) for c in self.chat_ids}
 
     @staticmethod
     def _esc(s: str) -> str:
-        """Escape HTML dei testi dinamici (per parse_mode=HTML)."""
+        """HTML escape for dynamic texts (for parse_mode=HTML)."""
         return (str(s or "")
                 .replace("&", "&amp;")
                 .replace("<", "&lt;")
@@ -341,9 +340,9 @@ class TelegramBot:
                 .replace('"', "&quot;"))
 
     def _risveglia_se_needed(self, update=None) -> bool:
-        """Se il login è bloccato, un qualunque comando lo risveglia e riprova.
+        """If login is blocked, any command unblocks it and retries.
 
-        Ritorna True se abbiamo risvegliato (l'handler avvisa e avvia il login).
+        Returns True if unblocked (the handler notifies and starts login).
         """
         if getattr(self, "controller", None) is None:
             return False
@@ -357,7 +356,7 @@ class TelegramBot:
             return True
         return False
 
-    # ---------- handler ----------
+    # ---------- handlers ----------
     async def _h_start(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
             await update.message.reply_text("Bot non disponibile.")
@@ -369,31 +368,31 @@ class TelegramBot:
             "• /appuntamenti — su un APPUNTAMENTO già preso (anticipa/posticipa)\n\n"
             "Oppure /help per l'elenco completo.")
 
-    # ---------- calendario inline ----------
+    # ---------- inline calendar ----------
     @staticmethod
     def _cal_keyboard(anno, mese, sel=None):
-        """Costruisce un Mini-calendario inline (griglia giorni + frecce mese).
+        """Build an inline mini-calendar (day grid + month arrows).
 
-        Callback: cal:prev, cal:next, cal:day:YYYY-MM-DD
+        Callbacks: cal:prev, cal:next, cal:day:YYYY-MM-DD
         """
         import calendar as _cal
         from datetime import date
         bottoni = []
-        # intestazione mese/anno con frecce
+        # Month/year header with navigation arrows
         bottoni.append([
             InlineKeyboardButton("‹", callback_data="cal:prev"),
             InlineKeyboardButton(f"{_cal.month_name[mese]} {anno}",
                                  callback_data="cal:noop"),
             InlineKeyboardButton("›", callback_data="cal:next"),
         ])
-        # giorni settimana
+        # Days of week
         sett = ["Lu", "Ma", "Me", "Gi", "Ve", "Sa", "Do"]
         bottoni.append([InlineKeyboardButton(g, callback_data="cal:noop") for g in sett])
-        # griglia giorni
+        # Day grid
         prima, num = _cal.monthrange(anno, mese)
-        # lunedì primo giorno (calendar.MONDAY=0 -> lundi index 0)
+        # Monday as first day (calendar.MONDAY=0 -> Monday index 0)
         riga = []
-        # sfalsamento: python calendar.monthrange da lun=0 a dom=6
+        # Offset: python calendar.monthrange gives Monday=0 to Sunday=6
         for _ in range(prima):
             riga.append(InlineKeyboardButton(" ", callback_data="cal:noop"))
         for giorno in range(1, num + 1):
@@ -408,7 +407,7 @@ class TelegramBot:
         return InlineKeyboardMarkup(bottoni)
 
     def _mostra_calendario(self, chat_id, anno=None, mese=None, sel=None):
-        """Ritorna il messaggio + markup calendario (lo stato con date correnti)."""
+        """Return message + calendar markup (state with current dates)."""
         import datetime as _dt
         wiz = self._wizard.get(chat_id, {})
         now = _dt.date.today()
@@ -422,7 +421,7 @@ class TelegramBot:
         return testo, self._cal_keyboard(anno, mese, sel)
 
     async def _h_cal(self, update, chat_id):
-        """Gestisce i callback del calendario (prev/next/day)."""
+        """Handle calendar callbacks (prev/next/day)."""
         import datetime as _dt
         import calendar as _cal
         q = update.callback_query
@@ -439,7 +438,7 @@ class TelegramBot:
         elif data.startswith("cal:day:"):
             dstr = data.split(":", 2)[2]  # YYYY-MM-DD
             giorno = _dt.datetime.strptime(dstr, "%Y-%m-%d").date()
-            # salva nel wizard e prosegue
+            # save in wizard and proceed
             await self._data_selezionata(update, chat_id, giorno)
             return
         elif data == "cal:noop":
@@ -452,7 +451,7 @@ class TelegramBot:
             log.warning("cal agg: %s", e)
 
     async def _data_selezionata(self, update, chat_id, giorno):
-        """Dopo il giorno nel calendario, in base allo step aggiorna il flusso."""
+        """After selecting a day in calendar, advance flow based on current step."""
         import datetime as _dt
         q = update.callback_query
         wiz = self._wizard.get(chat_id, {})
@@ -471,15 +470,14 @@ class TelegramBot:
             await self._crea_monitor_finale(update, chat_id, wiz)
 
     async def _crea_monitor_finale(self, update, chat_id, wiz):
-        """Crea il monitor con range e conferma."""
+        """Create monitor with date range and confirmation."""
         target = wiz.get("target", {})
         tipo = wiz.get("tipo", "new")
         prov_list = wiz.get("province", [])
         data_dal = wiz.get("data_dal", "")
         data_a = wiz.get("data_a", "")
-        # le target-ricetta hanno 'prestazioni' (lista) e 'codice' (NRE);
-        # gli appuntamenti hanno 'prestazione' (stringa). Prima il nome della
-        # prestazione, poi gli altri campi, e solo alla fine il fallback.
+        # Prescription targets have 'prestazioni' (list) and 'codice' (NRE);
+        # appointments have 'prestazione' (string). Service name first, then other fields, then fallback.
         prestazioni = target.get("prestazioni") or []
         if prestazioni:
             desc = ", ".join(p for p in prestazioni if p)
@@ -487,8 +485,8 @@ class TelegramBot:
             desc = target.get("prestazione") or target.get("descrizione") or ""
         nre = target.get("codice") or ""
         if not desc and not nre:
-            # mai piu' placeholder 'monitor': senza nome prestazione (ricetto) e
-            # senza NRE il flow non saprebbe quale card aprire
+            # Avoid placeholder 'monitor': without service name (prescription) and
+            # without NRE the flow would not know which card to open
             self._wizard.pop(chat_id, None)
             await q.edit_message_text(
                 "⚠️ Non riesco a ricavare la prestazione da monitorare dall'elenco. "
@@ -534,7 +532,7 @@ class TelegramBot:
             ]]))
 
     async def _h_callback(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Gestisce i click sui pulsanti (wizard di monitoraggio)."""
+        """Handle button clicks (monitoring wizard)."""
         if not self._autorizzato(update):
             await update.answer("Non autorizzato")
             return
@@ -542,7 +540,7 @@ class TelegramBot:
         data = q.data or ""
         chat_id = update.effective_chat.id
         try:
-            # interazioni autenticazione SPID/OTP
+            # SPID/OTP authentication interactions
             if data.startswith("auth:"):
                 parti = data.split(":", 1)
                 sub = parti[1]
@@ -573,7 +571,7 @@ class TelegramBot:
                     await q.edit_message_text("❌ <b>Inserimento OTP annullato.</b>", parse_mode=ParseMode.HTML)
                 return
 
-            # download ricetta dal comando /ricette
+            # Download prescription from /ricette command
             if data.startswith("ric:dl:"):
                 idx = int(data.split(":", 2)[2])
                 wiz = self._wizard.get(chat_id, {})
@@ -587,7 +585,7 @@ class TelegramBot:
                 self._wizard.pop(chat_id, None)
                 await q.edit_message_text("Ok 👍")
                 return
-            # decisione su proposta (approve/deny/anticipa/posticipa via pulsanti)
+            # Decision on proposal (approve/deny/reschedule via buttons)
             if data.startswith("decide:"):
                 parti = data.split(":")
                 azione = parti[1]
@@ -604,7 +602,7 @@ class TelegramBot:
                 else:
                     await q.answer("Controller non inizializzato")
                 return
-            # scelta post-prenotazione: stop oppure continua (converte in reschedule)
+            # Post-booking choice: stop or continue (converts to reschedule)
             if data.startswith("postbook:"):
                 parti = data.split(":", 2)
                 scelta = parti[1]
@@ -634,7 +632,7 @@ class TelegramBot:
                     else:
                         await q.edit_message_text(f"⚠️ Impossibile aggiornare il monitor {self._esc(mid)}: nessuna prenotazione valida registrata.")
                     return
-            # selezione monitor da anticipare
+            # Select monitor to reschedule earlier
             if data.startswith("anticipa:pick:"):
                 mid = data.split(":", 2)[2]
                 if not self.controller:
@@ -654,11 +652,11 @@ class TelegramBot:
                 else:
                     await q.edit_message_text(f"⚠️ Impossibile aggiornare il monitor {self._esc(mid)}: nessuna prenotazione valida registrata.")
                 return
-            # calendario inline (seleziona data)
+            # Inline calendar (date selection)
             if (data or "").startswith("cal:"):
                 await self._h_cal(update, chat_id)
                 return
-            # stop monitor dalla lista
+            # Stop monitor from list
             if data.startswith("stop:pick:"):
                 mid = data.split(":", 2)[2]
                 if self.controller.rimuovi_monitor(mid):
@@ -669,7 +667,7 @@ class TelegramBot:
             if data == "stop:annulla":
                 await q.edit_message_text("Operazione annullata.")
                 return
-            # Gestione Blacklist (bl:...)
+            # Blacklist management (bl:...)
             if data.startswith("bl:"):
                 parti = data.split(":")
                 azione_bl = parti[1]
@@ -771,7 +769,7 @@ class TelegramBot:
             elif data.startswith("mon:prov:") and data != "mon:prov:__ferma__":
                 prov = data.split(":", 2)[2]
                 wiz = self._wizard.get(chat_id, {})
-                # toggle selezione multipla
+                # Multiple selection toggle
                 sel = wiz.setdefault("province", [])
                 if prov in sel:
                     sel.remove(prov)
@@ -780,7 +778,7 @@ class TelegramBot:
                 wiz["step"] = "provincia"
                 self._wizard[chat_id] = wiz
                 await self._chiedi_provincia(update, ctx, chat_id)
-                # conferma il click (small feedback), non cambia il testo a parte il toggle
+                # Confirm click (small feedback), does not alter text other than toggle
                 return
             elif data == "mon:conferma":
                 wiz = self._wizard.get(chat_id, {})
@@ -825,8 +823,8 @@ class TelegramBot:
                 pass
 
     async def _chiedi_provincia(self, update, ctx, chat_id):
-        """Mostra la scelta MULTIPLA delle province (toggle col click).
-        Lo stesso messaggio si aggiorna a ogni click; poi 'Conferma'.
+        """Show MULTIPLE province selection (toggle with click).
+        The message updates on each click; then 'Conferma'.
         """
         wiz = self._wizard.get(chat_id, {})
         sel = wiz.get("province", [])
@@ -847,7 +845,7 @@ class TelegramBot:
             await update.callback_query.answer(f"err {e}")
 
     async def _conferma_monitor(self, update, ctx, chat_id, wiz):
-        """Dopo le province: mostra il CALENDARIO per scegliere la data 'Da'."""
+        """After provinces: show CALENDAR to pick 'From' date."""
         import datetime as _dt
         wiz["step"] = "range_da"
         self._wizard[chat_id] = wiz
@@ -858,11 +856,11 @@ class TelegramBot:
             reply_markup=kb, parse_mode=ParseMode.HTML)
 
     async def _gestisci_range_da(self, update, chat_id, testo):
-        """(Deprecato: range via calendario)"""
+        """(Deprecated: date range via calendar)"""
         pass
 
     async def _gestisci_range_a(self, update, chat_id, testo):
-        """(Deprecato: range via calendario)"""
+        """(Deprecated: date range via calendar)"""
         pass
 
     async def _h_stop(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -872,7 +870,7 @@ class TelegramBot:
         if self.controller is None:
             await update.message.reply_text("Controller non inizializzato.")
             return
-        # con id esplicito: rimuove subito
+        # With explicit ID: remove immediately
         if ctx.args:
             mid = ctx.args[0]
             if self.controller.rimuovi_monitor(mid):
@@ -880,7 +878,7 @@ class TelegramBot:
             else:
                 await update.message.reply_text(f"Monitor {mid} non trovato.")
             return
-        # senza argomenti: mostra la lista con pulsanti
+        # Without arguments: show list with buttons
         monitor = self.controller.monitors_attivi()
         if not monitor:
             await update.message.reply_text("Nessun monitor attivo.")
@@ -894,7 +892,7 @@ class TelegramBot:
             reply_markup=InlineKeyboardMarkup(kb))
 
     async def _mostra_scelta_monitor_blacklist(self, update_or_query, is_edit: bool = False) -> None:
-        """Mostra la lista dei monitor attivi per scegliere quale blacklist consultare."""
+        """Show active monitors list to choose which blacklist to inspect."""
         if not self.controller:
             text = "Controller non inizializzato."
             if is_edit:
@@ -937,7 +935,7 @@ class TelegramBot:
             await update_or_query.reply_text(testo, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
 
     async def _mostra_dettaglio_blacklist(self, query, mid: str) -> None:
-        """Mostra le voci in blacklist per un monitor specifico, con pulsanti per eliminarle."""
+        """Show blacklist entries for a specific monitor, with buttons to delete them."""
         if not self.controller:
             await query.edit_message_text("Controller non inizializzato.")
             return
@@ -1011,7 +1009,7 @@ class TelegramBot:
         await query.edit_message_text(testo, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
 
     async def _h_blacklist(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Comando /blacklist: consulta e gestisce le disponibilità rifiutate."""
+        """/blacklist command: inspect and manage rejected appointment availabilities."""
         if not self._autorizzato(update):
             return
         self._risveglia_se_needed(update)
@@ -1051,7 +1049,7 @@ class TelegramBot:
             comune = (a.get("comune","") or "").strip()
             if azienda:
                 lines.append(f"   🏥 Azienda: {self._esc(azienda)}")
-            # luogo: presidio (se != azienda), indirizzo, comune
+            # Location: facility (if != company), address, municipality
             luogo = []
             if presi:
                 luogo.append(self._esc(presi))
@@ -1063,7 +1061,7 @@ class TelegramBot:
                 luogo.append(f"({self._esc(comune)}{f', {self._esc(cap)}' if cap else ''})")
             if luogo:
                 lines.append(f"   📍 {' · '.join(luogo)}")
-                # link Google Maps (query = struttura/azienda + comune)
+                # Google Maps link (query = facility/company + municipality)
                 qparts = [p for p in (presi or azienda, indirizzo, comune) if p]
                 if qparts:
                     import urllib.parse as _up
@@ -1098,7 +1096,7 @@ class TelegramBot:
         if not ricette:
             await update.message.reply_text("Nessuna ricetta trovata.")
             return
-        # limita alle prime 3 più recenti (il parser ordina per data desc)
+        # Limit to 3 most recent (parser sorts date descending)
         ricette = ricette[:3]
         lines = [f"📋 Le {len(ricette)} ricette più recenti:\n"]
         for i, r in enumerate(ricette):
@@ -1130,11 +1128,11 @@ class TelegramBot:
             scarica = " ⬇️" if r.get("link_download") else ""
             lines.append(f"{i+1}) {cat_icona} <b>{self._esc(prest)}</b>")
             lines.append(f"   {stato_icona}{data_txt} · {self._esc(r['codice'])}{scarica}")
-        # invia a pezzi se troppo lungo
+        # Send in chunks if too long
         msg = "\n".join(lines)
         for chunk in (msg[i:i + 3800] for i in range(0, len(msg), 3800)):
             await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
-        # pulsanti download per le ricette con link
+        # Download buttons for prescriptions with download link
         self._wizard[update.effective_chat.id] = {"ricette": ricette}
         scaricabili = [(i, r) for i, r in enumerate(ricette) if r.get("link_download")]
         if scaricabili:
@@ -1183,7 +1181,7 @@ class TelegramBot:
             await update.message.reply_text("Controller non inizializzato.")
             return
 
-        # 1. Se fornito ID esplicito come argomento
+        # 1. If explicit ID provided as argument
         if ctx.args:
             mid = ctx.args[0]
             ok = self.controller.converti_in_reschedule(mid)
@@ -1201,7 +1199,7 @@ class TelegramBot:
                 await update.message.reply_text(f"⚠️ Impossibile attivare l'anticipo per {self._esc(mid)}: monitor non trovato o nessuna prenotazione valida registrata.")
             return
 
-        # 2. Senza argomenti: se c'è un solo monitor attivo, usalo direttamente
+        # 2. Without arguments: if only 1 active monitor, use directly
         monitors = self.controller.monitors_attivi()
         if not monitors:
             await update.message.reply_text("Nessun monitor attivo.")
@@ -1224,7 +1222,7 @@ class TelegramBot:
                 await update.message.reply_text(f"⚠️ Impossibile attivare l'anticipo per {self._esc(mid)}: nessuna prenotazione valida registrata.")
             return
 
-        # 3. Più monitor attivi: mostra bottoni di selezione
+        # 3. Multiple active monitors: show selection buttons
         kb = [[InlineKeyboardButton(
             f"{m.get('ricetta','')[:28]} [{m.get('type','')}]",
             callback_data=f"anticipa:pick:{m['id']}")] for m in monitors]
@@ -1273,7 +1271,7 @@ class TelegramBot:
                     parse_mode=ParseMode.HTML)
             return
 
-        # Toggle (default per /pause o /pause_unpause senza argomenti)
+        # Toggle (default for /pause or /pause_unpause without arguments)
         is_now_paused = self.controller.toggle_pause()
         if is_now_paused:
             await update.message.reply_text(
@@ -1317,14 +1315,14 @@ class TelegramBot:
         await update.message.reply_text(HELP_TEXT)
 
     async def _h_echo_chat(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Gestisce i messaggi testuali generici (info chat, inserimento OTP, risposte fallback)."""
+        """Handle generic text messages (chat info, OTP input, fallback responses)."""
         if not self._autorizzato(update):
             return
 
         raw_text = update.message.text if (update.message and isinstance(update.message.text, str)) else ""
         text = raw_text.strip()
 
-        # 1. Se siamo in attesa dell'inserimento codice OTP
+        # 1. If waiting for OTP code input
         if getattr(self, "_pending_otp", False) and self._otp_event is not None:
             if text.lower() in ("/cancel", "annulla", "esci"):
                 self._otp_value = None
@@ -1341,7 +1339,7 @@ class TelegramBot:
             await update.message.reply_text(f"✅ Codice OTP ricevuto ({masked}). Procedo con l'autenticazione...")
             return
 
-        # 2. Se siamo in attesa della scelta fallback (notifica vs otp)
+        # 2. If waiting for fallback choice (notification vs OTP)
         if getattr(self, "_auth_event", None) is not None:
             low = text.lower()
             if any(k in low for k in ["notifica", "invia notifica", "push", "1"]):
@@ -1359,7 +1357,7 @@ class TelegramBot:
                 self._auth_event.set()
                 await update.message.reply_text("❌ Login annullato.")
                 return
-            # Se l'utente ha inserito direttamente un codice numerico (es. 6 o 8 cifre)
+            # If user directly typed a numerical code (e.g. 6 or 8 digits)
             cleaned = text.replace(" ", "").replace("-", "").strip()
             if cleaned.isdigit() and len(cleaned) in (6, 8):
                 self._auth_choice = "otp"
@@ -1369,7 +1367,7 @@ class TelegramBot:
                 await update.message.reply_text(f"✅ Codice OTP ricevuto direttamente ({masked})! Procedo con l'accesso...")
                 return
 
-        # Se l'utente scrive /pause-unpause (il trattino non è riconosciuto come comando standard da Telegram)
+        # If user types /pause-unpause (dash is not recognized as standard command by Telegram)
         if text and text.lower().startswith(("/pause-unpause", "pause-unpause")):
             await self._h_pause(update, ctx)
             return
@@ -1380,13 +1378,13 @@ class TelegramBot:
             "\nUsa /help per i comandi.")
 
     async def _scarica_ricetta(self, update, ricetta):
-        """Avvia il download della ricetta (nel browser del bot)."""
+        """Trigger prescription download (in bot's browser)."""
         q = update.callback_query
         link = (ricetta.get("link_download") or "")
         if not link:
             await q.answer("Nessun link download")
             return
-        # estrai l'URL dalla javascript:addCurrentPage('URL')
+        # Extract URL from javascript:addCurrentPage('URL')
         import re as _re
         m = _re.search(r"'([^']+)'", link)
         url = m.group(1) if m else link
@@ -1395,7 +1393,7 @@ class TelegramBot:
             driver = self.controller.browser.start()
             await q.edit_message_text("⬇️ Genero il file della ricetta...")
             driver.get(url)
-            # attende e verifica che il download sia partito (il file va nella dir download)
+            # Wait and verify download has started (file goes to download dir)
             import time as _time
             _time.sleep(6)
             await q.edit_message_text("✅ Download della ricetta avviato.\n"
@@ -1406,7 +1404,7 @@ class TelegramBot:
 
     # ---------- run ----------
     def run(self) -> None:
-        """Avvia il polling del bot (blocca; va in un processo/thread separato)."""
+        """Start bot polling (blocking; runs in a separate process/thread)."""
         from telegram import BotCommand
 
         async def _post_init(application: Application) -> None:
@@ -1451,9 +1449,9 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("blacklist", self._h_blacklist))
         self.app.add_handler(CommandHandler("stop", self._h_stop))
         self.app.add_handler(CommandHandler("help", self._h_help))
-        # pulsanti inline (wizard /monitora e risposte)
+        # Inline buttons (wizard /monitora and replies)
         self.app.add_handler(CallbackQueryHandler(self._h_callback))
-        # qualsiasi messaggio non-comando -> info chat (per setup / comandi)
+        # Any non-command message -> chat info (for setup / commands)
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._h_echo_chat))
         log.info("Bot Telegram avviato")
         self.app.run_polling()

@@ -19,7 +19,7 @@ def test_norm_day():
 
 
 def test_slot_properties():
-    dt = datetime(2026, 10, 5, 9, 30)  # Lunedì 5 ottobre 2026 alle 09:30
+    dt = datetime(2026, 10, 5, 9, 30)  # Monday October 5, 2026 at 09:30
     slot = Slot(datetime=dt, extra={"sede": "Ospedale Niguarda"})
     assert slot.weekday == "MON"
     assert slot.time_str == "09:30"
@@ -54,7 +54,7 @@ def test_match_slot_hours_filter():
     ok, _ = match_slot(slot_afternoon, crit_morning)
     assert ok is False
 
-    # Verifica che orari senza zero padding (es. "9:00" anziché "09:00") non falliscano il confronto stringa
+    # Verify unpadded hours (e.g. "9:00" instead of "09:00") do not fail string comparison
     crit_unpadded = {"ora_min": "9:00", "ora_max": "12"}
     ok, _ = match_slot(slot_morning, crit_unpadded)
     assert ok is True
@@ -76,29 +76,29 @@ def test_match_slot_date_range_iso_and_date_objects():
     from datetime import date
     slot = Slot(datetime=datetime(2026, 10, 15, 10, 0))
 
-    # Formato ISO (YYYY-MM-DD)
+    # ISO format (YYYY-MM-DD)
     ok_iso, _ = match_slot(slot, {"data_dal": "2026-10-01", "data_a": "2026-10-31"})
     assert ok_iso is True
 
-    # Esclusione per data_dal ISO posteriore allo slot
+    # Exclusion when data_dal ISO is after the slot
     ok_iso_late, reason = match_slot(slot, {"data_dal": "2026-10-20"})
     assert ok_iso_late is False
     assert "prima del range" in reason
 
-    # Oggetti datetime.date (es. restituiti da parser YAML)
+    # datetime.date objects (e.g. returned by YAML parser)
     ok_date_obj, _ = match_slot(slot, {"data_dal": date(2026, 10, 1), "data_a": date(2026, 10, 31)})
     assert ok_date_obj is True
 
-    # Esclusione per data_a anteriore allo slot
+    # Exclusion when data_a is before the slot
     ok_date_early, reason2 = match_slot(slot, {"data_a": date(2026, 10, 10)})
     assert ok_date_early is False
     assert "dopo il range" in reason2
 
 
 def test_best_match_ordering():
-    # Prioritizza i giorni nell'ordine specificato dall'utente
-    s_wed = Slot(datetime=datetime(2026, 10, 7, 10, 0))  # Mercoledì
-    s_mon = Slot(datetime=datetime(2026, 10, 12, 10, 0)) # Lunedì successivo
+    # Prioritize days in user-specified order
+    s_wed = Slot(datetime=datetime(2026, 10, 7, 10, 0))  # Wednesday
+    s_mon = Slot(datetime=datetime(2026, 10, 12, 10, 0)) # Next Monday
 
     crit = {"giorni": ["WED", "MON"]}
     selected = best_match([s_mon, s_wed], crit)
@@ -112,32 +112,32 @@ def test_nessuna_disponibilita():
 
 
 def test_match_slot_same_day_time_anticipation():
-    # Appuntamento attuale il 25/10/2026 alle 10:00
+    # Current appointment on 25/10/2026 at 10:00
     crit = {"data_attuale": "25/10/2026 10:00", "data_a": "25/10/2026"}
 
-    # Slot prima della data attuale -> OK
+    # Slot before current date -> OK
     s_earlier_day = Slot(datetime=datetime(2026, 10, 24, 15, 0))
     ok, _ = match_slot(s_earlier_day, crit)
     assert ok is True
 
-    # Slot stesso giorno ma orario anticipato (09:15 < 10:00) -> OK
+    # Slot same day but earlier time (09:15 < 10:00) -> OK
     s_same_day_earlier = Slot(datetime=datetime(2026, 10, 25, 9, 15))
     ok, _ = match_slot(s_same_day_earlier, crit)
     assert ok is True
 
-    # Slot stesso giorno e stesso orario (10:00 == 10:00) -> Scartato
+    # Slot same day and same time (10:00 == 10:00) -> Discarded
     s_same_day_same_time = Slot(datetime=datetime(2026, 10, 25, 10, 0))
     ok, reason = match_slot(s_same_day_same_time, crit)
     assert ok is False
     assert "orario non migliorativo" in reason
 
-    # Slot stesso giorno ma orario successivo (11:30 > 10:00) -> Scartato
+    # Slot same day but later time (11:30 > 10:00) -> Discarded
     s_same_day_later = Slot(datetime=datetime(2026, 10, 25, 11, 30))
     ok, reason = match_slot(s_same_day_later, crit)
     assert ok is False
     assert "orario non migliorativo" in reason
 
-    # Formato con trattino '25/10/2026 - 10:00' e datetime object
+    # Format with hyphen '25/10/2026 - 10:00' and datetime object
     crit_dash = {"data_attuale": "25/10/2026 - 10:00"}
     ok_dash, _ = match_slot(s_same_day_earlier, crit_dash)
     assert ok_dash is True

@@ -44,7 +44,7 @@ def test_browser_default_implicit_wait_is_zero(monkeypatch):
 
 def test_selectors_no_invalid_has_text():
     import core.selectors as sel
-    # Itera su tutte le costanti di dizionario in selectors e controlla che non ci sia ':has-text'
+    # Iterate over all dictionary constants in selectors and verify that there is no ':has-text'
     def check_obj(obj, path=""):
         if isinstance(obj, dict):
             for k, v in obj.items():
@@ -75,7 +75,7 @@ def test_browser_recovers_from_invalid_binary_path(monkeypatch):
         nonlocal call_count
         call_count += 1
         options = kwargs.get("options")
-        # Il primo tentativo con il binary path inesistente fallisce
+        # The first attempt with the non-existent binary path fails
         if call_count == 1 and getattr(options, "binary_location", "") == "/percorso/inesistente/chrome":
             raise NoSuchDriverException("Unable to obtain driver for chrome")
         return mock_driver

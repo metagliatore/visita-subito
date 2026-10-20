@@ -1,9 +1,9 @@
-"""Modulo di autenticazione per l'accesso ai servizi regionali.
+"""Authentication module for accessing regional health portal services.
 
-Supporta diverse modalità di accesso:
-  - SPID: SielteID (automatizzato con push/OTP), Poste, Aruba, Infocert, Lepida, Namirial, Tim, ecc.
-  - CIE: Carta di Identità Elettronica (CieID / Smartcard)
-  - Manuale: Accesso guidato da finestra browser
+Supports various authentication methods:
+  - SPID: SielteID (automated via push/OTP), Poste, Aruba, Infocert, Lepida, Namirial, Tim, etc.
+  - CIE: Electronic Identity Card (CieID / Smartcard)
+  - Manual: Guided browser window login
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from core import selectors
 
 log = logging.getLogger(__name__)
 
-# Mappatura dei provider SPID noti e dei relativi indici IdPC Regione Lombardia
+# Mapping of known SPID providers and their IdPC indices on Regione Lombardia portal
 SPID_PROVIDERS = {
     "infocert": {"name": "Infocert", "label": "InfoCert ID", "index": 0},
     "register": {"name": "Register", "label": "SpidItalia (Register.it)", "index": 1},
@@ -37,7 +37,7 @@ SPID_PROVIDERS = {
 
 
 class AuthConfig:
-    """Configurazione di autenticazione letta da YAML ed env."""
+    """Authentication configuration loaded from YAML settings and environment variables."""
 
     def __init__(self, method: str = "spid", spid_provider: str = "sielte",
                  cie_mode: str = "app", spid_user: str = "", spid_pwd: str = "",
@@ -64,7 +64,7 @@ class AuthConfig:
                          os.environ.get("SIELTE_OTP_MODE") or
                          spid_sec.get("otp_mode", "notifica"))
 
-        # Credenziali SPID con retrocompatibilità SIELTE_USERNAME
+        # SPID credentials with backwards compatibility for SIELTE_USERNAME
         spid_user = (os.environ.get("SPID_USERNAME") or
                      os.environ.get("SIELTE_USERNAME") or
                      spid_sec.get("username", ""))
@@ -87,7 +87,7 @@ class AuthConfig:
         )
 
     def describe(self) -> str:
-        """Descrizione human-readable per status e log."""
+        """Human-readable description for status reporting and logs."""
         if self.method == "spid":
             info = SPID_PROVIDERS.get(self.spid_provider, {})
             label = info.get("label", self.spid_provider.upper())
@@ -106,12 +106,12 @@ class AuthConfig:
 class BaseAuthProvider(ABC):
     @abstractmethod
     def login(self, session_manager, browser, notify_cb=None, auth_callback=None) -> webdriver.Chrome:
-        """Esegue l'accesso e ritorna l'istanza autenticata di WebDriver."""
+        """Execute login and return the authenticated WebDriver instance."""
         pass
 
 
 class SielteSpidAuthProvider(BaseAuthProvider):
-    """Autenticazione automatizzata SPID SielteID con notifica push/OTP."""
+    """Automated SPID SielteID authentication with push notification/OTP."""
 
     def __init__(self, username: str = "", password: str = "", otp_mode: str = "notifica"):
         self.username = username
@@ -133,7 +133,7 @@ class SielteSpidAuthProvider(BaseAuthProvider):
 
 
 class PosteSpidAuthProvider(BaseAuthProvider):
-    """Accesso SPID con PosteID (Poste Italiane)."""
+    """SPID login with PosteID (Poste Italiane)."""
 
     def __init__(self, username: str = "", password: str = ""):
         self.username = username
@@ -147,7 +147,7 @@ class PosteSpidAuthProvider(BaseAuthProvider):
 
 
 class ArubaSpidAuthProvider(BaseAuthProvider):
-    """Accesso SPID con Aruba ID."""
+    """SPID login with Aruba ID."""
 
     def __init__(self, username: str = "", password: str = ""):
         self.username = username
@@ -161,7 +161,7 @@ class ArubaSpidAuthProvider(BaseAuthProvider):
 
 
 class InfocertSpidAuthProvider(BaseAuthProvider):
-    """Accesso SPID con InfoCert ID."""
+    """SPID login with InfoCert ID."""
 
     def __init__(self, username: str = "", password: str = ""):
         self.username = username
@@ -175,7 +175,7 @@ class InfocertSpidAuthProvider(BaseAuthProvider):
 
 
 class LepidaSpidAuthProvider(BaseAuthProvider):
-    """Accesso SPID con Lepida ID."""
+    """SPID login with Lepida ID."""
 
     def __init__(self, username: str = "", password: str = ""):
         self.username = username
@@ -189,7 +189,7 @@ class LepidaSpidAuthProvider(BaseAuthProvider):
 
 
 class NamirialSpidAuthProvider(BaseAuthProvider):
-    """Accesso SPID con Namirial ID."""
+    """SPID login with Namirial ID."""
 
     def __init__(self, username: str = "", password: str = ""):
         self.username = username
@@ -203,7 +203,7 @@ class NamirialSpidAuthProvider(BaseAuthProvider):
 
 
 class GenericSpidAuthProvider(BaseAuthProvider):
-    """Accesso SPID generico per qualunque altro fornitore accreditato."""
+    """Generic SPID login for any other accredited Identity Provider."""
 
     def __init__(self, provider_key: str, username: str = "", password: str = ""):
         self.provider_key = provider_key.lower()
@@ -218,7 +218,7 @@ class GenericSpidAuthProvider(BaseAuthProvider):
 
 
 class CieAuthProvider(BaseAuthProvider):
-    """Accesso con Carta di Identità Elettronica (CIE / CieID)."""
+    """Login with Electronic Identity Card (CIE / CieID)."""
 
     def __init__(self, mode: str = "app", username: str = "", password: str = ""):
         self.mode = mode
@@ -235,7 +235,7 @@ class CieAuthProvider(BaseAuthProvider):
 
 
 class ManualAuthProvider(BaseAuthProvider):
-    """Accesso puramente manuale (apertura finestra visibile)."""
+    """Purely manual login (opens visible browser window)."""
 
     def login(self, session_manager, browser, notify_cb=None, auth_callback=None, **kwargs) -> webdriver.Chrome:
         if notify_cb:
@@ -244,7 +244,7 @@ class ManualAuthProvider(BaseAuthProvider):
 
 
 def get_auth_provider(auth_config: AuthConfig) -> BaseAuthProvider:
-    """Factory per istanziare l'AuthProvider idoneo alla configurazione."""
+    """Factory to instantiate the appropriate AuthProvider for the configuration."""
     if auth_config.method == "spid":
         prov = auth_config.spid_provider.lower()
         mapping = {

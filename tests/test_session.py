@@ -31,15 +31,15 @@ def test_is_autenticato(tmp_path):
 def test_is_expired(tmp_path):
     sm = SessionManager(browser=None, cookie_dir=tmp_path)
 
-    # Senza file meta.json -> scaduta
+    # Without meta.json file -> expired
     assert sm.is_expired(max_idle_seconds=3600) is True
 
-    # Con salvataggio recente (10 secondi fa) -> non scaduta
+    # With recent save (10 seconds ago) -> not expired
     meta_file = tmp_path / "meta.json"
     meta_file.write_text(json.dumps({"saved_at": time.time() - 10}), encoding="utf-8")
     assert sm.is_expired(max_idle_seconds=3600) is False
 
-    # Con salvataggio vecchio (2 ore fa) -> scaduta
+    # With old save (2 hours ago) -> expired
     meta_file.write_text(json.dumps({"saved_at": time.time() - 7200}), encoding="utf-8")
     assert sm.is_expired(max_idle_seconds=3600) is True
 
@@ -47,10 +47,10 @@ def test_is_expired(tmp_path):
 def test_needs_login(tmp_path):
     sm = SessionManager(browser=None, cookie_dir=tmp_path)
 
-    # Senza cookie -> serve login
+    # Without cookies -> login required
     assert sm.needs_login() is True
 
-    # Creiamo cookies.pkl
+    # Create cookies.pkl
     (tmp_path / "cookies.pkl").write_bytes(b"dummy")
     assert sm.needs_login() is False
 
@@ -74,12 +74,12 @@ def test_save_and_load_cookies(tmp_path):
     fake_cookies = [{"name": "SESSION_ID", "value": "xyz123", "domain": ".regione.lombardia.it"}]
     mock_driver.get_cookies.return_value = fake_cookies
 
-    # Salva
+    # Save
     sm.save(mock_driver)
     assert sm.cookie_file.exists()
     assert sm.meta_file.exists()
 
-    # Carica
+    # Load
     load_driver = MagicMock()
     success = sm.load_cookies(load_driver)
     assert success is True
@@ -97,7 +97,7 @@ def test_find_and_fill(tmp_path):
     mock_el.clear.assert_called_once()
     mock_el.send_keys.assert_called_once_with("testuser")
 
-    # Caso fallimento
+    # Failure case
     mock_driver.find_element.side_effect = Exception("Not found")
     res_fail = sm._find_and_fill(mock_driver, [("id", "notfound")], "val")
     assert res_fail is False
@@ -109,18 +109,18 @@ def test_find_and_click(tmp_path):
     mock_el = MagicMock()
     mock_driver.find_element.return_value = mock_el
 
-    # Click normale
+    # Normal click
     res = sm._find_and_click(mock_driver, [("css", "button.submit")])
     assert res is True
     mock_el.click.assert_called_once()
 
-    # Fallback execute_script se click lancia eccezione
+    # Fallback execute_script if click raises exception
     mock_el.click.side_effect = Exception("Click intercepted")
     res_fallback = sm._find_and_click(mock_driver, [("css", "button.submit")])
     assert res_fallback is True
     mock_driver.execute_script.assert_called_with("arguments[0].click();", mock_el)
 
-    # Fallimento completo
+    # Complete failure
     mock_driver.find_element.side_effect = Exception("Not found")
     res_fail = sm._find_and_click(mock_driver, [("xpath", "//missing")])
     assert res_fail is False
@@ -189,7 +189,7 @@ def test_relogin_sielte_fallback_to_otp(tmp_path, monkeypatch):
     monkeypatch.setattr("time.time", lambda: clock[0])
     monkeypatch.setattr("time.sleep", lambda s: clock.__setitem__(0, clock[0] + s))
 
-    # Autenticato solo dopo inserimento OTP (quando il clock supera 1055)
+    # Authenticated only after OTP entry (when clock exceeds 1055)
     monkeypatch.setattr(sm, "is_autenticato", lambda d: clock[0] > 1055)
     monkeypatch.setattr(sm, "_inserisci_otp_sielte", MagicMock(return_value=True))
 
@@ -215,7 +215,7 @@ def test_relogin_sielte_fallback_re_notify(tmp_path, monkeypatch):
     monkeypatch.setattr("time.time", lambda: clock[0])
     monkeypatch.setattr("time.sleep", lambda s: clock.__setitem__(0, clock[0] + s))
 
-    # Autenticato durante la seconda notifica (quando il clock supera 1060)
+    # Authenticated during second notification (when clock exceeds 1060)
     monkeypatch.setattr(sm, "is_autenticato", lambda d: clock[0] > 1060)
     notify_mock = MagicMock(return_value=True)
     monkeypatch.setattr(sm, "_invia_notifica_sielte", notify_mock)
@@ -287,9 +287,9 @@ def test_relogin_sielte_preserves_browser_and_headless_mode(tmp_path, monkeypatc
 
     driver = sm.relogin_sielte(username="user", password="pwd", wait_otp_sec=30)
     assert driver == mock_driver
-    # Browser.stop() non deve mai essere chiamato
+    # Browser.stop() must never be called
     mock_browser.stop.assert_not_called()
-    # Browser.set_headless non deve essere chiamato per uccidere il driver
+    # Browser.set_headless must not be called to kill the driver
     mock_browser.set_headless.assert_not_called()
 
 

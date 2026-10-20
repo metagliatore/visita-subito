@@ -1,12 +1,12 @@
-"""Classe base per i flussi di prenotazione.
+"""Base class for booking flows.
 
-Un Flusso incapsula: caricare la pagina, estrarre le disponibilità, filtrarle
-con il matcher, chiedere conferma via Telegram e (se approvato) eseguire
-l'azione reale sul portale tramite i selettori in core/selectors.py.
+A Flow encapsulates: page loading, slot extraction, filtering with matcher,
+requesting Telegram confirmation, and (if approved) executing the actual
+portal action using selectors in core/selectors.py.
 
-Sottoclassi da implementare:
-    extract_slots()  -> list[Slot]  (parser DOM, da compilare con lo studio)
-    execute()        -> azione reale sul portale (prenota / riprogramma)
+Subclasses must implement:
+    extract_slots()  -> list[Slot]  (DOM parser for available appointments)
+    execute()        -> real portal action (book / reschedule)
 """
 from __future__ import annotations
 
@@ -39,9 +39,9 @@ class Flow:
         if monitor.get("data_attuale") and not self.criteri.get("data_attuale"):
             self.criteri["data_attuale"] = monitor["data_attuale"]
 
-        # Strategia di ricerca multi-provincia:
-        # - "first_match": rapida/immediata, si ferma al primo match valido, mantiene la pagina e prenota subito
-        # - "best_match": globale, scansiona tutte le province e sceglie la data migliore
+        # Multi-province search strategy:
+        # - "first_match": rapid/immediate, stops at first valid match, keeps page open and books immediately
+        # - "best_match": global, scans all provinces and picks the best date
         strat = (
             self.criteri.get("search_strategy")
             or os.environ.get("SEARCH_STRATEGY", "")
@@ -71,7 +71,7 @@ class Flow:
         return getattr(self.browser, "driver", None)
 
     def _is_autenticato(self) -> bool:
-        """True se il browser corrente è autenticato e non su pagine di login/IdPC."""
+        """True if current browser is authenticated and not on login/IdPC pages."""
         d = getattr(self.browser, "driver", None)
         if d is None:
             return False
@@ -85,34 +85,34 @@ class Flow:
         except Exception:
             return False
 
-    # ---- da implementare nelle sottoclassi ----
+    # ---- methods to implement in subclasses ----
     def load_page(self) -> None:
-        """Naviga e predisponi la pagina col browser."""
+        """Navigate to and prepare the page in the browser."""
         raise NotImplementedError
 
     def extract_slots(self) -> list:
-        """Estrai la lista di Slot disponibili dalla pagina corrente."""
+        """Extract list of available Slot items from current page."""
         raise NotImplementedError
 
     def extract_slots_current_province(self) -> list:
-        """Estrae gli slot della sola provincia attualmente a video.
-        
-        Nelle sottoclassi implementa l'estrazione veloce dalla schermata corrente
-        senza iterare sulle province successive. Se non sovrascritta, fa fallback su extract_slots().
+        """Extract slots for the currently visible province only.
+
+        Subclasses implement fast extraction from the current screen without iterating
+        subsequent provinces. If not overridden, falls back to extract_slots().
         """
         return self.extract_slots()
 
     def execute(self, slot) -> None:
-        """Esegue la prenotazione/reprogrammazione reale sul portale."""
+        """Execute actual booking/rescheduling on the portal."""
         raise NotImplementedError
 
     @staticmethod
     def _data_dal_effettiva(criteri: dict) -> str:
-        """Ritorna la data 'a partire da' (GG/MM/AAAA) corretta da usare.
+        """Return the effective 'starting from' date (DD/MM/YYYY) to use.
 
-        - Se assente -> oggi
-        - Se è nel passato (es. scelta giorni fa) -> oggi (il portale rifiuta
-          date antecedenti l'odierna e questo bloccherebbe la ricerca)
+        - If missing -> today
+        - If in the past (e.g. chosen days ago) -> today (the portal rejects
+          dates before today, which would block search)
         """
         import datetime as _dt
         oggi = _dt.date.today()
@@ -135,18 +135,18 @@ class Flow:
         return oggi.strftime("%d/%m/%Y")
 
     def azione_extra(self, slot) -> str:
-        """Riga extra opzionale mostrata all'utente in fase di conferma.
+        """Optional extra line shown to user during confirmation.
 
-        Default: nessuna. I sottotipi (es. reschedule) possono restituire un
-        messaggio aggiuntivo (es. 'Vuoi anticipare o posticipare?').
+        Default: empty. Subtypes (e.g. reschedule) can provide an additional
+        message (e.g. 'Do you want to reschedule earlier or later?').
         """
         return ""
 
     def _riduci_tab_a_una(self) -> None:
-        """Chiude TUTTE le tab tranne quella corrente.
+        """Close ALL tabs except current.
 
-        Ogni ciclo o click su link target=_blank può aprire tab residue:
-        senza pulizia i tab si accumulano a ogni poll e la RAM cresce.
+        Each poll cycle or click on target=_blank links can leave leftover tabs:
+        without cleanup, tabs accumulate on every poll and increase RAM consumption.
         """
         d = getattr(self, "driver", None) or getattr(self.browser, "driver", None)
         if d is None:
@@ -172,24 +172,23 @@ class Flow:
         except Exception as e:  # noqa: BLE001
             log.warning("pulizia tab: %s", e)
 
-# ---------------- helper stato pagina (robusto, via JS) ----------------
+    # ---------------- page state helper (robust, via JS) ----------------
     def _stato_vista(self) -> dict:
-        """Stato REALE della pagina corrente, via JS (il test del testo del DOM
-        e' inaffidabile: i messaggi "non ci sono disponibilita" restano nel DOM
-        anche dopo aver chiuso la modale, e un campo nascosto #provincia puo'
-        confondere getElementById).
+        """REAL state of current page via JS (testing DOM text is unreliable:
+        'no availability' messages remain in DOM even after closing modals,
+        and a hidden #provincia field can confuse getElementById).
 
-        Ritorna dict:
+        Returns dict:
           stato: 'loading' | 'risultati' | 'no_risultati' | 'modale_ricerca' | 'form' | 'altro'
-          provincia: la provincia che la pagina ESPONE davvero:
-                     - 'risultati'     -> testata risultati (span.field-label)
-                     - 'form'/'modale' -> select visibile
-          loading: True se c'e' uno spinner di caricamento attivo
+          provincia: the province the page actually DISPLAYS:
+                     - 'risultati'     -> results header (span.field-label)
+                     - 'form'/'modale' -> visible select
+          loading: True if an active loading spinner exists
         """
         js = r"""
         function vis(el){if(!el)return false;var s=getComputedStyle(el);return s&&s.display!=='none'&&s.visibility!=='hidden';}
         var st={stato:'altro',provincia:'',loading:false},mods=document.querySelectorAll('.modal'),i,m;
-        // 1) modale 'Modifica ricerca' aperta (contiene select provincia)
+        // 1) modal 'Modifica ricerca' open (contains province select)
         for(i=0;i<mods.length;i++){if(vis(mods[i])){m=mods[i];break;}}
         if(m&&m.querySelector('#provincia')){
             var sp=m.querySelector('#provincia');
@@ -198,11 +197,10 @@ class Flow:
             else if(sp.selectedIndex>=0&&sp.options[sp.selectedIndex]) st.provincia=sp.options[sp.selectedIndex].textContent.trim();
             return st;
         }
-        // 2) vista risultati: bottone 'Modifica ricerca' + slot renderizzati
-        //    (o messaggio assenza nel body). NB: va VERIFICATO PRIMA dello
-        //    spinner: il portale lascia un overlay 'caricamento in corso...'
-        //    visibile anche a risultati già renderizzati, e mettere lo spinner
-        //    per primo bloccherebbe il flow in 'loading' per sempre.
+        // 2) results view: 'Modifica ricerca' button + rendered slots
+        //    (or no availability message in body). Note: must check BEFORE
+        //    spinner because the portal leaves a 'caricamento in corso...' overlay
+        //    visible even after results are rendered.
         var hasBtn=document.querySelector('button[ng-click*="prenotaDisponibilitaCtrl.modificaCriteri"]');
         var slotsInDom=document.querySelectorAll('li.appuntamento').length;
         var bodyNoDisp=/non sono state trovate|nessuna disponib|non ci sono disponib/i.test(document.body.textContent||'');
@@ -219,7 +217,7 @@ class Flow:
             }
             return st;
         }
-        // 3) modale 'Attenzione: non ci sono disponibilita' (0 disponibilita)
+        // 3) modal 'Attenzione: non ci sono disponibilita' (0 valid slots)
         for(i=0;i<mods.length;i++){
             if(!vis(mods[i]))continue;
             var t=mods[i].textContent||'';
@@ -228,14 +226,14 @@ class Flow:
                 return st;
             }
         }
-        // 4) form Dove/Quando visibile
+        // 4) visible Dove/Quando form
         var p=document.getElementById('provincia');
         if(p&&vis(p)){
             st.stato='form';
             if(p.selectedOptions[0])st.provincia=p.selectedOptions[0].textContent.trim();
             return st;
         }
-        // 5) spinner 'caricamento in corso...' SOLO se non c'è altro stato reale
+        // 5) spinner 'caricamento in corso...' ONLY if no other real state is detected
         var sp=Array.from(document.querySelectorAll('.spinner-container,[class*="spinner"],[class*="loader"]'));
         for(i=0;i<sp.length;i++){
             if(vis(sp[i])&&/caricamento/i.test(sp[i].textContent||'')){
@@ -256,8 +254,8 @@ class Flow:
         return r
 
     def _chiudi_modali_residui(self) -> None:
-        """Chiude eventuali modali residue (Attenzione/errore/info) che coprono
-        l'area di lavoro. NON tocca la modale di conferma prenotazione.
+        """Close any leftover modals (Attention/error/info) that cover
+        the workspace. Does NOT touch the booking confirmation modal.
         """
         try:
             self.driver.execute_script(
@@ -270,11 +268,10 @@ class Flow:
             pass
 
     def _set_provincia(self, provincia: str) -> bool:
-        """Imposta `provincia` nella select VISIBILE (form o modale ricerca).
+        """Set `provincia` in visible select element (form or search modal).
 
-        NB: il valore cercato va catturato in una variabile LOCALE: usarlo come
-        `arguments[0]` DENTRO la callback del `.find` confronta con `x` stesso
-        (sempre True) e selezionerebbe sempre la prima opzione.
+        Note: target value must be captured in a local variable: using `arguments[0]`
+        inside `.find` callback compares against `x` itself and would always pick option 0.
         """
         js = (
             "var target=arguments[0],i;"
@@ -304,23 +301,22 @@ class Flow:
 
     def _attendi_esito(self, provincia: str = "", timeout_s: int = 60,
                       max_load_s: int = 300) -> dict:
-        """Attende che la ricerca sia arrivata a un esito STABILE:
+        """Wait until search reaches a STABLE outcome:
 
-          - 'risultati'    -> vista risultati attiva (header provincia == attesa)
-          - 'no_risultati' -> modale assenza disponibilita visibile (0 valido)
-          - 'loading'      -> spinner 'caricamento in corso...' attivo
+          - 'risultati'    -> active results view (province header == expected)
+          - 'no_risultati' -> no availability modal visible (valid 0 results)
+          - 'loading'      -> 'caricamento in corso...' spinner active
 
-        IMPORTANTE: il timeout NON scatta mentre la pagina e' in caricamento
-        (spinner visibile), perche' il portale a volte impiega molto tempo e un
-        timeout fisso farebbe perdere l'esito. Scatta solo quando la pagina e'
-        FERMA (nessuno spinner e nessun esito) da almeno `timeout_s` secondi.
-        Come guardia anti-blocco, se il caricamento supera `max_load_s` totali
-        viene loggato e si ritorna comunque.
+        IMPORTANT: timeout does NOT trigger while page is loading (spinner visible),
+        because the portal can be slow and a fixed timeout would discard valid results.
+        It triggers only when the page is IDLE (no spinner and no result) for at least
+        `timeout_s` seconds. As a safeguard against hangs, total loading exceeding
+        `max_load_s` is logged and returned.
         """
         import time
         t0 = time.time()
         ultimo = {"stato": "altro", "provincia": "", "loading": False}
-        idle_da = None  # da quando la pagina non mostra ne' spinner ne' esito
+        idle_da = None  # timestamp since page has had neither spinner nor outcome
         while True:
             st = self._stato_vista()
             ultimo = st
@@ -347,17 +343,17 @@ class Flow:
             time.sleep(1.0)
 
     def _attendi_risultati(self, provincia: str, timeout_s: int = 60) -> bool:
-        """Compat: True se esito stabile (o assenza)."""
+        """Compatibility wrapper: True if stable outcome (or no results)."""
         st = self._attendi_esito(provincia, timeout_s=timeout_s)
         return st.get("stato") in ("risultati", "no_risultati")
 
     def _cambia_provincia_e_ricerca(self, provincia: str, _retry: int = 0) -> dict:
-        """Cambia provincia e rilancia la ricerca, ritornando l'esito
-        (vedi _stato_vista / _attendi_esito):
-        - form Dove/Quando (o dopo 0 disponibilità chiudendo la modale)
-          -> set provincia + consenso + ricercaDisponibilita
-        - vista risultati -> modale 'Modifica ricerca' -> provincia -> Aggiorna
-        Aggiorna self._provincia_corrente.
+        """Change province and rerun search, returning outcome
+        (see _stato_vista / _attendi_esito):
+        - Dove/Quando form (or after closing 0 availability modal)
+          -> set province + consent + search
+        - results view -> 'Modifica ricerca' modal -> province -> Update
+        Updates self._provincia_corrente.
         """
         import time
         d = self.driver
@@ -390,7 +386,7 @@ class Flow:
                 log.warning("'Modifica ricerca' non trovato")
                 return {"stato": s, "provincia": st.get("provincia", "")}
             self._click_el(b)
-            # aspetta che la MODALE sia davvero aperta (select al suo interno)
+            # Wait until modal is truly open (select visible inside it)
             t0 = time.time()
             while time.time() - t0 < 10:
                 sm = self._stato_vista()
@@ -407,10 +403,10 @@ class Flow:
             if b2 is not None and not b2.get_attribute("disabled"):
                 self._click_el(b2)
                 self._provincia_corrente = provincia
-                # Breve attesa per consentire la chiusura della modale e l'avvio della transizione DOM
+                # Short pause to allow modal closure and DOM transition to start
                 time.sleep(1.0)
                 esito = self._attendi_esito(provincia, timeout_s=60)
-                # se la testata NON è cambiata alla provincia attesa, riprova una volta
+                # If header did not change to expected province, retry once
                 if (esito.get("stato") == "risultati"
                         and (esito.get("provincia") or "").upper() != provincia.upper()
                         and _retry < 2):
@@ -423,7 +419,7 @@ class Flow:
             log.warning("'Aggiorna ricerca' non disponibile per %s", provincia)
             return {"stato": "modale_ricerca", "provincia": provincia}
         if s == "no_risultati":
-            # chiudi la modale di assenza (torna al form) e ri-handler
+            # Close absence modal (returns to form) and re-handle
             if _retry >= 2:
                 log.warning("cambio %s: modale di assenza non si chiude (retry esauriti)", provincia)
                 return {"stato": s, "provincia": st.get("provincia", "")}
@@ -434,10 +430,10 @@ class Flow:
         return {"stato": s, "provincia": st.get("provincia", "")}
 
     def _salva_debug_dump(self, name: str, invia_telegram: bool = False) -> dict | None:
-        """Salva dump HTML e screenshot della pagina corrente per diagnosi.
+        """Save HTML dump and screenshot of current page for troubleshooting.
 
-        Se invia_telegram=True (oppure se il tag indica un errore critico di prenotazione),
-        invia automaticamente lo screenshot PNG sul canale Telegram per visibilità immediata.
+        If invia_telegram=True (or if the tag indicates a critical booking error),
+        automatically sends the PNG screenshot to Telegram for immediate visibility.
         """
         from core.debug import salva_debug_dump
         d = getattr(self, "driver", None) or getattr(self.browser, "driver", None)
@@ -456,12 +452,12 @@ class Flow:
         return dump
 
     def _attendi_conferma_prenotazione(self, timeout_s: int = 30) -> tuple[bool, str, str]:
-        """Attende attivamente la conferma della prenotazione dopo il click su 'Conferma'.
+        """Actively wait for booking confirmation after clicking 'Conferma'.
 
-        Ritorna una tupla: (successo: bool, codice_prenotazione: str, messaggio_errore: str).
-        - Riconosce schermata di successo (appuntamentoConfermatoCtrl, success-feedback-title,
-          testo 'Prenotazione effettuata con successo', 'Appuntamento prenotato', codice prenotazione).
-        - Riconosce modali o alert di errore (es. slot scaduto / non più disponibile, errore di rete, ecc.).
+        Returns a tuple: (success: bool, booking_code: str, error_message: str).
+        - Recognizes success screen (appuntamentoConfermatoCtrl, success-feedback-title,
+          'Prenotazione effettuata con successo', 'Appuntamento prenotato', booking code).
+        - Recognizes error modals or alerts (e.g. slot expired / no longer available, network error, etc.).
         """
         import time
         from services.appuntamento import parse_successo
@@ -474,7 +470,7 @@ class Flow:
             if not self._is_autenticato():
                 return False, "", "Sessione scaduta o reindirizzato a login durante la conferma"
 
-            # 1. Controlla modali o alert di errore dal portale
+            # 1. Check for portal error modals or alerts
             err_msg = ""
             try:
                 err_msg = d.execute_script("""
@@ -520,7 +516,7 @@ class Flow:
                 self._salva_debug_dump("debug_conferma_errore")
                 return False, "", err_msg.strip()
 
-            # 2. Controlla schermata di successo
+            # 2. Check for success screen
             html = ""
             try:
                 html = d.page_source or ""
@@ -553,7 +549,7 @@ class Flow:
         return False, "", f"Timeout dopo {timeout_s}s: nessuna schermata di conferma o codice prenotazione apparso{dump_msg}"
 
     def _verifica_riscontro_miei_appuntamenti(self, slot, codice: str = "", timeout_s: int = 30) -> bool:
-        """Verifica nella sezione 'I miei appuntamenti' che la prenotazione esista realmente."""
+        """Verify in 'I miei appuntamenti' section that the appointment actually exists."""
         d = getattr(self, "driver", None)
         if d is None:
             return False
@@ -568,7 +564,7 @@ class Flow:
                 log.warning("[%s] Sessione non autenticata durante riscontro", self.mid)
                 return False
 
-            # Clicca 'Gestisci Prenotazioni'
+            # Click 'Gestisci Prenotazioni'
             opened = False
             try:
                 opened = d.execute_script("""
@@ -586,7 +582,7 @@ class Flow:
                 )
 
             time.sleep(1)
-            # Chiudi modali residui e switch al tab 'I miei appuntamenti'
+            # Close leftover modals and switch to 'I miei appuntamenti' tab
             try:
                 d.execute_script("""
                     var b = document.querySelector("button[ng-click*='messaggiCtrl']");
@@ -598,13 +594,13 @@ class Flow:
             except Exception:
                 pass
 
-            # Prepara termini di ricerca
+            # Prepare search terms
             ric = (self.monitor.get("ricetta") or "").strip().lower()
             nre = (self.monitor.get("nre") or "").strip().lower()
             cod = codice.strip().lower() if codice else ""
-            target_data = slot.date_str.strip()  # es. "04/06/2027"
+            target_data = slot.date_str.strip()  # e.g. "04/06/2027"
 
-            # Polling attivo per le card
+            # Active polling for cards
             for sec in range(max(1, timeout_s)):
                 if not self._is_autenticato():
                     log.warning("[%s] Sessione persa durante polling riscontro", self.mid)
@@ -614,7 +610,7 @@ class Flow:
                 except Exception:
                     pass
 
-                # Estrai il testo delle card presenti
+                # Extract text of present cards
                 cards_data = []
                 try:
                     cards_data = d.execute_script("""
@@ -634,13 +630,13 @@ class Flow:
                 except Exception:
                     pass
 
-                # Match per codice prenotazione (se disponibile)
+                # Match by booking code (if available)
                 if cod and (cod in page_text or any(cod in c.lower() for c in cards_data)):
                     log.info("[%s] Riscontro OK: codice %s trovato tra gli appuntamenti (dopo %ds)",
                              self.mid, cod, sec)
                     return True
 
-                # Match per data slot e prestazione/ricetta
+                # Match by slot date and appointment/prescription
                 for card_txt in cards_data:
                     c_low = card_txt.lower()
                     if target_data in card_txt:
@@ -656,14 +652,14 @@ class Flow:
                                 log.info("[%s] Riscontro OK: data %s e prestazione matching trovati (dopo %ds)",
                                          self.mid, target_data, sec)
                                 return True
-                        # Se non c'è ricetta specifica o se la data matcha la card
+                        # If no specific prescription or if date matches card
                         log.info("[%s] Riscontro OK: data %s trovata tra le card (dopo %ds)",
                                  self.mid, target_data, sec)
                         return True
 
                 time.sleep(1)
 
-            # Timeout riscontro
+            # Verification timeout
             log.warning("[%s] Riscontro fallito dopo %ds: appuntamento per %s non trovato in 'I miei appuntamenti'",
                         self.mid, timeout_s, target_data)
             self._salva_debug_dump("debug_riscontro_non_trovato")
@@ -673,17 +669,17 @@ class Flow:
             self._salva_debug_dump("debug_riscontro_errore")
             return False
 
-    # ---- pipeline condivisa ----
+    # ---- shared pipeline ----
     def poll_once(self, manual: bool = False) -> str:
-        """Esegue un ciclo di controllo. Ritorna un messaggio di esito (o '').
+        """Run a single check cycle. Returns an outcome message (or '').
 
-        manual=True se il giro è stato richiesto esplicitamente dall'utente
-        (/poll): solo in quel caso viene inviata la notifica di fine-giro
-        "nessuna disponibilità" (nei tick automatici sarebbe invasiva).
+        manual=True if the cycle was explicitly triggered by user (/poll):
+        only in that case is the end-of-cycle "no availability" notification sent
+        (in automatic ticks it would be spammy).
         """
-        # Se la visita è già stata prenotata:
+        # If appointment was already booked:
         action_state = self.store.get_action(self.mid)
-        # 1) Per monitor di tipo 'reschedule': riarma sempre a 'idle' per continuare a cercare anticipi
+        # 1) For 'reschedule' monitors: always rearm to 'idle' to keep searching for earlier dates
         if self.type == "reschedule" and action_state in ("done", "done_pending_choice"):
             log.info(
                 "[%s] Monitor reschedule attivo con action_state=%s: ripristino a idle per proseguire il monitoraggio anticipo",
@@ -693,8 +689,8 @@ class Flow:
             self.store.mark_action(self.mid, "idle", "riarmo monitor reschedule")
             action_state = "idle"
 
-        # 2) Per monitor 'new' in attesa scelta post-prenotazione:
-        # se l'utente richiede esplicitamente il controllo (/poll manuale), promuove automaticamente a reschedule
+        # 2) For 'new' monitors awaiting post-booking choice:
+        # if user explicitly requests check (/poll manual), automatically promote to reschedule
         if self.type == "new" and action_state == "done_pending_choice" and manual:
             log.info("[%s] /poll manuale su monitor done_pending_choice: promozione automatica a ricerca anticipo", self.mid)
             pren = self.store.get_prenotazione(self.mid)
@@ -780,8 +776,8 @@ class Flow:
             raise
 
     def _cerca_best_match(self, manual: bool = False) -> str:
-        """Modalità 'best_match': scansiona tutte le province, estrae tutti gli slot
-        e propone il migliore in assoluto.
+        """'best_match' mode: scans all provinces, extracts all slots,
+        and proposes the absolute best.
         """
         slots = self.extract_slots()
         seen = self.store.seen_slots(self.mid)
@@ -790,27 +786,27 @@ class Flow:
 
         match = best_match(fresh, self.criteri)
         if not match:
-            # aggiorna gli slot visti comunque (per i nuovi che arriveranno)
+            # Update seen slots anyway (for new upcoming slots)
             self.store.record_slots(self.mid, [s.key for s in slots])
             log.info("[%s] nessun match nuovo (%d disponibili)", self.mid, len(slots))
-            # messaggio di fine giro SOLO se richiesto manualmente (/poll)
+            # End-of-cycle message ONLY if requested manually (/poll)
             if manual and self.criteri.get("notifica_vuoto", True):
                 self._notifica_poll_vuoto(slots)
             return ""
 
-        # propongo all'utente
+        # Propose slot to user
         self.store.record_slots(self.mid, [s.key for s in slots])
         return self._request_approval(match)
 
     def _cerca_first_match(self, manual: bool = False) -> str:
-        """Modalità 'first_match': esamina le province in ordine sequenziale.
+        """'first_match' mode: evaluates provinces sequentially.
 
-        Non appena trova una disponibilità valida nei criteri:
-        - si ferma subito senza esaminare le province successive;
-        - lascia il browser fermo sulla schermata dei risultati della provincia trovata;
-        - chiede l'approvazione all'utente;
-        - all'approvazione, prenota direttamente sulla schermata già caricata,
-          azzerando i tempi di switch e minimizzando le race condition.
+        As soon as a valid slot meeting criteria is found:
+        - stops immediately without scanning remaining provinces;
+        - keeps browser on the results screen of the found province;
+        - requests user approval;
+        - upon approval, books directly on the already loaded page,
+          eliminating switch delays and minimizing race conditions.
         """
         province = list(self.criteri.get("province") or [])
         seen = self.store.seen_slots(self.mid)
@@ -842,17 +838,17 @@ class Flow:
             else:
                 self.store.record_slots(self.mid, [s.key for s in slots])
 
-        # Nessuna provincia contiene slot che soddisfano i criteri
+        # No province contains slots matching criteria
         log.info("[%s] first_match: nessun match nuovo in tutte le province (%d disponibili)", self.mid, len(all_slots))
         if manual and self.criteri.get("notifica_vuoto", True):
             self._notifica_poll_vuoto(all_slots)
         return ""
 
     def _notifica_poll_vuoto(self, slots):
-        """Notifica a fine poll quando non ci sono disponibilità nel range."""
+        """Notify at end of poll when no availability was found in range."""
         prov = ""
         if slots:
-            # ci sono slot MA non nel range: mostra il primo fuori range
+            # Slots exist but outside range: show first out-of-range slot
             s0 = slots[0]
             prov = (s0.extra or {}).get("provincia", "")
             dal = (self.criteri.get("data_dal") or "").strip()
@@ -880,7 +876,7 @@ class Flow:
         import urllib.parse as _up
         esc = lambda s: _html.escape(str(s or ""))
         extra = slot.extra or {}
-        # contesto: provincia (se nota) e range temporale del monitor
+        # Context: province (if known) and monitor time range
         prov = extra.get("provincia", "")
         azienda = extra.get("azienda", "")
         sede = extra.get("sede", "")
@@ -896,7 +892,7 @@ class Flow:
         )
         if azienda:
             msg += f"\n🏥 {esc(azienda)}"
-        # luogo: sede (o azienda) + comune, con link Google Maps
+        # Location: facility (or company) + municipality, with Google Maps link
         qparts = [p for p in (sede or azienda, comune) if p.strip()]
         if qparts:
             q = _up.quote(" ".join(p.strip() for p in qparts))
@@ -912,23 +908,21 @@ class Flow:
             msg += f'\n🗺 <a href="{maps_url.replace("&", "&amp;")}">Apri in Google Maps</a>'
         msg += f"\n{esc(self.criteri.get('note', ''))}"
         msg += f"\n\nVuoi procedere?"
-        # pulsanti inline: Approva/Rifiuta (per reschedule la scelta anticipa/
-        # posticipa è IMPLICITA nella data scelta, non serve chiederla)
+        # Inline buttons: Approve/Reject
         righe = [[("✅ Approva", f"decide:approve:{req_id}"),
                   ("❌ Rifiuta", f"decide:deny:{req_id}")]]
         inviati = self.bot.notify_buttons(msg, righe)
-        # attendo la decisione (bloccante, con timeout)
+        # Await decision (blocking, with timeout)
         decision = self.queue.wait_decision(req_id)
         scaduta = decision.get("cancelled") and decision.get("reason") == "timeout"
         if decision.get("cancelled") or not decision.get("decision"):
             log.info("[%s] approvazione negata/scaduta", self.mid)
-            # proposta scaduta per timeout: aggiorna il messaggio su Telegram
-            # (mantiene i dettagli e toglie i pulsanti, segnalando la scadenza)
+            # Proposal timed out: update Telegram message removing buttons
             if scaduta and inviati:
                 testo = f"{msg}\n\n⏳ Proposta scaduta: il tempo per rispondere è terminato, la disponibilità potrebbe non essere più valida."
                 self.bot.edit_message(testo, inviati)
             else:
-                # Rifiuto esplicito dell'utente: aggiungi lo slot alla blacklist
+                # Explicit user rejection: add slot to blacklist
                 if hasattr(self.store, "add_blacklist_entry"):
                     nre = (self.monitor.get("nre") or "").strip()
                     data_ricetta = (self.monitor.get("data_ricetta") or "").strip()
@@ -936,7 +930,7 @@ class Flow:
                     log.info("[%s] Aggiunto slot %s alla blacklist", self.mid, getattr(slot, "key", str(slot)))
             return f"Disponibilità {slot} non confermata."
 
-        # approvata -> esegui l'azione reale
+        # Approved -> execute actual booking
         try:
             self._ultima_azione = (decision.get("extra") or {}).get("azione", "approve")
             self.execute(slot)
@@ -956,7 +950,7 @@ class Flow:
             return "errore"
 
     def _chiedi_post_prenotazione(self, slot) -> None:
-        """Invia all'utente la richiesta con bottoni per decidere se fermare o proseguire il monitoraggio."""
+        """Send Telegram prompt with buttons to decide whether to stop or continue monitoring."""
         nome = self.monitor.get("ricetta") or self.mid
         msg = (
             f"🎯 <b>Prenotazione completata!</b> ({nome})\n"

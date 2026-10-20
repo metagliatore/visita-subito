@@ -1,11 +1,10 @@
 """Session Manager.
 
-Gestisce il ciclo di vita della sessione SPID:
-  1. Il login avviene UNA volta in modo MANUALE (finestra visibile -> OTP).
-  2. I cookie vengono salvati su disco.
-  3. Un keep-alive periodico tocca il portale per non far scadere la sessione.
-  4. Se la sessione risulta scaduta, espone uno stato che fa scattare la
-     notifica "serve re-login" via Telegram.
+Manages SPID/CIE session lifecycle:
+  1. Login is performed manually or automatically.
+  2. Cookies are persisted to disk.
+  3. A periodic keep-alive touches the portal to prevent session expiration.
+  4. If expired, exposes state triggering re-login notifications via Telegram.
 """
 from __future__ import annotations
 
@@ -19,8 +18,8 @@ from selenium import webdriver
 
 log = logging.getLogger(__name__)
 
-# Si consiglia di restare sullo stesso IP (VPS/PC stabile) per non invalidare
-# la sessione SPID per cambio IP.
+# Maintaining the same IP (VPS/stable PC) is recommended to avoid invalidating
+# the SPID session due to IP changes.
 
 
 class SessionManager:
@@ -31,14 +30,14 @@ class SessionManager:
         self.cookie_file = self.cookie_dir / "cookies.pkl"
         self.meta_file = self.cookie_dir / "meta.json"
         self.session_valid = False
-        # callback di notifica (es. invia messaggi Telegram durante il login)
+        # Notification callback (e.g. sends Telegram messages during login)
         self.on_notify = None
-        # callback di fallback interattivo su Telegram (notifica vs OTP)
+        # Interactive fallback callback on Telegram (push notification vs OTP)
         self.on_auth_fallback = None
-        # callback per richiesta inserimento codice OTP
+        # Callback for requesting OTP code input
         self.on_otp_prompt = None
 
-    # ---------------- persistenze ----------------
+    # ---------------- persistence ----------------
     def save(self, driver: webdriver.Chrome) -> None:
         cookies = driver.get_cookies()
         with open(self.cookie_file, "wb") as f:
@@ -61,18 +60,18 @@ class SessionManager:
 
     # ---------------- knobs ----------------
     def needs_login(self) -> bool:
-        """True se non abbiamo ancora una sessione salvata."""
+        """True if no saved session exists yet."""
         return not self.cookie_file.exists()
 
     def is_autenticato(self, driver: webdriver.Chrome) -> bool:
-        """True se il driver corrente è autenticato su area privata/prenotaonline."""
+        """True if current driver is authenticated on private area or prenotaonline."""
         if driver is None:
             return False
         try:
             url = (driver.current_url or "").split("?")[0].lower()
             if not url or "about:blank" in url:
                 return False
-            # Se siamo stati rimandati all'IdPC o a pagine di login, non siamo autenticati
+            # If redirected to IdP or login pages, we are not authenticated
             if any(k in url for k in ["idpcwrapper", "identity.", "login", "/sso"]):
                 return False
             return ("/web/areaprivata/" in url) or ("/prenotaonline/" in url)
@@ -89,18 +88,17 @@ class SessionManager:
             return True
 
     def _riavvia_con_headless(self, headless: bool) -> None:
-        """Se un driver e' gia' attivo ma con modalita' headless diversa,
-        lo chiude per farne ripartire Chrome con la modalita' richiesta."""
+        """If a driver is already active with a different headless mode,
+        restarts it with the requested mode."""
         self.browser.set_headless(headless)
 
-    # ---------------- azioni ----------------
+    # ---------------- actions ----------------
     def relogin_manual(self, url: str) -> webdriver.Chrome:
-        """Apre finestra VISIBILE: l'utente fa login + OTP a mano.
+        """Open a VISIBLE window: user performs login + OTP manually.
 
-        Attende il completamento con polling su `is_autenticato` (funziona
-        anche sotto nohup, dove `input()` legge /dev/null e salva i cookie
-        prima che il login finisca). Se stdin e' un TTY e non e' configurato
-        un timeout, domanda comunque conferma manuale.
+        Waits for completion by polling `is_autenticato` (works even under nohup,
+        where `input()` reads /dev/null and saves cookies before login finishes).
+        If stdin is a TTY and no timeout is configured, still asks for manual confirmation.
         """
         prev = self.browser.settings.headless
         self._riavvia_con_headless(False)
@@ -115,8 +113,8 @@ class SessionManager:
             self.browser.settings.headless = prev
 
     def _attendi_login_manuale(self, driver, timeout_s: int = 600) -> None:
-        """Attende (con polling ogni 5s) che il login manuale sia completato,
-        ovvero che l'URL rientri nell'area privata. Lavora anche senza TTY."""
+        """Wait (polling every 5s) for manual login completion,
+        i.e. until the URL belongs to the private area. Works without a TTY."""
         import sys
         t0 = time.time()
         log.info("attesa login manuale (timeout %ss): controlla la finestra Chrome e il telefono", timeout_s)
@@ -129,7 +127,7 @@ class SessionManager:
             if self.is_autenticato(driver):
                 log.info("login manuale completato")
                 return
-            # se stdin e' un TTY, permette anche la conferma manuale classica
+            # If stdin is a TTY, also allow classic manual confirmation
             if sys.stdin.isatty():
                 try:
                     import select as _sel
@@ -148,11 +146,10 @@ class SessionManager:
             if self.on_notify:
                 self.on_notify("⚠️ Timeout login manuale: la sessione non è stata verificata.")
             return
-        # conferma da TTY: salva solo se davvero autenticati (check già passato sopra)
-
+        # Confirmation from TTY: save only if actually authenticated (checked above)
 
     def invalidate(self) -> None:
-        """Marca la sessione come non valida/scaduta e rimuove i cookie su disco."""
+        """Mark session as invalid/expired and delete cookies on disk."""
         self.session_valid = False
         try:
             if hasattr(self, "cookie_file") and self.cookie_file.exists():
@@ -166,7 +163,7 @@ class SessionManager:
             pass
 
     def keep_alive(self, driver: webdriver.Chrome, url: str) -> bool:
-        """Tocca una pagina del portale per mantenere viva la sessione."""
+        """Touch a portal page to keep the session alive."""
         try:
             driver.get(url)
             time.sleep(3)
@@ -186,9 +183,9 @@ class SessionManager:
                 self.browser.stop()
             return False
 
-    # ---------------- helper SielteID ----------------
+    # ---------------- SielteID helpers ----------------
     def _invia_notifica_sielte(self, driver: webdriver.Chrome) -> bool:
-        """Tenta di selezionare o re-inviare la notifica push su SielteID."""
+        """Attempt to select or resend push notification on SielteID."""
         from core import selectors
         sielte_sel = selectors.LOGIN_IDP_SIELTEID.get("scelta_metodo", {})
         try:
@@ -200,7 +197,7 @@ class SessionManager:
         return self._find_and_click(driver, sielte_sel.get("notifica", []))
 
     def _attiva_otp_sielte(self, driver: webdriver.Chrome) -> bool:
-        """Passa alla schermata di inserimento codice OTP su SielteID."""
+        """Switch to OTP code input screen on SielteID."""
         from core import selectors
         sielte_sel = selectors.LOGIN_IDP_SIELTEID.get("scelta_metodo", {})
         try:
@@ -212,7 +209,7 @@ class SessionManager:
         return self._find_and_click(driver, sielte_sel.get("otp_app", []))
 
     def _inserisci_otp_sielte(self, driver: webdriver.Chrome, code: str) -> bool:
-        """Compila e sottomette il codice OTP su SielteID."""
+        """Fill and submit OTP code on SielteID."""
         from core import selectors
         sielte_sel = selectors.LOGIN_IDP_SIELTEID
         filled = self._find_and_fill(driver, sielte_sel.get("otp", []), code)
@@ -241,7 +238,7 @@ class SessionManager:
         return filled
 
     def _clicca_consenso_sielte(self, driver: webdriver.Chrome) -> bool:
-        """Tenta di confermare il consenso dati SPID SAML se presente."""
+        """Attempt to confirm SPID SAML data consent screen if present."""
         from core import selectors
         sielte_sel = selectors.LOGIN_IDP_SIELTEID.get("consenso", {})
         try:
@@ -256,7 +253,7 @@ class SessionManager:
         return self._find_and_click(driver, sielte_sel.get("btn_autorizza", []))
 
     def _ottieni_scelta_fallback(self, auth_callback=None) -> str | None:
-        """Chiede all'utente via Telegram (o TTY) se inviare notifica o immettere codice OTP."""
+        """Ask user via Telegram (or TTY) whether to resend push notification or enter OTP code."""
         if auth_callback:
             try:
                 res = auth_callback("ask_action")
@@ -272,7 +269,7 @@ class SessionManager:
             except Exception as e:  # noqa: BLE001
                 log.warning("on_auth_fallback: %s", e)
 
-        # Fallback console se avviato con terminale interattivo (TTY)
+        # Console fallback when started with interactive terminal (TTY)
         import sys
         if sys.stdin.isatty():
             try:
@@ -289,7 +286,7 @@ class SessionManager:
         return None
 
     def _chiedi_e_inserisci_otp(self, driver: webdriver.Chrome, auth_callback=None) -> bool:
-        """Chiede il codice OTP all'utente, lo compila e ne attende la verifica."""
+        """Ask user for OTP code, fill it into the form, and await verification."""
         code = None
         if auth_callback:
             try:
@@ -302,7 +299,7 @@ class SessionManager:
             except Exception as e:  # noqa: BLE001
                 log.warning("on_otp_prompt: %s", e)
 
-        # Fallback console se su TTY
+        # Console fallback if on TTY
         if not code:
             import sys
             if sys.stdin.isatty():
@@ -336,14 +333,14 @@ class SessionManager:
 
         return True
 
-    # ---------------- login SielteID automatico ----------------
+    # ---------------- automated SielteID login ----------------
     def relogin_sielte(self, username: str = "", password: str = "",
                        wait_otp_sec: int = 180,
                        otp_mode: str = "notifica",
                        auth_callback=None) -> webdriver.Chrome:
-        """Login automatico SielteID (finestra visibile): credenziali, scelta
-        metodo notifica push, con fallback su Telegram per reinvio notifica o
-        immissione codice OTP.
+        """Automated SielteID login (visible window): credentials, push
+        notification method selection, with Telegram fallback to resend
+        notification or enter OTP code.
         """
         from selenium.webdriver.common.by import By
         from core import selectors
@@ -356,7 +353,7 @@ class SessionManager:
         if self.is_autenticato(driver):
             self.save(driver); self.session_valid = True
             return driver
-        # pagina IdPC: apri dropdown + seleziona Sielte
+        # IdPC page: open dropdown + select Sielte
         try:
             driver.execute_script("var a=document.querySelector('[spid-idp-button], a.button-spid, .pulsante-spid');if(a)a.click();")
             time.sleep(1)
@@ -372,7 +369,7 @@ class SessionManager:
         except Exception:  # noqa: BLE001
             pass
         time.sleep(4)
-        # login form
+        # Login form
         if "identity.sieltecloud.it" in driver.current_url:
             try:
                 driver.find_element(By.ID, "username").send_keys(username)
@@ -386,25 +383,25 @@ class SessionManager:
             return driver
 
         # ----------------------------------------------------
-        # 2FA: Notifica Push con Fallback Interattivo (Telegram)
+        # 2FA: Push Notification with Interactive Fallback (Telegram)
         # ----------------------------------------------------
         t0 = time.time()
         deadline = t0 + wait_otp_sec
 
-        # Se l'utente ha configurato esplicitamente la modalità OTP:
+        # If user explicitly configured OTP mode:
         if (otp_mode or "").lower() == "otp":
             log.info("Modalità OTP configurata: attivo inserimento codice OTP")
             self._attiva_otp_sielte(driver)
             time.sleep(2)
             self._chiedi_e_inserisci_otp(driver, auth_callback)
         else:
-            # Modalità notifica (default): invia la prima notifica push
+            # Notification mode (default): send first push notification
             if self.on_notify:
                 self.on_notify("📲 Sto per inviare la notifica SielteID: prepara il telefono e "
                                "approvala appena arriva!")
             self._invia_notifica_sielte(driver)
 
-            # Primo tentativo push: attesa breve (circa 35 secondi)
+            # First push attempt: short wait (~35 seconds)
             push_wait_until = min(deadline, time.time() + 35)
             while time.time() < push_wait_until:
                 time.sleep(4)
@@ -414,9 +411,9 @@ class SessionManager:
                     self.session_valid = True
                     return driver
 
-        # Se non ancora autenticati, la notifica iniziale non è bastata: avvia fallback
+        # If not yet authenticated, initial push did not succeed: trigger fallback
         log.info("Login da notifica non completato: avvio fallback (invia notifica / immetti otp)")
-        abs_deadline = t0 + 600  # Limite massimo assoluto di 10 minuti per la sessione interattiva
+        abs_deadline = t0 + 600  # Absolute maximum limit of 10 minutes for interactive session
         while time.time() < deadline and time.time() < abs_deadline:
             self._clicca_consenso_sielte(driver)
             if self.is_autenticato(driver):
@@ -424,12 +421,12 @@ class SessionManager:
                 self.session_valid = True
                 return driver
 
-            # Chiede su Telegram: Invia notifica o Immetti codice OTP
+            # Ask on Telegram: Send push notification or enter OTP code
             scelta = self._ottieni_scelta_fallback(auth_callback)
 
             if scelta == "notify":
                 log.info("Scelta fallback utente: invia notifica di nuovo")
-                # Quando l'utente chiede un nuovo invio push, estendiamo la deadline
+                # When user requests a new push notification, extend deadline
                 deadline = max(deadline, min(abs_deadline, time.time() + 65))
                 if self.on_notify:
                     self.on_notify("📲 Nuova notifica push SielteID inviata: controlla il telefono!")
@@ -458,12 +455,12 @@ class SessionManager:
                 log.info("Login annullato dall'utente.")
                 raise RuntimeError("Login SielteID annullato dall'utente.")
             else:
-                # Nessuna scelta ricevuta (es. timeout di un ciclo o canale non interattivo)
+                # No choice received (e.g. cycle timeout or non-interactive channel)
                 time.sleep(5)
 
         raise TimeoutError("Timeout nell'attesa approvazione SielteID (approva la notifica o inserisci l'OTP!)")
 
-    # ---------------- helper selettori ----------------
+    # ---------------- selector helpers ----------------
     def _find_and_fill(self, driver, sel_list, value: str) -> bool:
         from selenium.webdriver.common.by import By
         BY_MAP = {"id": By.ID, "name": By.NAME, "css": By.CSS_SELECTOR, "xpath": By.XPATH}
@@ -495,7 +492,7 @@ class SessionManager:
         return False
 
     def _find_element(self, driver, sel_list):
-        """Ritorna il primo WebElement visibile trovato nella lista di selettori, o None."""
+        """Return first visible WebElement found in selector list, or None."""
         from selenium.webdriver.common.by import By
         BY_MAP = {"id": By.ID, "name": By.NAME, "css": By.CSS_SELECTOR, "xpath": By.XPATH}
         for strat, val in sel_list:
@@ -509,7 +506,7 @@ class SessionManager:
         return None
 
     def _chiedi_e_inserisci_otp_cie(self, driver: webdriver.Chrome, auth_callback=None) -> bool:
-        """Chiede il codice OTP CIE all'utente, lo compila e ne attende la verifica."""
+        """Ask user for CIE OTP code, fill it into the form, and await verification."""
         prompt_txt = "🔢 Inserisci il codice OTP ricevuto via SMS o generato dall'app CieID:"
         code = None
         if auth_callback:
@@ -523,7 +520,7 @@ class SessionManager:
             except Exception as e:
                 log.warning("on_otp_prompt CIE: %s", e)
 
-        # Fallback console se su TTY
+        # Console fallback if on TTY
         if not code:
             import sys
             if sys.stdin.isatty():
@@ -561,17 +558,17 @@ class SessionManager:
 
         return True
 
-    # ---------------- login SPID multi-provider ----------------
+    # ---------------- multi-provider SPID login ----------------
     def relogin_spid(self, provider_key: str, username: str = "", password: str = "",
                       wait_otp_sec: int = 180, auth_callback=None) -> webdriver.Chrome:
-        """Accesso SPID per i vari provider (PosteID, Aruba, InfoCert, Lepida, Namirial, ecc.).
-        Compila automaticamente username/password se configurati, invia notifica Telegram,
-        attende l'approvazione secondo fattore (push/OTP) e la schermata di consenso.
+        """SPID login for various providers (PosteID, Aruba, InfoCert, Lepida, Namirial, etc.).
+        Automatically fills username/password if configured, sends Telegram notification,
+        awaits second-factor approval (push/OTP), and handles the consent screen.
         """
         from selenium.webdriver.common.by import By
         from core import selectors
 
-        # Selezione dei selettori specifici del provider
+        # Selection of provider-specific selectors
         prov_map = {
             "poste": selectors.LOGIN_IDP_POSTEID,
             "aruba": selectors.LOGIN_IDP_ARUBA,
@@ -592,7 +589,7 @@ class SessionManager:
             self.session_valid = True
             return driver
 
-        # Apri menu SPID e seleziona il provider
+        # Open SPID menu and select provider
         try:
             driver.execute_script("var a=document.querySelector('[spid-idp-button], a.button-spid, .pulsante-spid');if(a)a.click();")
             time.sleep(1)
@@ -613,7 +610,7 @@ class SessionManager:
 
         time.sleep(5)
 
-        # Compilazione credenziali se disponibili
+        # Fill credentials if available
         if username and password:
             u_sel = prov_sel.get("username", [("id", "username"), ("name", "username"), ("css", "input[type='text'], input[type='email']")])
             p_sel = prov_sel.get("password", [("id", "password"), ("name", "password"), ("css", "input[type='password']")])
@@ -630,14 +627,14 @@ class SessionManager:
             if self.on_notify:
                 self.on_notify(f"🔑 Finestra {prov_name} aperta: inserisci le credenziali e autorizza l'accesso.")
 
-        # Attesa approvazione 2FA + consenso (SAML attribute release)
+        # Wait for 2FA approval + consent (SAML attribute release)
         consenso_sel = prov_sel.get("consenso", [
             ("css", "button[name='confirm'], input[value*='Autorizza'], button[type='submit']"),
             ("xpath", "//button[contains(., 'Autorizza') or contains(., 'Conferma') or contains(., 'Prosegui') or contains(., 'Acconsento')]"),
         ])
         for _ in range(max(1, wait_otp_sec // 5)):
             time.sleep(5)
-            # Prova click automatico su eventuale schermata di consenso
+            # Try clicking through consent screen if present
             self._find_and_click(driver, consenso_sel)
             if self.is_autenticato(driver):
                 self.save(driver)
@@ -646,15 +643,15 @@ class SessionManager:
 
         raise TimeoutError(f"Timeout nell'attesa approvazione SPID ({prov_name})")
 
-    # ---------------- login CIE ----------------
+    # ---------------- CIE login ----------------
     def relogin_cie(self, username: str = "", password: str = "", mode: str = "app",
                      wait_otp_sec: int = 180, auth_callback=None) -> webdriver.Chrome:
-        """Accesso tramite CIE (Carta di Identità Elettronica).
-        Supporta:
-          - Livello 2: credenziali (Codice Fiscale / Numero CIE + password) + 2FA
-            (notifica push app CieID, codice OTP via SMS o app, QR Code).
-          - Livello 3: smartcard NFC con lettore o software CIE.
-        Include interazione Telegram per fallback OTP e screenshot QR Code.
+        """Login via CIE (Electronic Identity Card).
+        Supports:
+          - Level 2: credentials (Fiscal Code / CIE Number + password) + 2FA
+            (CieID app push notification, OTP via SMS or app, QR code).
+          - Level 3: NFC smartcard with reader or CIE software.
+        Includes Telegram interaction for OTP fallback and QR code screenshot.
         """
         from selenium.webdriver.common.by import By
         from core import selectors
@@ -677,7 +674,7 @@ class SessionManager:
             self.session_valid = True
             return driver
 
-        # Submit form CIE su IdPC Regione Lombardia
+        # Submit CIE form on Regione Lombardia IdPC
         try:
             submitted = driver.execute_script(
                 "var f=document.querySelector('form[action*=\"AuthRequestCieService\"], .pulsante-cie form');"
@@ -695,7 +692,7 @@ class SessionManager:
 
         cie_sel = selectors.LOGIN_CIE
 
-        # Attesa atterraggio su IdP CIE o autenticazione
+        # Wait until landed on CIE IdP or authenticated
         for _ in range(5):
             if self.is_autenticato(driver):
                 self.save(driver)
@@ -705,9 +702,9 @@ class SessionManager:
                 break
             time.sleep(2)
 
-        # Gestione credenziali Livello 1/2
+        # Level 1/2 credential handling
         if username and password:
-            # Se la pagina mostra prima la selezione modalità, apri la sezione credenziali
+            # If page shows mode selection first, open credentials section
             if not self._find_element(driver, cie_sel["username"]):
                 log.info("Campi credenziali CIE non visibili subito: provo selettori 'btn_credenziali'")
                 self._find_and_click(driver, cie_sel["btn_credenziali"])
@@ -735,22 +732,22 @@ class SessionManager:
                 if self.on_notify:
                     self.on_notify("🔑 Schermata CIE aperta: completa l'autenticazione con l'app CieID (QR/notifica) o Smartcard.")
 
-        # Loop attesa 2FA, QR, OTP, approvazione e consenso
+        # 2FA, QR, OTP, approval and consent waiting loop
         t0 = time.time()
         deadline = t0 + wait_otp_sec
-        abs_deadline = t0 + 600  # Max 10 minuti per interazione umana
+        abs_deadline = t0 + 600  # Max 10 minutes for human interaction
         qr_sent = False
         last_fallback_prompt = 0
 
         while time.time() < deadline and time.time() < abs_deadline:
-            # Prova click consenso
+            # Attempt clicking consent button
             self._find_and_click(driver, cie_sel["consenso"])
             if self.is_autenticato(driver):
                 self.save(driver)
                 self.session_valid = True
                 return driver
 
-            # Verifica se è comparso il campo OTP
+            # Check if OTP input field has appeared
             if self._find_element(driver, cie_sel["otp"]):
                 log.info("Rilevato campo OTP CIE sul portale")
                 deadline = max(deadline, min(abs_deadline, time.time() + 130))
@@ -760,7 +757,7 @@ class SessionManager:
                     self.session_valid = True
                     return driver
 
-            # Verifica se è comparso un QR code da scansionare
+            # Check if QR code has appeared for scanning
             if not qr_sent and mode_str != "smartcard":
                 qr_el = self._find_element(driver, cie_sel["qr_code"])
                 if qr_el:
@@ -781,7 +778,7 @@ class SessionManager:
                         if self.on_notify:
                             self.on_notify("📲 QR Code CIE visualizzato: scansionalo con l'app CieID sul tuo smartphone.")
 
-            # Se in attesa notifica push e sono passati più di 35 secondi dal submit
+            # If awaiting push notification and more than 35 seconds elapsed since submit
             if (username and password and auth_callback and
                     (time.time() - t0 > 35) and (time.time() - last_fallback_prompt > 60)):
                 log.info("Notifica CIE non ancora approvata: propongo fallback interattivo Telegram")

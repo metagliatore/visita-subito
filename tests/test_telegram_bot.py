@@ -17,22 +17,22 @@ def test_telegram_autorizzato():
     bot = TelegramBot.__new__(TelegramBot)
     bot.chat_ids = ["12345678", 99999]
 
-    # Utente autorizzato con int
+    # Authorized user with int
     up1 = MagicMock()
     up1.effective_chat.id = 12345678
     assert bot._autorizzato(up1) is True
 
-    # Utente autorizzato con str
+    # Authorized user with str
     up2 = MagicMock()
     up2.effective_chat.id = 99999
     assert bot._autorizzato(up2) is True
 
-    # Utente non autorizzato
+    # Unauthorized user
     up3 = MagicMock()
     up3.effective_chat.id = 11111
     assert bot._autorizzato(up3) is False
 
-    # Chat None
+    # None chat
     up4 = MagicMock()
     up4.effective_chat = None
     assert bot._autorizzato(up4) is False
@@ -44,12 +44,12 @@ def test_telegram_risveglia_se_needed():
     ctrl = MagicMock()
     bot.controller = ctrl
 
-    # Non bloccato
+    # Not blocked
     ctrl.login_bloccato = False
     assert bot._risveglia_se_needed(MagicMock()) is False
     bot.notify.assert_not_called()
 
-    # Bloccato -> risveglio
+    # Blocked -> wakeup
     ctrl.auth_config = MagicMock()
     ctrl.auth_config.describe.return_value = "CIE (App CieID)"
     ctrl.login_bloccato = True
@@ -62,16 +62,16 @@ def test_telegram_risveglia_se_needed():
 def test_cal_keyboard_structure():
     # Ottobre 2026
     kb = TelegramBot._cal_keyboard(2026, 10, sel="2026-10-15")
-    # Riga 0: header con frecce
+    # Row 0: header with arrows
     assert len(kb.inline_keyboard[0]) == 3
     assert kb.inline_keyboard[0][0].callback_data == "cal:prev"
     assert kb.inline_keyboard[0][2].callback_data == "cal:next"
 
-    # Riga 1: giorni settimana
+    # Row 1: weekdays
     assert len(kb.inline_keyboard[1]) == 7
     assert kb.inline_keyboard[1][0].text == "Lu"
 
-    # Verifichiamo che esista il callback per il 15 ottobre
+    # Verify callback exists for October 15
     has_day_15 = False
     for row in kb.inline_keyboard[2:]:
         for btn in row:
@@ -346,13 +346,13 @@ def test_h_pause_and_resume():
     ctx = MagicMock()
     ctx.args = []
 
-    # 1. /pause toggle -> da attivo a pausa
+    # 1. /pause toggle -> from active to paused
     bot.controller.toggle_pause.return_value = True
     asyncio.run(bot._h_pause(up, ctx))
     bot.controller.toggle_pause.assert_called_once()
     assert "messa in pausa" in up.message.reply_text.call_args[0][0]
 
-    # 2. /pause toggle -> da pausa a ripresa
+    # 2. /pause toggle -> from paused to resumed
     bot.controller.toggle_pause.reset_mock()
     bot.controller.toggle_pause.return_value = False
     up.message.reply_text.reset_mock()
@@ -360,14 +360,14 @@ def test_h_pause_and_resume():
     bot.controller.toggle_pause.assert_called_once()
     assert "riattivata" in up.message.reply_text.call_args[0][0]
 
-    # 3. /resume quando era in pausa
+    # 3. /resume when paused
     bot.controller.paused = True
     up.message.reply_text.reset_mock()
     asyncio.run(bot._h_resume(up, ctx))
     bot.controller.resume.assert_called_once()
     assert "riattivata" in up.message.reply_text.call_args[0][0]
 
-    # 4. /resume quando è già attivo
+    # 4. /resume when already active
     bot.controller.paused = False
     bot.controller.resume.reset_mock()
     up.message.reply_text.reset_mock()
@@ -474,7 +474,7 @@ def test_blacklist_callbacks():
         "rejected_at": 1727500000.0,
     }
 
-    # 1. bl:pick:m1 con blacklist non vuota
+    # 1. bl:pick:m1 with non-empty blacklist
     bot.controller.get_blacklist.return_value = [sample_entry]
     up = MagicMock()
     up.effective_chat.id = 12345
@@ -629,8 +629,7 @@ def test_h_ricette_status_icon_prenotabile_vs_prenotata():
     assert "💊 Farmaco" in msg_list
 
 
-@pytest.mark.asyncio
-async def test_h_anticipa_with_arg():
+def test_h_anticipa_with_arg():
     from services.telegram_bot import TelegramBot
     bot = TelegramBot("dummy", "123")
     ctrl = MagicMock()
@@ -645,7 +644,7 @@ async def test_h_anticipa_with_arg():
     ctx = MagicMock()
     ctx.args = ["m-1"]
 
-    await bot._h_anticipa(up, ctx)
+    asyncio.run(bot._h_anticipa(up, ctx))
 
     ctrl.converti_in_reschedule.assert_called_once_with("m-1")
     ctrl.force_poll.assert_called_once()
@@ -653,8 +652,7 @@ async def test_h_anticipa_with_arg():
     assert "Ricerca anticipo attivata" in up.message.reply_text.call_args[0][0]
 
 
-@pytest.mark.asyncio
-async def test_h_anticipa_single_monitor():
+def test_h_anticipa_single_monitor():
     from services.telegram_bot import TelegramBot
     bot = TelegramBot("dummy", "123")
     ctrl = MagicMock()
@@ -670,7 +668,7 @@ async def test_h_anticipa_single_monitor():
     ctx = MagicMock()
     ctx.args = []
 
-    await bot._h_anticipa(up, ctx)
+    asyncio.run(bot._h_anticipa(up, ctx))
 
     ctrl.converti_in_reschedule.assert_called_once_with("single-1")
     ctrl.force_poll.assert_called_once()
@@ -678,8 +676,7 @@ async def test_h_anticipa_single_monitor():
     assert "Ricerca anticipo attivata" in up.message.reply_text.call_args[0][0]
 
 
-@pytest.mark.asyncio
-async def test_h_anticipa_multiple_monitors():
+def test_h_anticipa_multiple_monitors():
     from services.telegram_bot import TelegramBot
     bot = TelegramBot("dummy", "123")
     ctrl = MagicMock()
@@ -696,7 +693,7 @@ async def test_h_anticipa_multiple_monitors():
     ctx = MagicMock()
     ctx.args = []
 
-    await bot._h_anticipa(up, ctx)
+    asyncio.run(bot._h_anticipa(up, ctx))
 
     ctrl.converti_in_reschedule.assert_not_called()
     up.message.reply_text.assert_called_once()
@@ -705,8 +702,7 @@ async def test_h_anticipa_multiple_monitors():
     assert any("anticipa:pick:m-1" in b.callback_data for row in kb for b in row)
 
 
-@pytest.mark.asyncio
-async def test_anticipa_callback():
+def test_anticipa_callback():
     from services.telegram_bot import TelegramBot
     bot = TelegramBot("dummy", "123")
     ctrl = MagicMock()
@@ -722,7 +718,7 @@ async def test_anticipa_callback():
     up.callback_query = q
 
     ctx = MagicMock()
-    await bot._h_callback(up, ctx)
+    asyncio.run(bot._h_callback(up, ctx))
 
     ctrl.converti_in_reschedule.assert_called_once_with("chosen-1")
     ctrl.force_poll.assert_called_once()

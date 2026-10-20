@@ -1,4 +1,4 @@
-"""Caricamento config da YAML in dataclass semplici."""
+"""Loads configuration from YAML into simple dataclasses."""
 from __future__ import annotations
 
 import os
@@ -13,7 +13,7 @@ ENV_FILE = BASE_DIR / ".env"
 
 
 def _load_dotenv(path: Path = ENV_FILE) -> None:
-    """Carica un file .env (semplice parser: VAR=value, commenti, no export)."""
+    """Loads a .env file (simple parser: VAR=value, comments, no export)."""
     if not path.exists():
         return
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -23,7 +23,7 @@ def _load_dotenv(path: Path = ENV_FILE) -> None:
         k, v = line.split("=", 1)
         k = k.strip()
         v = v.strip().strip('"').strip("'")
-        # non sovrascrive variabili già presenti nell'ambiente
+        # Do not overwrite variables already present in the environment
         if k and k not in os.environ:
             os.environ[k] = v
 
@@ -61,5 +61,5 @@ def section(cfg: Config, name: str) -> dict:
 
 
 def env_token(var: str, cfg_value: str) -> str:
-    """Tiene conto della env var (per Docker) con fallback alla config YAML."""
+    """Considers environment variable (for Docker) with fallback to YAML config."""
     return os.environ.get(var, "") or cfg_value or ""

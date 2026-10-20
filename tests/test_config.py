@@ -50,7 +50,7 @@ def test_load_empty_or_missing_yaml(tmp_path):
     empty_yaml.write_text("# solo commenti\n", encoding="utf-8")
     assert _load(empty_yaml) == {}
 
-    # File con lista anziché dict
+    # File with list instead of dict
     list_yaml = tmp_path / "list.yaml"
     list_yaml.write_text("- item1\n- item2\n", encoding="utf-8")
     assert _load(list_yaml) == {}

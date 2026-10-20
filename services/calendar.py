@@ -1,7 +1,7 @@
-"""Generatore di eventi calendario .ics (RFC 5545) per l'appuntamento.
+"""Calendar event generator .ics (RFC 5545) for appointments.
 
-Usato per fornire un file importabile in Google Calendar / Apple / Outlook
-con data, ora e indirizzo della visita.
+Used to produce an importable file for Google Calendar / Apple / Outlook
+with date, time, and address of the visit.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from services.appuntamento import AppuntamentoInfo
 
 
 def _fold(line: str, limit: int = 74) -> str:
-    """Riga RFC5545: spezza le righe lunghe con CRLF + spazio."""
+    """RFC 5545 line folding: splits long lines with CRLF + space."""
     if len(line) <= limit:
         return line
     out, cur = [], ""
@@ -31,7 +31,7 @@ def _fmt_dt(dt: datetime) -> str:
 
 def build_ics(info: AppuntamentoInfo, uid: str | None = None,
               durata_minuti: int = 30) -> str:
-    """Costruisce il contenuto dell'evento .ics per l'appuntamento."""
+    """Build .ics event content for the appointment."""
     dt = info.datetime or datetime.now()
     end = dt + timedelta(minutes=durata_minuti)
     uid = uid or f"{dt.strftime('%Y%m%d%H%M%S')}-fascicolo-monitor"
@@ -69,7 +69,7 @@ def build_ics(info: AppuntamentoInfo, uid: str | None = None,
 
 
 def write_ics(info: AppuntamentoInfo, out_dir: Path) -> Path:
-    """Salva il file .ics in out_dir e ritorna il path."""
+    """Save .ics file in out_dir and return its path."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

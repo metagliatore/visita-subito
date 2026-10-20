@@ -1,9 +1,8 @@
-"""Gestione centralizzata dump di debug (screenshot PNG e codice sorgente HTML).
+"""Centralized debug dump management (PNG screenshots and HTML source code).
 
-Consente di impostare da variabile d'ambiente DEBUG_DUMP_DIR (o da settings.yaml)
-la cartella di destinazione per gli screenshot e i dump HTML.
-Assegna a ogni dump un riferimento tracciabile con timestamp e tag descrittivo,
-generando un messaggio pronto per le notifiche su Telegram e i log applicativi.
+Allows setting the target folder via the DEBUG_DUMP_DIR environment variable (or settings.yaml).
+Assigns a traceable reference with a timestamp and descriptive tag to each dump,
+generating a ready-to-use notification text for Telegram and application logs.
 """
 from __future__ import annotations
 
@@ -20,7 +19,7 @@ DEFAULT_DEBUG_DIR = "data/debug"
 
 
 def get_debug_dir() -> Path:
-    """Ritorna la cartella di debug configurata da env (DEBUG_DUMP_DIR) o default."""
+    """Returns the debug directory configured via env (DEBUG_DUMP_DIR) or default."""
     d = os.environ.get("DEBUG_DUMP_DIR", "").strip() or DEFAULT_DEBUG_DIR
     p = Path(d)
     p.mkdir(parents=True, exist_ok=True)
@@ -32,15 +31,15 @@ def salva_debug_dump(
     tag: str = "error",
     prefix: str = "",
 ) -> Optional[dict]:
-    """Salva uno screenshot PNG e il sorgente HTML della pagina corrente.
+    """Saves a PNG screenshot and HTML source of the current page.
 
-    Ritorna un dict con:
-      - 'ref': identificativo univoco (es. '20261014_205500_reschedule_1_card_not_found')
-      - 'png_path': Path dello screenshot (.png)
-      - 'html_path': Path dell'HTML (.html)
-      - 'dir': cartella di salvataggio
-      - 'message': testo informativo pronto per le notifiche Telegram/log
-    oppure None se il driver non è disponibile o la cattura fallisce.
+    Returns a dict with:
+      - 'ref': unique identifier (e.g. '20261014_205500_reschedule_1_card_not_found')
+      - 'png_path': Path of screenshot (.png)
+      - 'html_path': Path of HTML (.html)
+      - 'dir': output directory
+      - 'message': informative notification text for Telegram/logs
+    or None if driver is unavailable or capture fails.
     """
     if driver is None:
         return None
@@ -57,7 +56,7 @@ def salva_debug_dump(
         png_file = dump_dir / f"{ref_id}.png"
         html_file = dump_dir / f"{ref_id}.html"
 
-        # Salva HTML
+        # Save HTML
         try:
             src = getattr(driver, "page_source", "")
             html_text = src if isinstance(src, str) else str(src or "")
@@ -65,7 +64,7 @@ def salva_debug_dump(
         except Exception as e_html:
             log.debug("Errore salvataggio html dump %s: %s", ref_id, e_html)
 
-        # Salva Screenshot
+        # Save Screenshot
         try:
             driver.save_screenshot(str(png_file))
         except Exception as e_scr:

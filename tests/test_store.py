@@ -12,16 +12,16 @@ def test_store_seen_slots(tmp_path):
     store.record_slots("mon-1", ["slot_a", "slot_b"])
     assert store.seen_slots("mon-1") == {"slot_a", "slot_b"}
 
-    # Nuova istanza dallo stesso file ricarica i dati
+    # New instance from the same file reloads data
     store2 = Store(store_file)
     assert store2.seen_slots("mon-1") == {"slot_a", "slot_b"}
 
-    # Verifica limite storico (max_history)
+    # Verify historical limit (max_history)
     store.record_slots("mon-1", [f"slot_{i}" for i in range(10)], max_history=5)
     seen = store.seen_slots("mon-1")
     assert len(seen) == 5
     assert "slot_9" in seen
-    assert "slot_a" not in seen  # rimosso per fare spazio ai più recenti
+    assert "slot_a" not in seen  # removed to make room for more recent entries
 
 
 def test_store_mark_action_and_prenotazione(tmp_path):
@@ -57,7 +57,7 @@ def test_store_dynamic_monitors(tmp_path):
     assert store.is_disabled("dyn-1") is True
     assert store.get_action("dyn-1") == "done"
 
-    # Se riaggiunto, non deve più risultare disabilitato e l'action_state deve tornare a idle
+    # If re-added, it must no longer be disabled and action_state must reset to idle
     store.add_monitor(mon)
     assert store.is_disabled("dyn-1") is False
     assert len(store.get_monitors()) == 1
@@ -84,7 +84,7 @@ def test_store_blacklist(tmp_path):
     assert entry["azienda"] == "ASST Niguarda"
     assert entry["nre"] == "0300A123"
 
-    # La slot_key deve essere presente anche in seen_slots
+    # slot_key must also be present in seen_slots
     assert "20261015T1030|provincia=MI" in store.seen_slots("mon-1")
 
     # get_blacklist
@@ -95,15 +95,15 @@ def test_store_blacklist(tmp_path):
     keys = store.get_blacklist_keys("mon-1")
     assert keys == {"20261015T1030|provincia=MI"}
 
-    # Rimozione singola entry
+    # Single entry removal
     removed = store.remove_blacklist_entry("mon-1", entry["id"])
     assert removed is not None
     assert removed["id"] == entry["id"]
     assert len(store.get_blacklist("mon-1")) == 0
-    # Rimossa anche da seen_slots!
+    # Also removed from seen_slots!
     assert "20261015T1030|provincia=MI" not in store.seen_slots("mon-1")
 
-    # Svuota intera blacklist
+    # Clear entire blacklist
     entry1 = store.add_blacklist_entry("mon-1", slot_dict)
     slot_dict2 = dict(slot_dict, key="20261022T1400", date_str="22/10/2026", time_str="14:00")
     entry2 = store.add_blacklist_entry("mon-1", slot_dict2)
@@ -117,17 +117,17 @@ def test_store_blacklist(tmp_path):
     assert "20261015T1030|provincia=MI" not in store.seen_slots("mon-1")
     assert "20261022T1400" not in store.seen_slots("mon-1")
 
-    # Verifica scadenza ricetta
-    # Aggiungi entry con data_ricetta di 2 anni fa
+    # Verify recipe expiration
+    # Add entry with recipe date 2 years ago
     old_entry = store.add_blacklist_entry("mon-1", slot_dict, data_ricetta="2024-01-01")
     assert old_entry["valid_until"] < time.time()
-    # get_blacklist() deve pulire le entry scadute
+    # get_blacklist() must prune expired entries
     assert len(store.get_blacklist("mon-1")) == 0
     assert slot_dict["key"] not in store.seen_slots("mon-1")
 
 
 def test_store_corrupted_json_or_invalid_structure(tmp_path):
-    # Caso 1: JSON non dizionario (es. lista o stringa o file corrotto)
+    # Case 1: JSON is not a dict (e.g. list, string or corrupted file)
     f = tmp_path / "corrupt.json"
     f.write_text('["elemento_inatteso"]', encoding="utf-8")
     store = Store(f)
@@ -138,12 +138,12 @@ def test_store_corrupted_json_or_invalid_structure(tmp_path):
     assert store.get_action("m1") == "idle"
     assert store.seen_slots("m1") == set()
 
-    # Caso 2: Monitor presente ma con valore None o tipo inatteso
+    # Case 2: Monitor present but with None value or unexpected type
     store.data["m_broken"] = "non un dict"
     assert store.get_action("m_broken") == "idle"
     assert store.is_prenotato("m_broken") is False
     assert store.seen_slots("m_broken") == set()
-    # Scrittura su m_broken non fallisce e ripristina la struttura valida
+    # Writing to m_broken does not fail and restores valid structure
     store.mark_action("m_broken", "idle", "ripristino")
     assert store.get_action("m_broken") == "idle"
     assert isinstance(store.data["m_broken"], dict)
