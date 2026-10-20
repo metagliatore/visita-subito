@@ -90,12 +90,28 @@ def test_run_wizard_generates_file(tmp_path, monkeypatch):
     assert env_file.exists()
 
     content = env_file.read_text(encoding="utf-8")
-    assert "TG_TOKEN=bot123:TOKEN" in content
+    assert "TG_TOKEN=123:TOKEN" in content
     assert "TG_CHAT_ID=12345678" in content
     assert "AUTH_METHOD=spid" in content
     assert "SPID_USERNAME=mario_rossi" in content
     assert "SPID_PASSWORD=password123" in content
-    assert os.environ.get("TG_TOKEN") == "bot123:TOKEN"
+    assert os.environ.get("TG_TOKEN") == "123:TOKEN"
+
+
+def test_run_wizard_keyboard_interrupt(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    monkeypatch.setattr("builtins.input", lambda prompt="": (_ for _ in ()).throw(KeyboardInterrupt))
+    ok = run_wizard(env_path=env_file)
+    assert ok is False
+    assert not env_file.exists()
+
+
+def test_run_wizard_eof_error(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    monkeypatch.setattr("builtins.input", lambda prompt="": (_ for _ in ()).throw(EOFError))
+    ok = run_wizard(env_path=env_file)
+    assert ok is False
+    assert not env_file.exists()
 
 
 def test_run_wizard_cie_qr_mode(tmp_path, monkeypatch):
@@ -150,3 +166,4 @@ def test_check_or_run_wizard_missing_non_tty(tmp_path, monkeypatch):
         res = check_or_run_wizard(env_path=env_file, force=False)
         assert res is False
         mock_run.assert_not_called()
+
