@@ -5,14 +5,14 @@ from pathlib import Path
 
 block_cipher = None
 
-# Asset e template da includere nell'eseguibile standalone
+# Assets and templates to bundle into the standalone executable
 datas = [
     ('config', 'config'),
     ('.env.example', '.'),
 ]
 datas += collect_data_files('selenium')
 
-# Moduli e dipendenze necessari
+# Required modules and dependencies
 hiddenimports = [
     'yaml',
     'dotenv',

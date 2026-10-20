@@ -1,4 +1,4 @@
-"""Procedura guidata interattiva (Wizard) per la configurazione iniziale del file .env."""
+"""Interactive guided procedure (Wizard) for initial .env file setup."""
 from __future__ import annotations
 
 import getpass
@@ -19,7 +19,7 @@ if sys.platform == "win32":
 
 
 def prompt_input(message: str, default: str = "", secret: bool = False) -> str:
-    """Richiede un input testuale all'utente, con eventuale valore di default."""
+    """Prompts user for text input, with optional default value."""
     prompt_lbl = f"{message} [{default}]: " if default else f"{message}: "
     if secret:
         try:
@@ -32,7 +32,7 @@ def prompt_input(message: str, default: str = "", secret: bool = False) -> str:
 
 
 def prompt_choice(title: str, options: list[tuple[str, str]], default: int = 1) -> str:
-    """Presenta un menu a scelta multipla numerata e ritorna il valore selezionato."""
+    """Presents a numbered multiple-choice menu and returns the selected value."""
     print(f"\n{title}")
     for i, (label, _) in enumerate(options, 1):
         indicator = "->" if i == default else "  "
@@ -47,10 +47,10 @@ def prompt_choice(title: str, options: list[tuple[str, str]], default: int = 1) 
 
 
 def populate_env_content(template_content: str, values: dict[str, str]) -> str:
-    """Sostituisce i valori delle variabili all'interno del template .env.example
+    """Substitutes variable values into the .env.example template.
 
-    Mantiene inalterati commenti, righe vuote e formattazione originale.
-    Aggiunge in coda eventuali chiavi non presenti nel template.
+    Preserves comments, empty lines, and original formatting.
+    Appends any missing keys to the end.
     """
     lines = template_content.splitlines()
     output_lines = []
@@ -58,11 +58,11 @@ def populate_env_content(template_content: str, values: dict[str, str]) -> str:
 
     for line in lines:
         stripped = line.strip()
-        # Riconosce righe del tipo KEY=val o # KEY=val
+        # Recognizes lines like KEY=val or # KEY=val
         key_candidate = None
         if "=" in stripped and not stripped.startswith("##"):
             raw_key = stripped.split("=", 1)[0].strip()
-            # Se la riga è commentata con un singolo # (es. "# CIE_USERNAME="), controlliamo la chiave
+            # If the line is commented with a single # (e.g. "# CIE_USERNAME="), check the key
             clean_key = raw_key.lstrip("#").strip()
             if clean_key in values:
                 key_candidate = clean_key
@@ -74,11 +74,11 @@ def populate_env_content(template_content: str, values: dict[str, str]) -> str:
         else:
             output_lines.append(line)
 
-    # Aggiungi in coda eventuali chiavi mancanti nel template
+    # Append any missing keys from template
     missing_keys = [k for k in values if k not in used_keys]
     if missing_keys:
         output_lines.append("")
-        output_lines.append("# --- Variabili aggiuntive configurate dal wizard ---")
+        output_lines.append("# --- Additional variables configured by wizard ---")
         for k in missing_keys:
             output_lines.append(f"{k}={values[k]}")
 
@@ -86,7 +86,7 @@ def populate_env_content(template_content: str, values: dict[str, str]) -> str:
 
 
 def run_wizard(env_path: Path | None = None, example_path: Path | None = None) -> bool:
-    """Esegue il wizard interattivo per raccogliere i parametri e generare .env."""
+    """Runs interactive wizard to collect parameters and generate .env."""
     try:
         return _run_wizard_interactive(env_path=env_path, example_path=example_path)
     except (KeyboardInterrupt, EOFError):
@@ -116,7 +116,7 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
 
     values: dict[str, str] = {}
 
-    # 1. Configurazione Telegram
+    # 1. Telegram configuration
     print("------------------------------------------------------------------")
     print("  1. BOT TELEGRAM")
     print("  (Serve per ricevere notifiche e gestire le visite in chat)")
@@ -141,7 +141,7 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
     tg_sec = prompt_input("Chat ID secondario (opzionale, es. per un familiare, o lascia vuoto)", default="")
     values["TG_CHAT_ID_SECONDARY"] = tg_sec
 
-    # 2. Metodo di autenticazione
+    # 2. Authentication method
     print("\n------------------------------------------------------------------")
     print("  2. METODO DI AUTENTICAZIONE")
     print("  Come vuoi che il servizio acceda al Fascicolo Sanitario?")
@@ -160,7 +160,7 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
         values["SPID_PROVIDER"] = "sielte"
         values["SPID_USERNAME"] = prompt_input("Username SielteID / Codice Fiscale")
         values["SPID_PASSWORD"] = prompt_input("Password SielteID", secret=True)
-        # Retrocompatibilità
+        # Backwards compatibility
         values["SIELTE_USERNAME"] = values["SPID_USERNAME"]
         values["SIELTE_PASSWORD"] = values["SPID_PASSWORD"]
 
@@ -208,7 +208,7 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
         values["AUTH_METHOD"] = "manual"
         print("[i] In modalità Manuale, il browser Chrome si aprirà visibile per consentire il login a mano.")
 
-    # 3. Parametri opzionali di ricerca
+    # 3. Optional search settings
     print("\n------------------------------------------------------------------")
     print("  3. IMPOSTAZIONI DI RICERCA (Parametri avanzati)")
     print("------------------------------------------------------------------")
@@ -225,18 +225,18 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
     except ValueError:
         values["POLL_INTERVAL_SECONDS"] = "300"
 
-    # Default per parametri di sistema
+    # Defaults for system parameters
     values.setdefault("MAX_LOGIN_RETRIES", "3")
     values.setdefault("APPROVAL_TIMEOUT_SECONDS", "600")
     values.setdefault("RESCHEDULE_WAIT_TIMEOUT", "30")
     values.setdefault("DEBUG_DUMP_DIR", "data/debug")
 
-    # Scrittura del file .env
+    # Write .env file
     env_content = populate_env_content(template_content, values)
     target_env.parent.mkdir(parents=True, exist_ok=True)
     target_env.write_text(env_content, encoding="utf-8")
 
-    # Ricarica immediatamente le variabili d'ambiente nel processo corrente
+    # Immediately reload environment variables into current process
     reload_dotenv(target_env)
 
     print("\n" + "=" * 66)
@@ -248,17 +248,17 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
 
 
 def check_or_run_wizard(env_path: Path | None = None, force: bool = False) -> bool:
-    """Verifica se .env esiste o se è forzato --wizard. Se necessario esegue il wizard."""
+    """Checks if .env exists or if --wizard is forced. If necessary, executes the wizard."""
     target_env = env_path or (get_base_dir() / ".env")
 
     if force:
         return run_wizard(target_env)
 
-    # Se .env esiste e ha dimensione > 0, tutto ok
+    # If .env exists and size > 0, all good
     if target_env.exists() and target_env.stat().st_size > 0:
         return True
 
-    # Se stdin non è un terminale interattivo (es. Docker nohup non interattivo)
+    # If stdin is not an interactive terminal (e.g. non-interactive Docker / nohup)
     if not sys.stdin.isatty():
         print("[!] File .env non trovato. Per la prima configurazione, esegui il programma da un terminale "
               "interattivo (es. python main.py) oppure copia .env.example in .env.", file=sys.stderr)

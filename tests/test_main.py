@@ -9,7 +9,7 @@ import main
 def test_main_wizard_aborted(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "get_base_dir", lambda: tmp_path)
     with patch("core.wizard.check_or_run_wizard", return_value=False):
-        # file .env non esiste
+        # .env file does not exist
         ret = main.main(["--wizard"])
         assert ret == 1
 
