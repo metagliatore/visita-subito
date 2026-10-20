@@ -53,8 +53,8 @@ def main(argv: list[str] | None = None) -> int:
     # Avvia la configurazione guidata se il file .env non esiste o se è forzata via argomenti
     from core.wizard import check_or_run_wizard
     if not check_or_run_wizard(force=force_wizard):
-        from core.config import ENV_FILE
-        if not ENV_FILE.exists() or ENV_FILE.stat().st_size == 0:
+        target_env = get_base_dir() / ".env"
+        if force_wizard or not target_env.exists() or target_env.stat().st_size == 0:
             return 1
 
     cfg = Config.load()

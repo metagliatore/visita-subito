@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from core.config import BASE_DIR, BUNDLE_DIR, ENV_FILE, reload_dotenv
+from core.config import BASE_DIR, BUNDLE_DIR, ENV_FILE, reload_dotenv, get_base_dir, get_bundle_dir
 
 if sys.platform == "win32":
     try:
@@ -87,10 +87,18 @@ def populate_env_content(template_content: str, values: dict[str, str]) -> str:
 
 def run_wizard(env_path: Path | None = None, example_path: Path | None = None) -> bool:
     """Esegue il wizard interattivo per raccogliere i parametri e generare .env."""
-    target_env = env_path or ENV_FILE
-    template_file = example_path or (BUNDLE_DIR / ".env.example")
+    try:
+        return _run_wizard_interactive(env_path=env_path, example_path=example_path)
+    except (KeyboardInterrupt, EOFError):
+        print("\n\n[!] Configurazione interrotta dall'utente.\n")
+        return False
+
+
+def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | None = None) -> bool:
+    target_env = env_path or (get_base_dir() / ".env")
+    template_file = example_path or (get_bundle_dir() / ".env.example")
     if not template_file.exists():
-        template_file = BASE_DIR / ".env.example"
+        template_file = get_base_dir() / ".env.example"
 
     template_content = ""
     if template_file.exists():
@@ -117,6 +125,8 @@ def run_wizard(env_path: Path | None = None, example_path: Path | None = None) -
     while True:
         tg_token = prompt_input("Token del Bot Telegram (es. 123456789:ABCdefGhI...)")
         if tg_token:
+            if tg_token.startswith("bot") and len(tg_token) > 4 and tg_token[3].isdigit():
+                tg_token = tg_token[3:]
             values["TG_TOKEN"] = tg_token
             break
         print("[!] Il token del bot Telegram è obbligatorio per utilizzare il servizio.")
@@ -239,7 +249,7 @@ def run_wizard(env_path: Path | None = None, example_path: Path | None = None) -
 
 def check_or_run_wizard(env_path: Path | None = None, force: bool = False) -> bool:
     """Verifica se .env esiste o se è forzato --wizard. Se necessario esegue il wizard."""
-    target_env = env_path or ENV_FILE
+    target_env = env_path or (get_base_dir() / ".env")
 
     if force:
         return run_wizard(target_env)
