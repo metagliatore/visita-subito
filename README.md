@@ -80,7 +80,54 @@ flowchart TD
 
 ---
 
-## 🚀 Avvio rapido con Docker (Consigliato)
+## 💻 Versione Portatile Standalone (Windows & Linux - No Admin, No Docker)
+
+Per gli utenti che non desiderano configurare ambienti virtuali Python o installare Docker, sono disponibili gli **eseguibili standalone precompilati** (rilasciati nelle **Releases** di GitHub/GitLab).
+
+- **Nessuna installazione**: l'applicazione funziona come una *Portable App*.
+- **Nessun privilegio di amministratore**: può essere avviata in qualsiasi cartella utente (Desktop, Documenti, cartella personale).
+- **Setup guidato automatico (Wizard CLI)**: se il file `.env` non è presente, al primo avvio si apre automaticamente una procedura interattiva che guida passo-passo alla configurazione dei parametri Telegram e di autenticazione.
+
+### 1. Download
+Scarica l'archivio corrispondente al tuo sistema operativo dalla sezione **Releases**:
+- **Windows**: `prenotazioni-windows-x86_64.zip`
+- **Linux**: `prenotazioni-linux-x86_64.tar.gz`
+
+### 2. Esecuzione e Primo Avvio
+Estrai l'archivio in una cartella a tuo piacimento e avvialo:
+
+- **Su Windows**:
+  Apri il prompt dei comandi o PowerShell nella cartella estratta ed esegui:
+  ```cmd
+  prenotazioni.exe
+  ```
+  *(oppure fai doppio clic sull'eseguibile `prenotazioni.exe`)*
+
+- **Su Linux**:
+  Apri un terminale nella cartella ed esegui:
+  ```bash
+  chmod +x prenotazioni
+  ./prenotazioni
+  ```
+
+### 3. Wizard di Configurazione
+Al primo avvio, l'assistente ti chiederà a schermo:
+1. **Token Bot Telegram** e **Chat ID** (per ricevere notifiche e gestire le visite).
+2. **Metodo di Autenticazione** (SPID SielteID, altro fornitore SPID, CIE con credenziali app CieID o scansione QR Code su Telegram, oppure browser manuale).
+3. **Strategia e intervallo di ricerca** (minuti di polling tra i controlli).
+
+Al termine:
+- Verrà generato automaticamente il file `.env` locale.
+- Verrà predisposta la cartella locale `config/` con `monitors.yaml` e `settings.yaml` pronti da personalizzare.
+- Lo stato, i log e i cookie di sessione verranno salvati nella sottocartella `data/` accanto all'eseguibile.
+- Se desideri rilanciare il wizard in qualsiasi momento per aggiornare i parametri, avvia l'eseguibile con l'argomento `--wizard` (o `-w`):
+  ```bash
+  prenotazioni.exe --wizard
+  ```
+
+---
+
+## 🚀 Avvio alternativo con Docker (Consigliato per Server / VPS)
 
 Il modo più semplice e affidabile per eseguire il monitor è tramite **Docker Compose**.
 
