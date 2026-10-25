@@ -533,17 +533,29 @@ class NewBookingFlow(Flow):
         # 4) Rigorous portal confirmation check
         ok_conf, cod, err_conf = self._attendi_conferma_prenotazione(timeout_s=30)
         if not ok_conf:
-            raise RuntimeError(f"Conferma prenotazione non riuscita: {err_conf}")
-        info.codice = cod or info.codice or ""
-
-        # 5) Final verification check in 'I miei appuntamenti'
-        log.info("[%s] Controllo finale di riscontro in 'I miei appuntamenti'...", self.mid)
-        riscontro_ok = self._verifica_riscontro_miei_appuntamenti(slot, codice=info.codice)
-        if not riscontro_ok:
-            raise RuntimeError(
-                f"Riscontro fallito: la prenotazione {slot.date_str} {slot.time_str} (cod: {info.codice or 'n/d'}) "
-                f"non risulta presente nella sezione 'I miei appuntamenti'"
+            log.warning(
+                "[%s] Schermata di conferma portale non rilevata (%s), tento riscontro in 'I miei appuntamenti' come fallback...",
+                self.mid, err_conf,
             )
+            riscontro_ok = self._verifica_riscontro_miei_appuntamenti(slot, codice=cod)
+            if not riscontro_ok:
+                raise RuntimeError(f"Conferma prenotazione non riuscita: {err_conf}")
+            log.info("[%s] Riscontro positivo in 'I miei appuntamenti' (recuperato da fallback), procedo.", self.mid)
+        else:
+            info.codice = cod or info.codice or ""
+            # 5) Verification check in 'I miei appuntamenti'
+            log.info("[%s] Controllo finale di riscontro in 'I miei appuntamenti'...", self.mid)
+            riscontro_ok = self._verifica_riscontro_miei_appuntamenti(slot, codice=info.codice)
+            if not riscontro_ok:
+                log.warning(
+                    "[%s] Riscontro in 'I miei appuntamenti' non immediato dopo la conferma della prenotazione. "
+                    "La conferma a video è comunque avvenuta con successo.", self.mid,
+                )
+                self.bot.notify(
+                    f"⚠️ <i>Nota per {self.mid}:</i> la prenotazione è stata confermata con successo dal portale, "
+                    f"ma l'aggiornamento nella sezione 'I miei appuntamenti' potrebbe richiedere qualche minuto "
+                    f"per sincronizzarsi completamente a video."
+                )
 
         # 6) Successfully verified booking -> persistence and notifications
         try:

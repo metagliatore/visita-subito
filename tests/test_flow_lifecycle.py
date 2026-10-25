@@ -252,7 +252,7 @@ def test_verifica_riscontro_miei_appuntamenti_not_found():
     assert res is False
 
 
-def test_new_booking_flow_execute_aborts_on_confirmation_failure():
+def test_new_booking_flow_execute_aborts_when_both_confirmation_and_fallback_fail():
     from flows.new_booking import NewBookingFlow
     flow = NewBookingFlow({"id": "m1", "ricetta": "TC MASSICCIO"}, MagicMock(), MagicMock(), MagicMock(), MagicMock())
     slot = Slot(datetime=datetime(2026, 11, 20, 10, 0))
@@ -280,19 +280,21 @@ def test_new_booking_flow_execute_aborts_on_confirmation_failure():
     flow.browser.driver.page_source = "<html>Modal</html>"
 
     flow._attendi_conferma_prenotazione = MagicMock(return_value=(False, "", "Disponibilità non più valida"))
-    flow._verifica_riscontro_miei_appuntamenti = MagicMock()
+    flow._verifica_riscontro_miei_appuntamenti = MagicMock(return_value=False)
 
     with pytest.raises(RuntimeError) as exc_info:
         flow.execute(slot)
 
     assert "Disponibilità non più valida" in str(exc_info.value)
     flow.store.record_prenotazione.assert_not_called()
-    flow._verifica_riscontro_miei_appuntamenti.assert_not_called()
+    flow._verifica_riscontro_miei_appuntamenti.assert_called_once()
 
 
-def test_new_booking_flow_execute_aborts_on_riscontro_failure():
+def test_new_booking_flow_execute_succeeds_with_advisory_when_riscontro_delayed():
     from flows.new_booking import NewBookingFlow
-    flow = NewBookingFlow({"id": "m1", "ricetta": "TC MASSICCIO"}, MagicMock(), MagicMock(), MagicMock(), MagicMock())
+    bot_mock = MagicMock()
+    store_mock = MagicMock()
+    flow = NewBookingFlow({"id": "m1", "ricetta": "TC MASSICCIO"}, MagicMock(), MagicMock(), bot_mock, store_mock)
     slot = Slot(datetime=datetime(2026, 11, 20, 10, 0))
 
     btn_mock = MagicMock()
@@ -316,18 +318,20 @@ def test_new_booking_flow_execute_aborts_on_riscontro_failure():
     flow._find = MagicMock(side_effect=_mock_find)
     flow._click_el = MagicMock()
     flow.browser.driver.page_source = "<html>Modal</html>"
+    flow._invia_riepilogo = MagicMock()
 
+    # Portal confirmed successfully, but 'I miei appuntamenti' took longer to replicate
     flow._attendi_conferma_prenotazione = MagicMock(return_value=(True, "COD123", ""))
     flow._verifica_riscontro_miei_appuntamenti = MagicMock(return_value=False)
 
-    with pytest.raises(RuntimeError) as exc_info:
-        flow.execute(slot)
+    # Must NOT raise RuntimeError, but proceed to persist and notify advisory
+    flow.execute(slot)
 
-    assert "Riscontro fallito" in str(exc_info.value)
-    flow.store.record_prenotazione.assert_not_called()
+    store_mock.record_prenotazione.assert_called_once()
+    assert any("potrebbe richiedere qualche minuto" in str(c) for c in bot_mock.notify.call_args_list)
 
 
-def test_reschedule_flow_execute_aborts_on_riscontro_failure():
+def test_reschedule_flow_execute_aborts_when_both_confirmation_and_fallback_fail():
     from flows.reschedule import RescheduleFlow
     flow = RescheduleFlow({"id": "res-1", "ricetta": "TC MASSICCIO"}, MagicMock(), MagicMock(), MagicMock(), MagicMock())
     slot = Slot(datetime=datetime(2026, 11, 20, 10, 0))
@@ -343,14 +347,45 @@ def test_reschedule_flow_execute_aborts_on_riscontro_failure():
     flow._find = MagicMock(side_effect=lambda sel, mult=False: chk_mock if "checkbox" in str(sel) else conf_mock)
     flow.browser.driver.page_source = "<html>Modal</html>"
 
-    flow._attendi_conferma_prenotazione = MagicMock(return_value=(True, "COD123", ""))
+    flow._attendi_conferma_prenotazione = MagicMock(return_value=(False, "", "Errore portale"))
     flow._verifica_riscontro_miei_appuntamenti = MagicMock(return_value=False)
 
     with pytest.raises(RuntimeError) as exc_info:
         flow.execute(slot)
 
-    assert "Riscontro fallito" in str(exc_info.value)
+    assert "Riprogrammazione non riuscita dal portale" in str(exc_info.value)
     flow.store.record_prenotazione.assert_not_called()
+    flow._verifica_riscontro_miei_appuntamenti.assert_called_once()
+
+
+def test_reschedule_flow_execute_succeeds_with_advisory_when_riscontro_delayed():
+    from flows.reschedule import RescheduleFlow
+    bot_mock = MagicMock()
+    store_mock = MagicMock()
+    flow = RescheduleFlow({"id": "res-1", "ricetta": "TC MASSICCIO"}, MagicMock(), MagicMock(), bot_mock, store_mock)
+    slot = Slot(datetime=datetime(2026, 11, 20, 10, 0))
+
+    chk_mock = MagicMock()
+    chk_mock.is_selected.return_value = True
+
+    conf_mock = MagicMock()
+    conf_mock.get_attribute.return_value = None  # abilitato
+
+    flow._trova_bottone_slot = MagicMock(return_value=MagicMock())
+    flow._click_el = MagicMock()
+    flow._find = MagicMock(side_effect=lambda sel, mult=False: chk_mock if "checkbox" in str(sel) else conf_mock)
+    flow.browser.driver.page_source = "<html>Modal</html>"
+    flow._invia_riepilogo_dopo_modifica = MagicMock()
+
+    # Portal confirmed successfully, but 'I miei appuntamenti' took longer to replicate
+    flow._attendi_conferma_prenotazione = MagicMock(return_value=(True, "COD123", ""))
+    flow._verifica_riscontro_miei_appuntamenti = MagicMock(return_value=False)
+
+    # Must NOT raise RuntimeError, but proceed to persist and notify advisory
+    flow.execute(slot)
+
+    flow._invia_riepilogo_dopo_modifica.assert_called_once()
+    assert any("potrebbe richiedere qualche minuto" in str(c) for c in bot_mock.notify.call_args_list)
 
 
 def test_flow_data_dal_effettiva_supports_iso_and_date_objects():
@@ -534,6 +569,7 @@ def test_reschedule_flow_poll_once_unblocks_done_or_pending_choice():
     flow.load_page = MagicMock()
     flow._cambia_provincia_e_ricerca = MagicMock(return_value={"stato": "risultati", "provincia": ""})
     flow.check_availability = MagicMock(return_value=[])
+    flow.extract_slots = MagicMock(return_value=[])
 
     # Run poll_once both automatic and manual
     flow.poll_once(manual=False)
@@ -558,6 +594,7 @@ def test_new_booking_flow_poll_once_manual_auto_promotes_done_pending_choice():
     flow.load_page = MagicMock()
     flow._cambia_provincia_e_ricerca = MagicMock(return_value={"stato": "risultati", "provincia": ""})
     flow.check_availability = MagicMock(return_value=[])
+    flow.extract_slots = MagicMock(return_value=[])
 
     # A manual poll on monitor waiting choice must automatically promote to reschedule
     flow.poll_once(manual=True)

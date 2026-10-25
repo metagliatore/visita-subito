@@ -548,7 +548,7 @@ class Flow:
         dump_msg = f" ({dump['message']})" if dump else ""
         return False, "", f"Timeout dopo {timeout_s}s: nessuna schermata di conferma o codice prenotazione apparso{dump_msg}"
 
-    def _verifica_riscontro_miei_appuntamenti(self, slot, codice: str = "", timeout_s: int = 30) -> bool:
+    def _verifica_riscontro_miei_appuntamenti(self, slot, codice: str = "", timeout_s: int = 35) -> bool:
         """Verify in 'I miei appuntamenti' section that the appointment actually exists."""
         d = getattr(self, "driver", None)
         if d is None:
@@ -557,42 +557,43 @@ class Flow:
         log.info("[%s] Inizio riscontro su 'I miei appuntamenti' per slot %s %s (codice: %s)",
                  self.mid, slot.date_str, slot.time_str, codice or "n/d")
         try:
-            self._riduci_tab_a_una()
-            d.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
-            time.sleep(3)
-            if not self._is_autenticato():
-                log.warning("[%s] Sessione non autenticata durante riscontro", self.mid)
+            def _apri_scheda():
+                self._riduci_tab_a_una()
+                d.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
+                time.sleep(2.5)
+                if not self._is_autenticato():
+                    return False
+                opened = False
+                try:
+                    opened = d.execute_script("""
+                        var a = document.querySelector("a[ng-click*='clickGestisciAppuntamenti']") ||
+                                document.querySelector("a[ng-click*='clickGestisci']");
+                        if (a) { a.click(); return true; }
+                        return false;
+                    """)
+                except Exception:
+                    pass
+                if not opened:
+                    self._click_by_or(
+                        selectors.RESCHEDULE.get("menu_gestisci", []),
+                        "menu gestisci appuntamenti"
+                    )
+                time.sleep(1)
+                try:
+                    d.execute_script("""
+                        var b = document.querySelector("button[ng-click*='messaggiCtrl']");
+                        if (b) b.click();
+                        var tab = document.querySelector("a[ng-click*='typeTabAppuntamenti']") ||
+                                  document.querySelector("a[aria_controls='i_tuoi_appuntamenti']");
+                        if (tab && !tab.closest('li.active')) tab.click();
+                    """)
+                except Exception:
+                    pass
+                return True
+
+            if not _apri_scheda():
+                log.warning("[%s] Impossibile aprire scheda appuntamenti per riscontro", self.mid)
                 return False
-
-            # Click 'Gestisci Prenotazioni'
-            opened = False
-            try:
-                opened = d.execute_script("""
-                    var a = document.querySelector("a[ng-click*='clickGestisciAppuntamenti']") ||
-                            document.querySelector("a[ng-click*='clickGestisci']");
-                    if (a) { a.click(); return true; }
-                    return false;
-                """)
-            except Exception:
-                pass
-            if not opened:
-                self._click_by_or(
-                    selectors.RESCHEDULE.get("menu_gestisci", []),
-                    "menu gestisci appuntamenti"
-                )
-
-            time.sleep(1)
-            # Close leftover modals and switch to 'I miei appuntamenti' tab
-            try:
-                d.execute_script("""
-                    var b = document.querySelector("button[ng-click*='messaggiCtrl']");
-                    if (b) b.click();
-                    var tab = document.querySelector("a[ng-click*='typeTabAppuntamenti']") ||
-                              document.querySelector("a[aria_controls='i_tuoi_appuntamenti']");
-                    if (tab && !tab.closest('li.active')) tab.click();
-                """)
-            except Exception:
-                pass
 
             # Prepare search terms
             ric = (self.monitor.get("ricetta") or "").strip().lower()
@@ -600,8 +601,12 @@ class Flow:
             cod = codice.strip().lower() if codice else ""
             target_data = slot.date_str.strip()  # e.g. "04/06/2027"
 
-            # Active polling for cards
-            for sec in range(max(1, timeout_s)):
+            # Active polling for cards with periodic refresh
+            t_start = time.time()
+            last_refresh = t_start
+            refresh_interval = 7  # seconds between refreshing the view
+
+            while time.time() - t_start < max(1, timeout_s):
                 if not self._is_autenticato():
                     log.warning("[%s] Sessione persa durante polling riscontro", self.mid)
                     return False
@@ -630,10 +635,12 @@ class Flow:
                 except Exception:
                     pass
 
+                elapsed = int(time.time() - t_start)
+
                 # Match by booking code (if available)
                 if cod and (cod in page_text or any(cod in c.lower() for c in cards_data)):
                     log.info("[%s] Riscontro OK: codice %s trovato tra gli appuntamenti (dopo %ds)",
-                             self.mid, cod, sec)
+                             self.mid, cod, elapsed)
                     return True
 
                 # Match by slot date and appointment/prescription
@@ -642,7 +649,7 @@ class Flow:
                     if target_data in card_txt:
                         if nre and nre in c_low:
                             log.info("[%s] Riscontro OK: data %s e NRE %s trovati (dopo %ds)",
-                                     self.mid, target_data, nre, sec)
+                                     self.mid, target_data, nre, elapsed)
                             return True
                         if ric:
                             import re as _re
@@ -650,18 +657,47 @@ class Flow:
                                               if w not in ("senza", "con", "della", "delle", "degli", "visita")]
                             if any(w in c_low for w in parole_ricetta):
                                 log.info("[%s] Riscontro OK: data %s e prestazione matching trovati (dopo %ds)",
-                                         self.mid, target_data, sec)
+                                         self.mid, target_data, elapsed)
                                 return True
                         # If no specific prescription or if date matches card
                         log.info("[%s] Riscontro OK: data %s trovata tra le card (dopo %ds)",
-                                 self.mid, target_data, sec)
+                                 self.mid, target_data, elapsed)
                         return True
+
+                # Active refresh: if not found and interval elapsed, force UI re-fetch
+                now = time.time()
+                if (now - last_refresh >= refresh_interval) and ((now - t_start) + 3 <= timeout_s):
+                    last_refresh = now
+                    log.info("[%s] Riscontro non ancora visibile dopo %ds: aggiorno la lista 'I miei appuntamenti'...",
+                             self.mid, elapsed)
+                    refreshed = False
+                    try:
+                        # Attempt tab toggle to trigger Angular controller data reload
+                        refreshed = bool(d.execute_script("""
+                            var tabStorico = document.querySelector("a[ng-click*='typeTabStorico']") ||
+                                             document.querySelector("a[aria_controls='storico_appuntamenti']");
+                            var tabApp = document.querySelector("a[ng-click*='typeTabAppuntamenti']") ||
+                                         document.querySelector("a[aria_controls='i_tuoi_appuntamenti']");
+                            if (tabStorico && tabApp) {
+                                tabStorico.click();
+                                setTimeout(function() { tabApp.click(); }, 350);
+                                return true;
+                            }
+                            return false;
+                        """))
+                    except Exception:
+                        pass
+                    if not refreshed:
+                        _apri_scheda()
+                    time.sleep(1.5)
+                    continue
 
                 time.sleep(1)
 
             # Verification timeout
-            log.warning("[%s] Riscontro fallito dopo %ds: appuntamento per %s non trovato in 'I miei appuntamenti'",
-                        self.mid, timeout_s, target_data)
+            elapsed = int(time.time() - t_start)
+            log.warning("[%s] Riscontro non trovato dopo %ds: appuntamento per %s non visibile in 'I miei appuntamenti'",
+                        self.mid, elapsed, target_data)
             self._salva_debug_dump("debug_riscontro_non_trovato")
             return False
         except Exception as e:
