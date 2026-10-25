@@ -326,6 +326,42 @@ def test_status_text_polling_in_corso():
     assert "🔄 Controllo disponibilità in corso..." in text
 
 
+def test_status_text_with_fascia():
+    ctrl = MagicMock()
+    mock_flow = MagicMock()
+    mock_flow.mid = "new-VISITA-CARD-1"
+    mock_flow.type = "new"
+    mock_flow.criteri = {
+        "province": ["MILANO CITTA'"],
+        "data_dal": "01/11/2026",
+        "data_a": "30/11/2026",
+        "fascia": "mattina",
+    }
+    mock_flow.get_proposta.return_value = None
+    mock_flow.ultimo_controllo = None
+    mock_flow.prossimo_controllo = None
+    mock_flow.monitor = {}
+
+    ctrl._flows = [mock_flow]
+    ctrl.cfg.settings = {"session": {"max_idle_seconds": 3600}}
+    ctrl.store.get_monitors.return_value = [{
+        "id": "new-VISITA-CARD-1",
+        "descrizione": "VISITA CARDIOLOGICA",
+        "nre": "0300123",
+        "criteri": mock_flow.criteri,
+    }]
+    ctrl._nome_leggibile = Controller._nome_leggibile
+    ctrl.login_bloccato = False
+    ctrl.login_in_corso = False
+    ctrl.paused = False
+    ctrl.sess.session_valid = True
+    ctrl.sess.is_expired.return_value = False
+    ctrl.polling_in_corso = False
+
+    text = Controller.status_text(ctrl)
+    assert "⏰ Fascia: Solo Mattina (07:00 - 13:00)" in text
+
+
 def test_ensure_session_force_login_and_reset_blocchi():
     ctrl = MagicMock()
     ctrl.login_bloccato = True

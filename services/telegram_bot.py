@@ -468,15 +468,39 @@ class TelegramBot:
         elif step == "range_a":
             wiz["data_a"] = giorno.strftime("%d/%m/%Y")
             self._wizard[chat_id] = wiz
-            await self._crea_monitor_finale(update, chat_id, wiz)
+            await self._chiedi_fascia(update, chat_id, wiz)
+
+    async def _chiedi_fascia(self, update, chat_id, wiz):
+        """Ask user to select preferred time slot (fascia oraria)."""
+        wiz["step"] = "fascia"
+        self._wizard[chat_id] = wiz
+        kb = [
+            [InlineKeyboardButton("☀️ Solo Mattina (07:00 - 13:00)", callback_data="mon:fascia:mattina")],
+            [InlineKeyboardButton("🌤 Solo Pomeriggio (13:00 - 19:00)", callback_data="mon:fascia:pomeriggio")],
+            [InlineKeyboardButton("🌙 Tardo Pom. / Sera (17:00 - 23:59)", callback_data="mon:fascia:sera")],
+            [InlineKeyboardButton("🥪 Pausa Pranzo (12:00 - 15:00)", callback_data="mon:fascia:pranzo")],
+            [InlineKeyboardButton("⏰ Qualsiasi orario", callback_data="mon:fascia:qualsiasi")],
+            [InlineKeyboardButton("❌ Annulla", callback_data="mon:annulla")],
+        ]
+        testo = (
+            "⏰ <b>Preferenza fascia oraria:</b>\n"
+            "Scegli la fascia oraria desiderata per le visite:"
+        )
+        q = update.callback_query
+        try:
+            await q.edit_message_text(testo, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+        except Exception as e:  # noqa: BLE001
+            log.warning("chiedi_fascia: %s", e)
 
     async def _crea_monitor_finale(self, update, chat_id, wiz):
-        """Create monitor with date range and confirmation."""
+        """Create monitor with date range, time slot preference, and confirmation."""
+        q = update.callback_query
         target = wiz.get("target", {})
         tipo = wiz.get("tipo", "new")
         prov_list = wiz.get("province", [])
         data_dal = wiz.get("data_dal", "")
         data_a = wiz.get("data_a", "")
+        fascia = wiz.get("fascia", "")
         # Prescription targets have 'prestazioni' (list) and 'codice' (NRE);
         # appointments have 'prestazione' (string). Service name first, then other fields, then fallback.
         prestazioni = target.get("prestazioni") or []
@@ -489,9 +513,10 @@ class TelegramBot:
             # Avoid placeholder 'monitor': without service name (prescription) and
             # without NRE the flow would not know which card to open
             self._wizard.pop(chat_id, None)
-            await q.edit_message_text(
-                "⚠️ Non riesco a ricavare la prestazione da monitorare dall'elenco. "
-                "Riprova con /monitora e scegli la ricetta dall'elenco.")
+            if q:
+                await q.edit_message_text(
+                    "⚠️ Non riesco a ricavare la prestazione da monitorare dall'elenco. "
+                    "Riprova con /monitora e scegli la ricetta dall'elenco.")
             return
         was_paused = bool(self.controller and getattr(self.controller, "paused", False) is True)
         data_ricetta = target.get("data_ricetta") or ""
@@ -513,27 +538,38 @@ class TelegramBot:
                     parse_mode=ParseMode.HTML,
                 )
                 return
+        criteri = {
+            "province": prov_list,
+            "data_dal": data_dal,
+            "data_a": data_a,
+            "fascia": fascia,
+        }
         mid = self.controller.aggiungi_monitor(
             tipo, desc, nre=nre,
-            criteri={"province": prov_list, "data_dal": data_dal, "data_a": data_a},
+            criteri=criteri,
             data_ricetta=data_ricetta,
             data_attuale=data_attuale)
         self._wizard.pop(chat_id, None)
-        q = update.callback_query
         if mid:
             prov_txt = ", ".join(prov_list) if prov_list else "default"
             nre_txt = f"\n🔖 NRE: {self._esc(nre)}" if nre else ""
+            fascia_txt = ""
+            if fascia:
+                from services.matcher import descrivi_fascia
+                fascia_txt = f"\n⏰ Fascia: {self._esc(descrivi_fascia(fascia))}"
             txt = (
                 f"✅ Monitor creato!\n🎯 {self._esc(desc)}{nre_txt}\n🏙 {self._esc(prov_txt)}\n"
-                f"📅 Range: {self._esc(data_dal)} → {self._esc(data_a)}\n"
+                f"📅 Range: {self._esc(data_dal)} → {self._esc(data_a)}{fascia_txt}\n"
                 f"🆔 {self._esc(mid)}\n\n"
                 f"Ti notificherò solo se trovo disponibilità nel range."
             )
             if was_paused:
                 txt += "\n\n▶️ La pausa del monitoraggio è stata resettata: la ricerca automatica è ora attiva."
-            await q.edit_message_text(txt)
+            if q:
+                await q.edit_message_text(txt)
         else:
-            await q.edit_message_text("Errore creazione monitor.")
+            if q:
+                await q.edit_message_text("Errore creazione monitor.")
 
     async def _h_monitora(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
@@ -833,6 +869,12 @@ class TelegramBot:
                 self._wizard[chat_id] = {"step": "provincia", "target": target,
                                         "tipo": "new"}
                 await self._chiedi_provincia(update, ctx, chat_id)
+            elif data.startswith("mon:fascia:"):
+                fascia_val = data.split(":", 2)[2]
+                wiz = self._wizard.get(chat_id, {})
+                wiz["fascia"] = "" if fascia_val == "qualsiasi" else fascia_val
+                self._wizard[chat_id] = wiz
+                await self._crea_monitor_finale(update, chat_id, wiz)
             elif data == "mon:annulla":
                 self._wizard.pop(chat_id, None)
                 await q.edit_message_text("Monitoraggio annullato.")

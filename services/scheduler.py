@@ -598,6 +598,12 @@ class Controller:
             al = crit.get("data_a") or ""
             if dal or al:
                 riga += f"\n  📅 Range: da {dal or 'oggi'} a {al or 'senza limite'}"
+            fascia = crit.get("fascia") or crit.get("fasce_orarie")
+            if fascia:
+                from services.matcher import descrivi_fascia
+                riga += f"\n  ⏰ Fascia: {descrivi_fascia(fascia)}"
+            elif crit.get("ora_min") or crit.get("ora_max"):
+                riga += f"\n  ⏰ Orario: da {crit.get('ora_min', '00:00')} a {crit.get('ora_max', '23:59')}"
             if province and isinstance(province, (list, tuple)) and len(province) > 1:
                 strat = getattr(f, "search_strategy", "first_match")
                 strat_lbl = "immediata (ferma al primo match)" if strat == "first_match" else "globale (miglior data tra tutte le province)"

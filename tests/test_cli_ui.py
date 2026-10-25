@@ -322,6 +322,7 @@ def test_command_monitora_interactive(monkeypatch, capsys):
     # "MILANO CITTA', BERGAMO" (Province)
     # "01/11/2026" (Data dal)
     # "31/12/2026" (Data a)
+    # "1" (Fascia oraria: qualsiasi)
     inputs = [
         "3",
         "VISITA DERMATOLOGICA",
@@ -329,6 +330,7 @@ def test_command_monitora_interactive(monkeypatch, capsys):
         "MILANO CITTA', BERGAMO",
         "01/11/2026",
         "31/12/2026",
+        "1",
     ]
     input_iter = iter(inputs)
     monkeypatch.setattr("builtins.input", lambda prompt="": next(input_iter))
@@ -342,4 +344,47 @@ def test_command_monitora_interactive(monkeypatch, capsys):
     assert kwargs["criteri"]["province"] == ["MILANO CITTA'", "BERGAMO"]
     assert kwargs["criteri"]["data_dal"] == "01/11/2026"
     assert kwargs["criteri"]["data_a"] == "31/12/2026"
+    assert kwargs["criteri"]["fascia"] == ""
     assert "Monitor aggiunto con successo! ID: new-VISITA-DERM-1" in capsys.readouterr().out
+
+
+def test_command_monitora_interactive_with_fascia(monkeypatch, capsys):
+    ui = CliUI()
+    mock_ctl = MagicMock()
+    mock_ctl.lista_province.return_value = ["MILANO CITTA'"]
+    mock_ctl.criteri_default.return_value = {"province": ["MILANO CITTA'"]}
+    mock_ctl.aggiungi_monitor.return_value = "new-VISITA-DERM-2"
+    ui.controller = mock_ctl
+
+    # Test selecting named fascia (mattina)
+    inputs_mattina = [
+        "3",
+        "VISITA OCULISTICA",
+        "",
+        "",
+        "",
+        "",
+        "2",  # Mattina
+    ]
+    it_mat = iter(inputs_mattina)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(it_mat))
+    ui._dispatch_input("monitora")
+    kwargs = mock_ctl.aggiungi_monitor.call_args[1]
+    assert kwargs["criteri"]["fascia"] == "mattina"
+
+    # Test selecting custom range fascia (08:30-11:30)
+    inputs_custom = [
+        "3",
+        "VISITA OCULISTICA",
+        "",
+        "",
+        "",
+        "",
+        "6",  # Personalizzata
+        "08:30-11:30",
+    ]
+    input_iter_custom = iter(inputs_custom)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(input_iter_custom))
+    ui._dispatch_input("monitora")
+    kwargs_custom = mock_ctl.aggiungi_monitor.call_args[1]
+    assert kwargs_custom["criteri"]["fascia"] == "08:30-11:30"

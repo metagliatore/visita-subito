@@ -623,10 +623,31 @@ class CliUI:
         data_a_inp = input(f"Data 'Entro il' (DD/MM/YYYY o invio per {default_data_a_hint}): ").strip()
         data_a = data_a_inp or default_data_a
 
+        # Time slot preference
+        print("\nFasce orarie disponibili:")
+        print("  [1] Qualsiasi orario (default)")
+        print("  [2] Solo Mattina (07:00 - 13:00)")
+        print("  [3] Solo Pomeriggio (13:00 - 19:00)")
+        print("  [4] Tardo Pomeriggio / Sera (17:00 - 23:59)")
+        print("  [5] Pausa Pranzo (12:00 - 15:00)")
+        print("  [6] Personalizzata (es. 09:00-12:00)")
+        fascia_scelta = input("Fascia oraria preferita [1-6 o invio per qualsiasi]: ").strip()
+        fascia_map = {
+            "2": "mattina",
+            "3": "pomeriggio",
+            "4": "sera",
+            "5": "pranzo",
+        }
+        if fascia_scelta == "6":
+            fascia = input("Inserisci fascia personalizzata (es. 09:00-12:00): ").strip()
+        else:
+            fascia = fascia_map.get(fascia_scelta, "")
+
         return {
             "province": scelte_prov,
             "data_dal": data_dal,
             "data_a": data_a,
+            "fascia": fascia,
         }
 
     def _cmd_monitora(self) -> None:
