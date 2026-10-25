@@ -221,10 +221,51 @@ def test_match_slot_fasce_orarie():
     ok, _ = match_slot(slot_afternoon, crit_all)
     assert ok is True
 
+    # Comma-separated string: "mattina, sera"
+    crit_csv = {"fascia": "mattina, sera"}
+    ok, _ = match_slot(slot_morning, crit_csv)
+    assert ok is True
+    ok, _ = match_slot(slot_evening, crit_csv)
+    assert ok is True
+    ok, _ = match_slot(slot_afternoon, crit_csv)
+    assert ok is False
+
+    # Spaced and unpadded range: " 9 - 12 "
+    crit_spaced = {"fascia": " 9 - 12 "}
+    ok, _ = match_slot(slot_morning, crit_spaced)
+    assert ok is True
+    ok, _ = match_slot(slot_lunch, crit_spaced)
+    assert ok is False
+
+    # Boundary slot tests
+    slot_0700 = Slot(datetime=datetime(2026, 10, 5, 7, 0))
+    slot_1300 = Slot(datetime=datetime(2026, 10, 5, 13, 0))
+    slot_1900 = Slot(datetime=datetime(2026, 10, 5, 19, 0))
+    slot_2359 = Slot(datetime=datetime(2026, 10, 5, 23, 59))
+    ok, _ = match_slot(slot_0700, crit_mat)
+    assert ok is True
+    ok, _ = match_slot(slot_1300, crit_mat)
+    assert ok is True
+    ok, _ = match_slot(slot_1300, crit_pom)
+    assert ok is True
+    ok, _ = match_slot(slot_1900, crit_pom)
+    assert ok is True
+    ok, _ = match_slot(slot_2359, crit_sera)
+    assert ok is True
+
+    # Empty, None, wildcard bypass
+    for bypass_val in ("", None, "qualsiasi", "all", "tutte", "*"):
+        ok, _ = match_slot(slot_early, {"fascia": bypass_val})
+        assert ok is True
+        ok, _ = match_slot(slot_evening, {"fascia": bypass_val})
+        assert ok is True
+
     # Check descrivi_fascia
     assert descrivi_fascia("mattina") == "Solo Mattina (07:00 - 13:00)"
     assert descrivi_fascia("pomeriggio") == "Solo Pomeriggio (13:00 - 19:00)"
     assert descrivi_fascia("08:30-11:30") == "Personalizzata (08:30 - 11:30)"
+    assert descrivi_fascia(" 9 - 12 ") == "Personalizzata (09:00 - 12:00)"
+    assert descrivi_fascia("mattina, sera") == "Solo Mattina (07:00 - 13:00), Tardo Pomeriggio / Sera (17:00 - 23:59)"
     assert descrivi_fascia(["mattina", "pomeriggio"]) == "Solo Mattina (07:00 - 13:00), Solo Pomeriggio (13:00 - 19:00)"
     assert descrivi_fascia("qualsiasi") == "Qualsiasi orario"
     assert descrivi_fascia(None) == "Qualsiasi orario"

@@ -1066,6 +1066,10 @@ class Flow:
         al = self.criteri.get("data_a")
         if dal or al:
             range_txt = f"\n📅 Range richiesto: {dal or 'da oggi'} → {al or 'senza limite'}"
+        fascia = self.criteri.get("fascia") or self.criteri.get("fasce_orarie")
+        if fascia:
+            from services.matcher import descrivi_fascia
+            range_txt += f"\n⏰ Fascia: {descrivi_fascia(fascia)}"
 
         vecchio_info = ""
         d_attuale = (

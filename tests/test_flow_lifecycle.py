@@ -94,6 +94,35 @@ def test_flow_request_approval_and_post_booking_prompt():
     assert any("postbook:continue:m1" in btn[1] for btn in second_call_buttons[0])
 
 
+def test_flow_request_approval_formats_fascia_in_notification():
+    monitor = {
+        "id": "m1",
+        "type": "new",
+        "ricetta": "VISITA CARDIOLOGICA",
+        "criteri": {"data_dal": "01/11/2026", "data_a": "30/11/2026", "fascia": "mattina"},
+        "nre": "0300A1",
+    }
+    browser = MagicMock()
+    queue = MagicMock()
+    bot = MagicMock()
+    store = MagicMock()
+
+    flow = DummyFlow(monitor, browser, queue, bot, store)
+    slot = Slot(datetime=datetime(2026, 11, 15, 10, 30))
+
+    queue.create.return_value = "req_fascia"
+    queue.wait_decision.return_value = {"cancelled": False, "decision": False, "extra": {"azione": "deny"}}
+    bot.notify_buttons.return_value = [("chat1", 123)]
+
+    flow._request_approval(slot)
+
+    # First notify_buttons call sends the approval prompt
+    first_call_args = bot.notify_buttons.call_args_list[0][0]
+    prompt_text = first_call_args[0]
+    assert "⏰ Fascia: Solo Mattina (07:00 - 13:00)" in prompt_text
+    assert "📅 Range richiesto: 01/11/2026 → 30/11/2026" in prompt_text
+
+
 def test_flow_rejection_adds_to_blacklist():
     monitor = {"id": "m1", "type": "new", "ricetta": "VISITA CARDIOLOGICA", "criteri": {}, "nre": "0300A1"}
     browser = MagicMock()

@@ -115,22 +115,23 @@ FASCE_LABELS = {
 
 def _slot_in_fascia(time_str: str, fascia_item: str) -> bool:
     """Check if time_str ('HH:MM') falls into the given time slot."""
+    norm_t = _norm_time(time_str) or str(time_str).strip()
     f_clean = str(fascia_item).strip().lower()
     if not f_clean or f_clean in ("qualsiasi", "all", "tutte", "none", "*"):
         return True
     if f_clean in FASCE_ORARIE:
         t_start, t_end = FASCE_ORARIE[f_clean]
-        return t_start <= time_str <= t_end
+        return t_start <= norm_t <= t_end
     if "-" in f_clean:
         parts = f_clean.split("-", 1)
         start_t = _norm_time(parts[0])
         end_t = _norm_time(parts[1])
         if start_t and end_t:
-            return start_t <= time_str <= end_t
+            return start_t <= norm_t <= end_t
         if start_t:
-            return time_str >= start_t
+            return norm_t >= start_t
         if end_t:
-            return time_str <= end_t
+            return norm_t <= end_t
     return True
 
 
@@ -138,6 +139,8 @@ def descrivi_fascia(fascia: str | list | None) -> str:
     """Return user-friendly label for configured time slot(s)."""
     if not fascia:
         return "Qualsiasi orario"
+    if isinstance(fascia, str) and "," in fascia:
+        fascia = [x.strip() for x in fascia.split(",") if x.strip()]
     if isinstance(fascia, (list, tuple, set)):
         items = [descrivi_fascia(f) for f in fascia if f and str(f).lower() not in ("qualsiasi", "all", "")]
         return ", ".join(items) if items else "Qualsiasi orario"
@@ -235,7 +238,12 @@ def match_slot(slot: Slot, criteri: dict) -> tuple[bool, str]:
     # ---- time slots (fasce orarie) ----
     raw_fascia = criteri.get("fascia") or criteri.get("fasce_orarie")
     if raw_fascia:
-        items = raw_fascia if isinstance(raw_fascia, (list, tuple, set)) else [raw_fascia]
+        if isinstance(raw_fascia, str) and "," in raw_fascia:
+            items = [x.strip() for x in raw_fascia.split(",") if x.strip()]
+        elif isinstance(raw_fascia, (list, tuple, set)):
+            items = list(raw_fascia)
+        else:
+            items = [raw_fascia]
         valid_items = [it for it in items if it and str(it).strip().lower() not in ("qualsiasi", "all", "tutte", "none", "*", "")]
         if valid_items:
             in_any = any(_slot_in_fascia(slot.time_str, it) for it in valid_items)
