@@ -764,8 +764,125 @@ def test_telegram_send_photo_fallback_to_document(tmp_path):
         assert mock_app.bot.send_document.call_args[1]["caption"] == "fallback caption"
 
 
+def test_h_appuntamenti_renders_calendar_buttons():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot.controller.login_in_corso = False
+    bot._wizard = {}
+    bot._appuntamenti_cache = {}
+
+    # Case 1: single appointment -> single calendar button
+    bot.controller.get_appuntamenti.return_value = [{
+        "prestazione": "VISITA UROLOGICA",
+        "data_ora": "20/11/2026 14:10",
+        "codice": "COD-1",
+        "azienda": "ASST OSPEDALE",
+        "presentarsi_in": "Piano 1",
+        "indirizzo": "Via Roma 1",
+    }]
+    up1 = MagicMock()
+    up1.effective_chat.id = 12345
+    up1.message.reply_text = AsyncMock()
+
+    asyncio.run(bot._h_appuntamenti(up1, MagicMock()))
+    # Must have sent loading text and result message with keyboard
+    assert up1.message.reply_text.await_count == 2
+    last_call = up1.message.reply_text.await_args_list[-1]
+    rm = last_call.kwargs.get("reply_markup")
+    assert rm is not None
+    assert len(rm.inline_keyboard) == 1
+    assert rm.inline_keyboard[0][0].callback_data == "app:ics:0"
+    assert "Genera evento calendario" in rm.inline_keyboard[0][0].text
+
+    # Case 2: multiple appointments -> button per appointment + all button
+    bot.controller.get_appuntamenti.return_value = [
+        {"prestazione": "VISITA UROLOGICA", "data_ora": "20/11/2026 14:10"},
+        {"prestazione": "VISITA CARDIOLOGICA", "data_ora": "02/02/2027 09:00"},
+    ]
+    up2 = MagicMock()
+    up2.effective_chat.id = 12345
+    up2.message.reply_text = AsyncMock()
+
+    asyncio.run(bot._h_appuntamenti(up2, MagicMock()))
+    last_call2 = up2.message.reply_text.await_args_list[-1]
+    rm2 = last_call2.kwargs.get("reply_markup")
+    assert rm2 is not None
+    assert len(rm2.inline_keyboard) == 3
+    assert rm2.inline_keyboard[0][0].callback_data == "app:ics:0"
+    assert rm2.inline_keyboard[1][0].callback_data == "app:ics:1"
+    assert rm2.inline_keyboard[2][0].callback_data == "app:ics:all"
 
 
+def test_h_callback_app_ics_generates_and_sends_document(tmp_path):
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot._wizard = {}
+    bot._appuntamenti_cache = {
+        12345: [{
+            "prestazione": "VISITA DERMATOLOGICA",
+            "data_ora": "15/12/2026 10:30",
+            "codice": "COD-DERM-123",
+            "azienda": "ASST NIGUARDA",
+            "presentarsi_in": "Padiglione 2",
+            "indirizzo": "Piazza Ospedale",
+            "comune": "Milano",
+            "cap": "20100",
+        }]
+    }
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    q = up.callback_query
+    q.data = "app:ics:0"
+    q.answer = AsyncMock()
+    q.message.reply_document = AsyncMock()
+
+    with patch("services.calendar.write_ics") as mock_write:
+        dummy_ics = tmp_path / "appuntamento_test.ics"
+        dummy_ics.write_text("BEGIN:VCALENDAR\nEND:VCALENDAR", encoding="utf-8")
+        mock_write.return_value = dummy_ics
+
+        asyncio.run(bot._h_callback(up, MagicMock()))
+
+        q.answer.assert_awaited()
+        q.message.reply_document.assert_awaited_once()
+        call_kwargs = q.message.reply_document.call_args[1]
+        assert "VISITA DERMATOLOGICA" in call_kwargs["caption"]
+        assert "15/12/2026" in call_kwargs["caption"]
+        assert "10:30" in call_kwargs["caption"]
+        assert call_kwargs["filename"] == "appuntamento_test.ics"
 
 
+def test_h_callback_app_ics_all_sends_all_documents(tmp_path):
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot._wizard = {}
+    bot._appuntamenti_cache = {
+        12345: [
+            {"prestazione": "VISITA UROLOGICA", "data_ora": "20/11/2026 - 14:10"},
+            {"prestazione": "VISITA OCULISTICA", "data_ora": "10/01/2027 - 09:00"},
+        ]
+    }
 
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    q = up.callback_query
+    q.data = "app:ics:all"
+    q.answer = AsyncMock()
+    q.message.reply_document = AsyncMock()
+
+    with patch("services.calendar.write_ics") as mock_write:
+        dummy_ics = tmp_path / "app_all.ics"
+        dummy_ics.write_text("BEGIN:VCALENDAR\nEND:VCALENDAR", encoding="utf-8")
+        mock_write.return_value = dummy_ics
+
+        asyncio.run(bot._h_callback(up, MagicMock()))
+
+        q.answer.assert_awaited()
+        assert q.message.reply_document.await_count == 2

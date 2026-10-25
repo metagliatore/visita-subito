@@ -31,7 +31,7 @@ HELP_TEXT = (
     "/pause - metti in pausa o riprendi la ricerca (/resume per riprendere)\n"
     "\n📋 <b>Informazioni</b>\n"
     "/ricette - elenca le ricette da prenotare\n"
-    "/appuntamenti - elenca gli appuntamenti esistenti\n"
+    "/appuntamenti - elenca gli appuntamenti esistenti e genera eventi calendario (.ics)\n"
     "\n❓ /help - questo messaggio"
 )
 
@@ -51,6 +51,7 @@ class TelegramBot:
         self.controller = None  # connected by main for /poll /status /relogin
         # monitor wizard state per chat
         self._wizard = {}  # chat_id -> snapshot for /monitora wizard
+        self._appuntamenti_cache = {}  # chat_id -> list of appointment dicts from /appuntamenti
         # authentication interaction state (push fallback / OTP prompt)
         self._auth_event = None
         self._auth_choice = None
@@ -571,6 +572,11 @@ class TelegramBot:
                     await q.edit_message_text("❌ <b>Inserimento OTP annullato.</b>", parse_mode=ParseMode.HTML)
                 return
 
+            # Generate calendar event (.ics) from /appuntamenti
+            if data.startswith("app:ics:"):
+                await self._h_genera_ics_callback(update, ctx, data)
+                return
+
             # Download prescription from /ricette command
             if data.startswith("ric:dl:"):
                 idx = int(data.split(":", 2)[2])
@@ -1071,8 +1077,37 @@ class TelegramBot:
             if a.get("codice"):
                 lines.append(f"   🎫 {self._esc(a.get('codice',''))}")
         msg = "\n".join(lines)
-        for chunk in (msg[i:i + 3800] for i in range(0, len(msg), 3800)):
-            await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
+
+        # Cache for interactive callbacks (e.g. generating .ics)
+        chat_id = update.effective_chat.id
+        self._appuntamenti_cache[chat_id] = appuntamenti
+        self._wizard[chat_id] = {"appuntamenti": appuntamenti}
+
+        kb = []
+        if len(appuntamenti) == 1:
+            kb.append([InlineKeyboardButton("📅 Genera evento calendario", callback_data="app:ics:0")])
+        elif len(appuntamenti) > 1:
+            for i, a in enumerate(appuntamenti):
+                data_lbl = ""
+                if a.get("data_ora"):
+                    import re as _re
+                    m_dt = _re.search(r"\d{2}/\d{2}", a["data_ora"])
+                    if m_dt:
+                        data_lbl = f" ({m_dt.group(0)})"
+                p_short = (a.get("prestazione") or "").strip()
+                if len(p_short) > 22:
+                    p_short = p_short[:19] + "…"
+                desc_lbl = f" - {p_short}" if p_short else ""
+                btn_txt = f"📅 Genera calendario #{i + 1}{data_lbl}{desc_lbl}"
+                kb.append([InlineKeyboardButton(btn_txt, callback_data=f"app:ics:{i}")])
+            kb.append([InlineKeyboardButton("📅 Genera tutti gli eventi calendario", callback_data="app:ics:all")])
+
+        reply_markup = InlineKeyboardMarkup(kb) if kb else None
+
+        chunks = list(msg[i:i + 3800] for i in range(0, len(msg), 3800))
+        for idx_c, chunk in enumerate(chunks):
+            rm = reply_markup if idx_c == len(chunks) - 1 else None
+            await update.message.reply_text(chunk, parse_mode=ParseMode.HTML, reply_markup=rm)
 
     async def _h_ricette(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
@@ -1377,6 +1412,90 @@ class TelegramBot:
             f"🤖 Bot attivo!\nChat ID: `{chat.id}`\nTipo: {chat.type}"
             "\nUsa /help per i comandi.")
 
+    async def _h_genera_ics_callback(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE, data: str) -> None:
+        """Generate and send .ics calendar event file for existing appointments."""
+        q = update.callback_query
+        chat_id = update.effective_chat.id
+        arg = data.split(":", 2)[2]
+
+        appuntamenti = self._appuntamenti_cache.get(chat_id) or []
+        if not appuntamenti:
+            appuntamenti = (self._wizard.get(chat_id) or {}).get("appuntamenti", [])
+
+        if not appuntamenti and self.controller:
+            await q.answer("Recupero appuntamenti dal portale...")
+            try:
+                appuntamenti = self.controller.get_appuntamenti() or []
+                self._appuntamenti_cache[chat_id] = appuntamenti
+            except Exception as e:
+                log.warning("Recupero appuntamenti per ICS fallito: %s", e)
+
+        if not appuntamenti:
+            await q.answer("Nessun appuntamento in memoria. Usa /appuntamenti per ricaricare la lista.", show_alert=True)
+            return
+
+        from pathlib import Path
+        from services.appuntamento import appuntamento_to_info
+        from services.calendar import write_ics
+
+        target_items = []
+        if arg == "all":
+            target_items = list(enumerate(appuntamenti))
+        else:
+            try:
+                idx = int(arg)
+                if 0 <= idx < len(appuntamenti):
+                    target_items = [(idx, appuntamenti[idx])]
+            except ValueError:
+                pass
+
+        if not target_items:
+            await q.answer("Appuntamento non trovato o indice non valido.", show_alert=True)
+            return
+
+        await q.answer("Generazione evento calendario in corso...")
+
+        for idx, app in target_items:
+            try:
+                info = appuntamento_to_info(app)
+                ics_path = write_ics(info, Path("data/ics"))
+                lines = [
+                    f"📅 <b>Evento calendario per {self._esc(info.prestazione or 'visita')}</b>",
+                    f"🗓 Data e ora: {self._esc(info.data_ora or '-')}",
+                ]
+                if info.azienda:
+                    lines.append(f"🏥 Azienda: {self._esc(info.azienda)}")
+                loc = " · ".join(x for x in [info.presentarsi_in, info.indirizzo] if x)
+                if loc:
+                    lines.append(f"📍 Luogo: {self._esc(loc)}")
+                if info.codice:
+                    lines.append(f"🎫 Codice: {self._esc(info.codice)}")
+                caption = "\n".join(lines)
+
+                send_doc = getattr(q.message, "reply_document", None)
+                if send_doc is not None:
+                    with open(ics_path, "rb") as f:
+                        await send_doc(
+                            document=f,
+                            filename=ics_path.name,
+                            caption=caption,
+                            parse_mode=ParseMode.HTML,
+                        )
+                elif ctx and hasattr(ctx, "bot") and hasattr(ctx.bot, "send_document"):
+                    with open(ics_path, "rb") as f:
+                        await ctx.bot.send_document(
+                            chat_id=chat_id,
+                            document=f,
+                            filename=ics_path.name,
+                            caption=caption,
+                            parse_mode=ParseMode.HTML,
+                        )
+                else:
+                    await q.message.reply_text(f"{caption}\n(File generato in: {ics_path})")
+            except Exception as e:
+                log.exception("Errore generazione ICS per appuntamento %s: %s", idx, e)
+                await q.message.reply_text(f"⚠️ Errore durante la creazione del file ICS per l'appuntamento #{idx + 1}: {e}")
+
     async def _scarica_ricetta(self, update, ricetta):
         """Trigger prescription download (in bot's browser)."""
         q = update.callback_query
@@ -1440,7 +1559,7 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("start", self._h_start))
         self.app.add_handler(CommandHandler("status", self._h_status))
         self.app.add_handler(CommandHandler("ricette", self._h_ricette))
-        self.app.add_handler(CommandHandler("appuntamenti", self._h_appuntamenti))
+        self.app.add_handler(CommandHandler(["appuntamenti", "calendario", "ics"], self._h_appuntamenti))
         self.app.add_handler(CommandHandler("poll", self._h_poll))
         self.app.add_handler(CommandHandler("anticipa", self._h_anticipa))
         self.app.add_handler(CommandHandler(["pause", "pause_unpause"], self._h_pause))

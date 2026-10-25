@@ -67,3 +67,28 @@ def test_parse_successo_numeric_and_alphanumeric():
 
     html_none = "<div><p>Nessun codice trovato</p></div>"
     assert parse_successo(html_none) == ""
+
+
+def test_appuntamento_to_info():
+    from services.appuntamento import appuntamento_to_info
+    raw = {
+        "prestazione": "VISITA UROLOGICA (PRIMA VISITA)",
+        "data_ora": "20/11/2026 14:10",
+        "codice": "260076159770",
+        "azienda": "ASST SANTI PAOLO E CARLO",
+        "presentarsi_in": "Presidio San Paolo",
+        "comune": "Milano",
+        "indirizzo": "Via Di Rudinì, 8",
+        "cap": "20142",
+        "note": ["Portare esami precedenti"],
+    }
+    info = appuntamento_to_info(raw)
+    assert info.prestazione == "VISITA UROLOGICA (PRIMA VISITA)"
+    assert info.data_ora == "20/11/2026 - 14:10"
+    assert info.datetime == datetime(2026, 11, 20, 14, 10)
+    assert info.codice == "260076159770"
+    assert info.azienda == "ASST SANTI PAOLO E CARLO"
+    assert info.presentarsi_in == "Presidio San Paolo"
+    assert "Via Di Rudinì, 8" in info.indirizzo
+    assert "20142 Milano" in info.indirizzo
+    assert info.note == ["Portare esami precedenti"]

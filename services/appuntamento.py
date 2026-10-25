@@ -28,7 +28,7 @@ class AppuntamentoInfo:
 
     @property
     def datetime(self) -> datetime | None:
-        m = re.search(r"(\d{2}/\d{2}/\d{4})\s*-\s*(\d{2}:\d{2})", self.data_ora or "")
+        m = re.search(r"(\d{2}/\d{2}/\d{4})\s*(?:-|\s|ore)*\s*(\d{2}:\d{2})", self.data_ora or "")
         if not m:
             return None
         return datetime.strptime(f"{m.group(1)} {m.group(2)}", "%d/%m/%Y %H:%M")
@@ -155,3 +155,47 @@ def parse_successo(html: str) -> str:
         re.IGNORECASE,
     )
     return m.group(1).strip() if m else ""
+
+
+def appuntamento_to_info(a: dict) -> AppuntamentoInfo:
+    """Build an AppuntamentoInfo instance from an appointment dictionary (from UI card or store)."""
+    addr_parts = []
+    ind = (a.get("indirizzo") or "").strip()
+    if ind:
+        addr_parts.append(ind)
+    cap_com = []
+    if a.get("cap"):
+        cap_com.append(str(a["cap"]).strip())
+    if a.get("comune"):
+        cap_com.append(str(a["comune"]).strip())
+    if cap_com:
+        cap_com_str = " ".join(cap_com)
+        if addr_parts:
+            addr_parts.append(f"({cap_com_str})")
+        else:
+            addr_parts.append(cap_com_str)
+    full_addr = " · ".join(addr_parts)
+
+    notes = []
+    if a.get("note"):
+        if isinstance(a["note"], list):
+            notes.extend(str(n) for n in a["note"])
+        else:
+            notes.append(str(a["note"]))
+
+    codice = (a.get("codice") or "").strip()
+    data_ora = (a.get("data_ora") or "").strip()
+    if data_ora and " - " not in data_ora:
+        m = re.search(r"(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})", data_ora)
+        if m:
+            data_ora = f"{m.group(1)} - {m.group(2)}"
+
+    return AppuntamentoInfo(
+        data_ora=data_ora,
+        prestazione=(a.get("prestazione") or "").strip(),
+        azienda=(a.get("azienda") or "").strip(),
+        presentarsi_in=(a.get("presentarsi_in") or "").strip(),
+        indirizzo=full_addr,
+        note=notes,
+        codice=codice,
+    )

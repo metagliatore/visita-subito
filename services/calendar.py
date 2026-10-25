@@ -57,6 +57,8 @@ def build_ics(info: AppuntamentoInfo, uid: str | None = None,
     desc_parts = []
     if info.azienda:
         desc_parts.append(f"Azienda: {info.azienda}")
+    if info.codice:
+        desc_parts.append(f"Codice prenotazione: {info.codice}")
     if info.note:
         notes = "\\n".join(f"- {n}" for n in info.note)
         desc_parts.append(f"Note:\\n{notes}")
