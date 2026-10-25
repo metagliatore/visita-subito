@@ -11,9 +11,10 @@ Config via env (especially for Docker):
 from __future__ import annotations
 
 import logging
+import os
 import sys
 
-from core.config import Config, section, env_token
+from core.config import Config, section, env_token, get_base_dir
 from services.scheduler import Controller
 from services.telegram_bot import TelegramBot
 
@@ -29,14 +30,32 @@ def setup_logging(cfg: Config) -> None:
     # Optional file logging
     logfile = lconf.get("file")
     if logfile:
-        fh = logging.FileHandler(logfile, encoding="utf-8")
-        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s"))
-        logging.getLogger().addHandler(fh)
+        from pathlib import Path
+        try:
+            Path(logfile).parent.mkdir(parents=True, exist_ok=True)
+            fh = logging.FileHandler(logfile, encoding="utf-8")
+            fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s"))
+            logging.getLogger().addHandler(fh)
+        except Exception as e:
+            logging.warning("Impossibile aprire il file di log %s: %s", logfile, e)
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        os.chdir(get_base_dir())
+    except Exception:
+        pass
+
     argv = argv if argv is not None else sys.argv[1:]
     run_bot = "--nobot" not in argv
+    force_wizard = any(arg in argv for arg in ("--wizard", "--setup", "-w"))
+
+    # Avvia la configurazione guidata se il file .env non esiste o se è forzata via argomenti
+    from core.wizard import check_or_run_wizard
+    if not check_or_run_wizard(force=force_wizard):
+        target_env = get_base_dir() / ".env"
+        if force_wizard or not target_env.exists() or target_env.stat().st_size == 0:
+            return 1
 
     cfg = Config.load()
 
