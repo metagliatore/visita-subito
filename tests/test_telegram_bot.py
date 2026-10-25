@@ -1017,3 +1017,25 @@ def test_callback_mon_fascia_qualsiasi_creates_monitor_empty_fascia():
     assert "Monitor creato!" in msg
     assert "Fascia:" not in msg
     assert 12345 not in bot._wizard
+
+
+def test_h_callback_decide_deny_day():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    bot.controller = mock_ctl
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    q = up.callback_query
+    q.data = "decide:deny_day:req_123"
+    q.edit_message_text = AsyncMock()
+
+    asyncio.run(bot._h_callback(up, MagicMock()))
+
+    mock_ctl.decide_request.assert_called_once_with("req_123", False, extra={"azione": "deny_day"})
+    q.edit_message_text.assert_awaited_once()
+    msg = q.edit_message_text.call_args[0][0]
+    assert "Giorno rifiutato" in msg
+    assert "intera giornata è stata aggiunta alla blacklist" in msg

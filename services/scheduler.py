@@ -451,6 +451,10 @@ class Controller:
         """Return blacklist entries for the specified monitor."""
         return self.store.get_blacklist(monitor_id)
 
+    def get_blacklist_dates(self, monitor_id: str) -> set[str]:
+        """Return blacklisted entire days (DD/MM/YYYY) for the specified monitor."""
+        return self.store.get_blacklist_dates(monitor_id)
+
     def rimuovi_da_blacklist(self, monitor_id: str, entry_id: str) -> dict | None:
         """Remove an entry from blacklist allowing the bot to repropose it."""
         return self.store.remove_blacklist_entry(monitor_id, entry_id)

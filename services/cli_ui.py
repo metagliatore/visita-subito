@@ -129,7 +129,7 @@ class CliUI:
             print("=" * 66)
             print(clean)
             print("=" * 66)
-            print("⚡ RISPONDI SUBITO: digita 's' per approvare, 'n' per rifiutare.")
+            print("⚡ RISPONDI SUBITO: digita 's' per approvare, 'n' per rifiutare l'orario, 'g' per bloccare l'intera giornata.")
             print("=" * 66 + "\n")
             return [("cli", 1)]
 
@@ -315,14 +315,20 @@ class CliUI:
                     play_alert_sound("success")
                 print("✅ Proposta approvata! Procedo con la conferma sul portale...")
                 return
+            elif low in ("g", "giorno", "giornata", "day"):
+                if self.controller:
+                    self.controller.decide_request(req_id, False, extra={"azione": "deny_day"})
+                self._pending_approval = None
+                print("🚫 Proposta rifiutata. L'intera giornata è stata aggiunta alla blacklist del monitor.")
+                return
             elif low in ("n", "no", "rifiuta", "annulla"):
                 if self.controller:
-                    self.controller.decide_request(req_id, False)
+                    self.controller.decide_request(req_id, False, extra={"azione": "deny"})
                 self._pending_approval = None
                 print("❌ Proposta rifiutata. Aggiunta alla blacklist del monitor.")
                 return
-            # If not s/n, fall through to command processing, but remind user
-            print("[!] Nota: c'è una proposta in sospeso. Digita 's' per approvare o 'n' per rifiutare.")
+            # If not s/n/g, fall through to command processing, but remind user
+            print("[!] Nota: c'è una proposta in sospeso. Digita 's' per approvare, 'n' per rifiutare o 'g' per bloccare la giornata.")
 
         # 4. Check if waiting for post-booking choice
         if self._pending_postbook:
@@ -739,7 +745,10 @@ class CliUI:
                 has_entries = True
                 print(f"  • Monitor [{mid}] ({len(bl)} voci):")
                 for e in bl:
-                    slot_desc = e.get("descrizione") or e.get("slot") or e.get("entry_id")
+                    if e.get("block_day"):
+                        slot_desc = f"🗓 {e.get('date_str')} [INTERA GIORNATA BLOCCATA]"
+                    else:
+                        slot_desc = e.get("descrizione") or e.get("slot") or f"{e.get('date_str')} ore {e.get('time_str')}"
                     print(f"      - {slot_desc}")
         if not has_entries:
             print("  (Nessuna disponibilità attualmente in blacklist).")

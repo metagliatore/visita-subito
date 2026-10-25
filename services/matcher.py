@@ -235,6 +235,13 @@ def match_slot(slot: Slot, criteri: dict) -> tuple[bool, str]:
         return False, f"giorno escluso ({wd})"
     if preferiti and wd not in preferiti:
         return False, f"giorno non preferito ({wd})"
+
+    # ---- excluded dates (e.g. blacklisted days) ----
+    escludi_date = criteri.get("escludi_date") or criteri.get("blacklist_dates") or []
+    if escludi_date:
+        esc_norm = [str(d).strip() for d in escludi_date if d]
+        if slot.date_str in esc_norm:
+            return False, f"giorno in blacklist ({slot.date_str})"
     # ---- time slots (fasce orarie) ----
     raw_fascia = criteri.get("fascia") or criteri.get("fasce_orarie")
     if raw_fascia:

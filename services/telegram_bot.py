@@ -655,6 +655,7 @@ class TelegramBot:
                     await q.edit_message_text(
                         {"approve": "✅ Approvato: procedo con la prenotazione.",
                          "deny": "❌ Richiesta rifiutata. La disponibilità è stata aggiunta alla blacklist (puoi gestirla con /blacklist).",
+                         "deny_day": "🚫 Giorno rifiutato. L'intera giornata è stata aggiunta alla blacklist (puoi gestirla con /blacklist).",
                          "anticipa": "↩️ Anticipo dell'appuntamento in corso...",
                          "posticipa": "↪️ Posticipo dell'appuntamento in corso...",
                          }.get(azione, "Azione registrata."))
@@ -1032,10 +1033,14 @@ class TelegramBot:
         for i, e in enumerate(entries):
             d_str = e.get("date_str", "")
             t_str = e.get("time_str", "")
+            is_day = bool(e.get("block_day"))
             az = e.get("azienda", "")
             sede = e.get("sede", "")
             comune = e.get("comune", "")
-            riga = f"<b>{i + 1}) 🗓 {self._esc(d_str)} ore {self._esc(t_str)}</b>"
+            if is_day:
+                riga = f"<b>{i + 1}) 🗓 {self._esc(d_str)} 🚫 (INTERA GIORNATA BLOCCATA)</b>"
+            else:
+                riga = f"<b>{i + 1}) 🗓 {self._esc(d_str)} ore {self._esc(t_str)}</b>"
             if az:
                 riga += f"\n   🏥 {self._esc(az)}"
             luogo = []
@@ -1059,7 +1064,10 @@ class TelegramBot:
 
         kb = []
         for i, e in enumerate(entries):
-            d_label = f"{e.get('date_str', '')[-5:]} {e.get('time_str', '')}".strip()
+            if e.get("block_day"):
+                d_label = f"{e.get('date_str', '')} (giorno)"
+            else:
+                d_label = f"{e.get('date_str', '')[-5:]} {e.get('time_str', '')}".strip()
             kb.append([InlineKeyboardButton(
                 f"🗑 Elimina #{i + 1} ({d_label})",
                 callback_data=f"bl:del:{mid}:{e['id']}"

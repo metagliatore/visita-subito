@@ -143,6 +143,62 @@ def test_flow_rejection_adds_to_blacklist():
     store.add_blacklist_entry.assert_called_once_with("m1", slot, nre="0300A1", data_ricetta="")
 
 
+def test_flow_rejection_deny_day_adds_entire_day_to_blacklist():
+    monitor = {"id": "m1", "type": "new", "ricetta": "VISITA CARDIOLOGICA", "criteri": {}, "nre": "0300A1"}
+    browser = MagicMock()
+    queue = MagicMock()
+    bot = MagicMock()
+    store = MagicMock()
+
+    flow = DummyFlow(monitor, browser, queue, bot, store)
+    slot = Slot(datetime=datetime(2026, 10, 25, 9, 30))
+
+    queue.create.return_value = "req_deny_day"
+    # User rejection of entire day
+    queue.wait_decision.return_value = {"cancelled": False, "decision": False, "extra": {"azione": "deny_day"}}
+    bot.notify_buttons.return_value = [("chat1", 123)]
+
+    res = flow._request_approval(slot)
+    assert "non confermata" in res
+    store.add_blacklist_entry.assert_called_once_with("m1", slot, nre="0300A1", data_ricetta="", block_day=True)
+
+
+def test_flow_poll_once_ignores_blacklisted_entire_days():
+    monitor = {"id": "m1", "type": "new", "criteri": {}}
+    browser = MagicMock()
+    queue = MagicMock()
+    bot = MagicMock()
+    store = MagicMock()
+
+    # slot1 is on 25/10/2026 at 09:30
+    slot1 = Slot(datetime=datetime(2026, 10, 25, 9, 30))
+    # slot1b is on same day 25/10/2026 at 15:00
+    slot1b = Slot(datetime=datetime(2026, 10, 25, 15, 0))
+    # slot2 is on next day 26/10/2026 at 11:00
+    slot2 = Slot(datetime=datetime(2026, 10, 26, 11, 0))
+
+    flow = DummyFlow(monitor, browser, queue, bot, store)
+    flow._is_autenticato = MagicMock(return_value=True)
+    flow.extract_slots = MagicMock(return_value=[slot1, slot1b, slot2])
+
+    store.get_action.return_value = "idle"
+    store.seen_slots.return_value = set()
+    store.get_blacklist_keys.return_value = set()
+    # 25/10/2026 is an entire day in blacklist!
+    store.get_blacklist_dates.return_value = {"25/10/2026"}
+
+    queue.create.return_value = "req_next_day"
+    queue.wait_decision.return_value = {"cancelled": True, "reason": "timeout"}
+    bot.notify_buttons.return_value = [("chat1", 123)]
+
+    flow.poll_once()
+
+    # Must skip slot1 and slot1b, and propose slot2!
+    queue.create.assert_called_once()
+    payload = queue.create.call_args[0][1]
+    assert payload["slot"]["datetime"] == slot2.datetime
+
+
 def test_flow_poll_once_ignores_blacklisted_slots():
     monitor = {"id": "m1", "type": "new", "criteri": {}}
     browser = MagicMock()

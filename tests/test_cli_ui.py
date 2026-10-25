@@ -151,7 +151,14 @@ def test_dispatch_approval_yes_and_no():
     mock_ctl.reset_mock()
     ui._pending_approval = {"req_id": "req-888", "msg": "Visita"}
     ui._dispatch_input("n")
-    mock_ctl.decide_request.assert_called_once_with("req-888", False)
+    mock_ctl.decide_request.assert_called_once_with("req-888", False, extra={"azione": "deny"})
+    assert ui._pending_approval is None
+
+    # Test rejection of entire day (g)
+    mock_ctl.reset_mock()
+    ui._pending_approval = {"req_id": "req-777", "msg": "Visita"}
+    ui._dispatch_input("g")
+    mock_ctl.decide_request.assert_called_once_with("req-777", False, extra={"azione": "deny_day"})
     assert ui._pending_approval is None
 
 
