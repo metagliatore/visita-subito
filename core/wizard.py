@@ -111,35 +111,63 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
     print("  Fascicolo Sanitario Regione Lombardia - Prenotazioni")
     print("           Procedura di Configurazione Iniziale (.env)")
     print("=" * 66)
-    print("Questo assistente ti aiuterà a configurare il bot Telegram e")
-    print("il metodo di accesso al fascicolo. Premi INVIO per confermare i default.\n")
+    print("Questo assistente ti aiuterà a configurare l'interfaccia di controllo")
+    print("e il metodo di accesso al fascicolo. Premi INVIO per confermare i default.\n")
 
     values: dict[str, str] = {}
 
-    # 1. Telegram configuration
+    # 1. Control interface mode (Telegram or CLI)
     print("------------------------------------------------------------------")
-    print("  1. BOT TELEGRAM")
-    print("  (Serve per ricevere notifiche e gestire le visite in chat)")
-    print("  Se non ne hai uno, crealo gratuitamente su Telegram con @BotFather")
+    print("  1. MODALITÀ DI CONTROLLO")
+    print("  Come desideri controllare il servizio e ricevere le notifiche?")
     print("------------------------------------------------------------------")
-    while True:
-        tg_token = prompt_input("Token del Bot Telegram (es. 123456789:ABCdefGhI...)")
-        if tg_token:
-            if tg_token.startswith("bot") and len(tg_token) > 4 and tg_token[3].isdigit():
-                tg_token = tg_token[3:]
-            values["TG_TOKEN"] = tg_token
-            break
-        print("[!] Il token del bot Telegram è obbligatorio per utilizzare il servizio.")
+    ctrl_options = [
+        ("Bot Telegram (Consigliato: notifiche su smartphone e comandi via chat)", "telegram"),
+        ("Solo Terminale / Console CLI (Controllo interattivo locale, nessun account Telegram)", "cli"),
+    ]
+    control_mode = prompt_choice("Seleziona l'interfaccia di controllo:", ctrl_options, default=1)
+    values["CONTROL_INTERFACE"] = control_mode
 
-    while True:
-        tg_chat_id = prompt_input("Il tuo Chat ID Telegram (trovalo inviando un messaggio a @userinfobot)")
-        if tg_chat_id:
-            values["TG_CHAT_ID"] = tg_chat_id
-            break
-        print("[!] Il Chat ID Telegram è obbligatorio per ricevere le notifiche.")
+    if control_mode == "telegram":
+        print("\n------------------------------------------------------------------")
+        print("  CONFIGURAZIONE BOT TELEGRAM")
+        print("  (Serve per ricevere notifiche e gestire le visite in chat)")
+        print("  Se non ne hai uno, crealo gratuitamente su Telegram con @BotFather")
+        print("------------------------------------------------------------------")
+        while True:
+            tg_token = prompt_input("Token del Bot Telegram (es. 123456789:ABCdefGhI...)")
+            if tg_token:
+                if tg_token.startswith("bot") and len(tg_token) > 4 and tg_token[3].isdigit():
+                    tg_token = tg_token[3:]
+                values["TG_TOKEN"] = tg_token
+                break
+            print("[!] Il token del bot Telegram è obbligatorio quando si sceglie la modalità Telegram.")
 
-    tg_sec = prompt_input("Chat ID secondario (opzionale, es. per un familiare, o lascia vuoto)", default="")
-    values["TG_CHAT_ID_SECONDARY"] = tg_sec
+        while True:
+            tg_chat_id = prompt_input("Il tuo Chat ID Telegram (trovalo inviando un messaggio a @userinfobot)")
+            if tg_chat_id:
+                values["TG_CHAT_ID"] = tg_chat_id
+                break
+            print("[!] Il Chat ID Telegram è obbligatorio per ricevere le notifiche.")
+
+        tg_sec = prompt_input("Chat ID secondario (opzionale, es. per un familiare, o lascia vuoto)", default="")
+        values["TG_CHAT_ID_SECONDARY"] = tg_sec
+        values.setdefault("SOUND_ALERT", "false")
+    else:
+        # CLI Mode: Telegram is completely skipped
+        values["TG_TOKEN"] = ""
+        values["TG_CHAT_ID"] = ""
+        values["TG_CHAT_ID_SECONDARY"] = ""
+        print("\n[i] Modalità Terminale selezionata: Telegram non verrà collegato.")
+        snd_opts = [
+            ("Sì (Consigliato: emette un segnale acustico quando viene trovata una disponibilità)", "true"),
+            ("No (Solo messaggi visivi a schermo)", "false"),
+        ]
+        values["SOUND_ALERT"] = prompt_choice(
+            "Vuoi attivare un segnale acustico (suono/beep) all'arrivo di una visita?",
+            snd_opts,
+            default=1
+        )
 
     # 2. Authentication method
     print("\n------------------------------------------------------------------")
@@ -150,7 +178,7 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
         ("SPID SielteID (Consigliato: automatizzato con notifica push/OTP)", "spid_sielte"),
         ("SPID con altro fornitore (Poste, Aruba, InfoCert, Lepida, Namirial...)", "spid_other"),
         ("CIE con Credenziali (App CieID Livello 2: CF/Numero CIE + Password)", "cie_app"),
-        ("CIE con QR Code diretto (Nessuna password salvata: invia il QR su Telegram)", "cie_qr"),
+        ("CIE con QR Code diretto (Nessuna password salvata: QR Code per l'app CieID)", "cie_qr"),
         ("Manuale (Apre una finestra di Chrome per accedere a mano)", "manual"),
     ]
     scelta_auth = prompt_choice("Seleziona il metodo di accesso:", auth_options, default=1)
@@ -201,8 +229,12 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
         values["CIE_MODE"] = "qr"
         values["CIE_USERNAME"] = ""
         values["CIE_PASSWORD"] = ""
-        print("[i] In modalità QR Code diretto, ad ogni rinnovo sessione riceverai su Telegram")
-        print("    la foto del QR Code e il pulsante per aprire direttamente l'app CieID.")
+        if control_mode == "cli":
+            print("[i] In modalità QR Code diretto, ad ogni rinnovo sessione vedrai nel terminale")
+            print("    il percorso del QR Code salvato e il link diretto per l'app CieID.")
+        else:
+            print("[i] In modalità QR Code diretto, ad ogni rinnovo sessione riceverai su Telegram")
+            print("    la foto del QR Code e il pulsante per aprire direttamente l'app CieID.")
 
     elif scelta_auth == "manual":
         values["AUTH_METHOD"] = "manual"

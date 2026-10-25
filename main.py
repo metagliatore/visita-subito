@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Entrypoint: launches the monitor in poller and/or Telegram bot mode.
+"""Entrypoint: launches the monitor in poller and/or Telegram bot or CLI terminal mode.
 
 Usage:
-    python main.py            # poller + bot (blocking bot in foreground)
-    python main.py --nobot    # poller only (runs bot in another process)
+    python main.py            # poller + UI (Telegram bot or CLI interactive shell)
+    python main.py --nobot    # poller only (runs UI in another process)
+    python main.py --wizard   # rerun configuration wizard
 
 Config via env (especially for Docker):
-    TG_TOKEN, TG_CHAT_ID, TG_CHAT_ID_SECONDARY
+    CONTROL_INTERFACE, TG_TOKEN, TG_CHAT_ID, SOUND_ALERT
 """
 from __future__ import annotations
 
@@ -16,7 +17,6 @@ import sys
 
 from core.config import Config, section, env_token, get_base_dir
 from services.scheduler import Controller
-from services.telegram_bot import TelegramBot
 
 
 def setup_logging(cfg: Config) -> None:
@@ -62,17 +62,27 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(cfg)
     log = logging.getLogger("main")
 
+    # Detect interface mode: Telegram vs CLI Terminal
+    ctrl_interface = os.environ.get("CONTROL_INTERFACE", "").strip().lower()
     tg = section(cfg, "telegram")
-    bot = TelegramBot(
-        token=env_token("TG_TOKEN", tg.get("token", "")),
-        chat_id=env_token("TG_CHAT_ID", tg.get("chat_id", "")),
-        chat_id_secondary=env_token("TG_CHAT_ID_SECONDARY", tg.get("chat_id_secondary", "")),
-    )
+    tg_token = env_token("TG_TOKEN", tg.get("token", ""))
+    tg_chat_id = env_token("TG_CHAT_ID", tg.get("chat_id", ""))
 
-    if not (bot.token and bot.chat_ids):
-        log.warning("Telegram non configurato: funziona solo senza notifiche.")
+    if ctrl_interface == "cli" or not (tg_token and tg_chat_id):
+        log.info("Avvio in modalita Terminale / CLI (senza Telegram)")
+        from services.cli_ui import CliUI
+        from services.sound import is_sound_enabled
+        ui = CliUI(sound_alert=is_sound_enabled())
+    else:
+        log.info("Avvio con interfaccia Telegram Bot")
+        from services.telegram_bot import TelegramBot
+        ui = TelegramBot(
+            token=tg_token,
+            chat_id=tg_chat_id,
+            chat_id_secondary=env_token("TG_CHAT_ID_SECONDARY", tg.get("chat_id_secondary", "")),
+        )
 
-    ctl = Controller(cfg, bot)
+    ctl = Controller(cfg, ui)
     ctl.run(run_bot=run_bot)
     return 0
 

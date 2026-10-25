@@ -65,12 +65,13 @@ def test_prompt_choice(monkeypatch):
     assert prompt_choice("Scegli:", options, default=1) == "val_b"
 
 
-def test_run_wizard_generates_file(tmp_path, monkeypatch):
+def test_run_wizard_generates_file_telegram(tmp_path, monkeypatch):
     env_file = tmp_path / ".env"
     example_file = tmp_path / ".env.example"
-    example_file.write_text("TG_TOKEN=\nTG_CHAT_ID=\nAUTH_METHOD=spid\n", encoding="utf-8")
+    example_file.write_text("CONTROL_INTERFACE=telegram\nTG_TOKEN=\nTG_CHAT_ID=\nAUTH_METHOD=spid\n", encoding="utf-8")
 
     inputs = [
+        "1",                 # Modalità: Telegram
         "bot123:TOKEN",      # TG_TOKEN
         "12345678",          # TG_CHAT_ID
         "",                  # TG_CHAT_ID_SECONDARY (vuoto)
@@ -90,12 +91,47 @@ def test_run_wizard_generates_file(tmp_path, monkeypatch):
     assert env_file.exists()
 
     content = env_file.read_text(encoding="utf-8")
+    assert "CONTROL_INTERFACE=telegram" in content
     assert "TG_TOKEN=123:TOKEN" in content
     assert "TG_CHAT_ID=12345678" in content
     assert "AUTH_METHOD=spid" in content
     assert "SPID_USERNAME=mario_rossi" in content
     assert "SPID_PASSWORD=password123" in content
     assert os.environ.get("TG_TOKEN") == "123:TOKEN"
+
+
+def test_run_wizard_cli_mode(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    example_file = tmp_path / ".env.example"
+    example_file.write_text("CONTROL_INTERFACE=telegram\nSOUND_ALERT=true\nTG_TOKEN=\nTG_CHAT_ID=\nAUTH_METHOD=spid\n", encoding="utf-8")
+
+    inputs = [
+        "2",                 # Modalità: Solo Terminale / CLI
+        "1",                 # Suono alert: Sì (true)
+        "1",                 # Metodo SPID SielteID
+        "luigi_verdi",       # SPID_USERNAME
+        "password456",       # SPID_PASSWORD
+        "1",                 # Modalità Notifica
+        "1",                 # first_match
+        "3",                 # 3 minuti
+    ]
+    input_iter = iter(inputs)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(input_iter))
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": next(input_iter))
+
+    ok = run_wizard(env_path=env_file, example_path=example_file)
+    assert ok is True
+    assert env_file.exists()
+
+    content = env_file.read_text(encoding="utf-8")
+    assert "CONTROL_INTERFACE=cli" in content
+    assert "SOUND_ALERT=true" in content
+    assert "TG_TOKEN=" in content
+    assert "TG_CHAT_ID=" in content
+    assert "AUTH_METHOD=spid" in content
+    assert "SPID_USERNAME=luigi_verdi" in content
+    assert os.environ.get("CONTROL_INTERFACE") == "cli"
+    assert os.environ.get("TG_TOKEN") == ""
 
 
 def test_run_wizard_keyboard_interrupt(tmp_path, monkeypatch):
@@ -117,9 +153,10 @@ def test_run_wizard_eof_error(tmp_path, monkeypatch):
 def test_run_wizard_cie_qr_mode(tmp_path, monkeypatch):
     env_file = tmp_path / ".env"
     example_file = tmp_path / ".env.example"
-    example_file.write_text("TG_TOKEN=\nTG_CHAT_ID=\nAUTH_METHOD=spid\nCIE_MODE=app\n", encoding="utf-8")
+    example_file.write_text("CONTROL_INTERFACE=telegram\nTG_TOKEN=\nTG_CHAT_ID=\nAUTH_METHOD=spid\nCIE_MODE=app\n", encoding="utf-8")
 
     inputs = [
+        "1",                 # Modalità: Telegram
         "bot_cie:TOKEN",     # TG_TOKEN
         "87654321",          # TG_CHAT_ID
         "",                  # TG_CHAT_ID_SECONDARY
@@ -166,4 +203,3 @@ def test_check_or_run_wizard_missing_non_tty(tmp_path, monkeypatch):
         res = check_or_run_wizard(env_path=env_file, force=False)
         assert res is False
         mock_run.assert_not_called()
-

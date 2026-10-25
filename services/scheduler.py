@@ -28,9 +28,10 @@ FLOW_TYPES = {"new": NewBookingFlow, "reschedule": RescheduleFlow}
 
 
 class Controller:
-    def __init__(self, cfg: Config, bot: TelegramBot):
+    def __init__(self, cfg: Config, bot):
         self.cfg = cfg
         self.bot = bot
+        self.ui = bot
         bot.controller = self
 
         br = cfg.settings.get("browser", {})
