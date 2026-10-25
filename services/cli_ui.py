@@ -625,13 +625,13 @@ class CliUI:
 
         # Time slot preference
         print("\nFasce orarie disponibili:")
-        print("  [1] Qualsiasi orario (default)")
+        print("  [1] Qualsiasi orario / Salta (default)")
         print("  [2] Solo Mattina (07:00 - 13:00)")
         print("  [3] Solo Pomeriggio (13:00 - 19:00)")
         print("  [4] Tardo Pomeriggio / Sera (17:00 - 23:59)")
         print("  [5] Pausa Pranzo (12:00 - 15:00)")
         print("  [6] Personalizzata (es. 09:00-12:00)")
-        fascia_scelta = input("Fascia oraria preferita [1-6 o invio per qualsiasi]: ").strip()
+        fascia_scelta = input("Fascia oraria preferita [1-6 o invio per saltare/qualsiasi]: ").strip()
         fascia_map = {
             "2": "mattina",
             "3": "pomeriggio",

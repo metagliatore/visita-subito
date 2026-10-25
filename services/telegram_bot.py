@@ -479,12 +479,12 @@ class TelegramBot:
             [InlineKeyboardButton("🌤 Solo Pomeriggio (13:00 - 19:00)", callback_data="mon:fascia:pomeriggio")],
             [InlineKeyboardButton("🌙 Tardo Pom. / Sera (17:00 - 23:59)", callback_data="mon:fascia:sera")],
             [InlineKeyboardButton("🥪 Pausa Pranzo (12:00 - 15:00)", callback_data="mon:fascia:pranzo")],
-            [InlineKeyboardButton("⏰ Qualsiasi orario", callback_data="mon:fascia:qualsiasi")],
+            [InlineKeyboardButton("⏰ Qualsiasi orario (Salta)", callback_data="mon:fascia:qualsiasi")],
             [InlineKeyboardButton("❌ Annulla", callback_data="mon:annulla")],
         ]
         testo = (
             "⏰ <b>Preferenza fascia oraria:</b>\n"
-            "Scegli la fascia oraria desiderata per le visite:"
+            "Scegli la fascia oraria desiderata per le visite (oppure 'Qualsiasi orario' per accettare tutti gli orari):"
         )
         q = update.callback_query
         try:
