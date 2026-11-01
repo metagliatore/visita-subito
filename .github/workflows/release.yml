@@ -9,13 +9,13 @@ on:
 jobs:
   build-linux:
     name: Build Linux Portable
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -33,7 +33,7 @@ jobs:
           tar -czvf prenotazioni-linux-x86_64.tar.gz -C release_linux prenotazioni
 
       - name: Upload Linux artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: linux-binary
           path: prenotazioni-linux-x86_64.tar.gz
@@ -43,10 +43,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -61,7 +61,7 @@ jobs:
           Compress-Archive -Path dist/prenotazioni.exe -DestinationPath prenotazioni-windows-x86_64.zip
 
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-binary
           path: prenotazioni-windows-x86_64.zip
@@ -69,23 +69,23 @@ jobs:
   create-release:
     name: Create GitHub Release
     needs: [build-linux, build-windows]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
     steps:
       - name: Download Linux artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: linux-binary
 
       - name: Download Windows artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: windows-binary
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             prenotazioni-linux-x86_64.tar.gz
