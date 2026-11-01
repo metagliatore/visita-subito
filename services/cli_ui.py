@@ -81,6 +81,13 @@ class CliUI:
         """Display an informational notification in terminal."""
         clean = strip_html(text)
         print(f"\n[NOTIFICA] {clean}\n")
+        if "login completato con successo" in clean.lower():
+            self._cmd_help()
+            try:
+                sys.stdout.write(self._get_prompt_label())
+                sys.stdout.flush()
+            except Exception:
+                pass
 
     def notify_buttons(self, text: str, buttons: list) -> list:
         """Display an action request with choices and set pending interactive state.

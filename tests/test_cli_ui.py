@@ -22,6 +22,16 @@ def test_notify(capsys):
     assert "[NOTIFICA] Attenzione: sessione valida" in captured
 
 
+def test_notify_prints_help_after_successful_login(capsys):
+    ui = CliUI()
+    ui.notify("✅ Login completato con successo! Sessione attiva.")
+    captured = capsys.readouterr().out
+    assert "[NOTIFICA] ✅ Login completato con successo! Sessione attiva." in captured
+    assert "COMANDI DISPONIBILI (Terminale CLI)" in captured
+    assert "status, s" in captured
+    assert "prenotazioni>" in captured
+
+
 def test_notify_buttons_approval_triggers_sound_and_state(capsys):
     ui = CliUI(sound_alert=True)
     with patch("services.cli_ui.play_alert_sound") as mock_sound:
