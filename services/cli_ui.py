@@ -39,6 +39,16 @@ def strip_html(text: str) -> str:
     return t.strip()
 
 
+def safe_int(val: object) -> int | None:
+    """Safely parse an integer, returning None if invalid, unicode-digit, or overflow."""
+    if val is None:
+        return None
+    try:
+        return int(str(val).strip())
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
 class CliUI:
     """Terminal/CLI interface adapter for Controller and Flows."""
 
@@ -230,7 +240,13 @@ class CliUI:
             if not raw:
                 continue
 
-            self._dispatch_input(raw)
+            try:
+                self._dispatch_input(raw)
+            except (KeyboardInterrupt, EOFError):
+                print("\n[!] Operazione annullata.\n")
+            except Exception as e:
+                log.exception("Errore durante l'esecuzione del comando '%s'", raw)
+                print(f"\n[!] Errore durante l'esecuzione del comando: {e}\n")
 
         self.stop()
 
@@ -457,8 +473,8 @@ class CliUI:
                 print(f"  - {p.name}")
             return
 
-        if arg.isdigit():
-            idx = int(arg)
+        idx = safe_int(arg)
+        if idx is not None:
             if 1 <= idx <= len(apps):
                 a = apps[idx - 1]
                 info = appuntamento_to_info(a)
@@ -512,15 +528,17 @@ class CliUI:
             return
 
         target_idx = None
-        if arg and arg.isdigit() and 1 <= int(arg) <= len(apps):
-            target_idx = int(arg) - 1
+        arg_idx = safe_int(arg)
+        if arg_idx is not None and 1 <= arg_idx <= len(apps):
+            target_idx = arg_idx - 1
         else:
             print("\nScegli quale appuntamento desideri anticipare:")
             for i, a in enumerate(apps, 1):
                 print(f"  [{i}] {a.get('prestazione')} (data: {a.get('data_ora', 'n/d')})")
             scelta = input(f"Seleziona numero [1-{len(apps)}]: ").strip()
-            if scelta.isdigit() and 1 <= int(scelta) <= len(apps):
-                target_idx = int(scelta) - 1
+            scelta_idx = safe_int(scelta)
+            if scelta_idx is not None and 1 <= scelta_idx <= len(apps):
+                target_idx = scelta_idx - 1
 
         if target_idx is None:
             print("Operazione annullata.")
@@ -566,10 +584,11 @@ class CliUI:
                 print("Nessuna ricetta prenotabile trovata.")
                 return
             scelta = input(f"Seleziona la ricetta [1-{len(prenotabili)}]: ").strip()
-            if not (scelta.isdigit() and 1 <= int(scelta) <= len(prenotabili)):
+            idx = safe_int(scelta)
+            if idx is None or not (1 <= idx <= len(prenotabili)):
                 print("Scelta non valida.")
                 return
-            r = prenotabili[int(scelta) - 1]
+            r = prenotabili[idx - 1]
             desc = r.get("prestazione", "")
             nre = r.get("nre", "")
             data_ricetta = r.get("data_ricetta", "")

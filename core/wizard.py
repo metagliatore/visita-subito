@@ -41,8 +41,12 @@ def prompt_choice(title: str, options: list[tuple[str, str]], default: int = 1) 
         choice = input(f"\nScegli un'opzione [{default}]: ").strip()
         if not choice:
             return options[default - 1][1]
-        if choice.isdigit() and 1 <= int(choice) <= len(options):
-            return options[int(choice) - 1][1]
+        try:
+            val = int(choice)
+            if 1 <= val <= len(options):
+                return options[val - 1][1]
+        except (ValueError, OverflowError):
+            pass
         print(f"[!] Scelta non valida. Inserisci un numero tra 1 e {len(options)}.")
 
 
@@ -68,8 +72,9 @@ def populate_env_content(template_content: str, values: dict[str, str]) -> str:
                 key_candidate = clean_key
 
         if key_candidate and key_candidate in values:
-            val = values[key_candidate]
-            output_lines.append(f"{key_candidate}={val}")
+            raw_val = values[key_candidate]
+            clean_val = str(raw_val).replace("\r", "").replace("\n", " ").strip()
+            output_lines.append(f"{key_candidate}={clean_val}")
             used_keys.add(key_candidate)
         else:
             output_lines.append(line)
@@ -80,7 +85,9 @@ def populate_env_content(template_content: str, values: dict[str, str]) -> str:
         output_lines.append("")
         output_lines.append("# --- Additional variables configured by wizard ---")
         for k in missing_keys:
-            output_lines.append(f"{k}={values[k]}")
+            raw_val = values[k]
+            clean_val = str(raw_val).replace("\r", "").replace("\n", " ").strip()
+            output_lines.append(f"{k}={clean_val}")
 
     return "\n".join(output_lines) + "\n"
 
@@ -252,9 +259,10 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
 
     minuti = prompt_input("Intervallo di controllo delle disponibilità (in minuti)", default="5")
     try:
-        sec = int(minuti) * 60
-        values["POLL_INTERVAL_SECONDS"] = str(max(60, sec))
-    except ValueError:
+        sec = int(float(minuti) * 60)
+        # Ensure interval is within sane limits: min 60s (1 min), max 86400s (24h)
+        values["POLL_INTERVAL_SECONDS"] = str(min(86400, max(60, sec)))
+    except (ValueError, OverflowError):
         values["POLL_INTERVAL_SECONDS"] = "300"
 
     # Defaults for system parameters
@@ -265,8 +273,12 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
 
     # Write .env file
     env_content = populate_env_content(template_content, values)
-    target_env.parent.mkdir(parents=True, exist_ok=True)
-    target_env.write_text(env_content, encoding="utf-8")
+    try:
+        target_env.parent.mkdir(parents=True, exist_ok=True)
+        target_env.write_text(env_content, encoding="utf-8")
+    except OSError as e:
+        print(f"\n[!] Impossibile salvare il file .env in '{target_env}': {e}\n", file=sys.stderr)
+        return False
 
     # Immediately reload environment variables into current process
     reload_dotenv(target_env)
