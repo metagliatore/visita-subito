@@ -47,9 +47,22 @@ def test_play_alert_sound_windows(monkeypatch):
         assert res_err is True
 
 
-def test_play_alert_sound_non_windows(monkeypatch):
+def test_play_alert_sound_linux_player(monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
-    with patch("sys.stdout.write") as mock_write, patch("sys.stdout.flush") as mock_flush:
+    with patch("services.sound._find_linux_sound_file", return_value="/fake/sound.oga"), \
+         patch("shutil.which", return_value="/usr/bin/paplay"), \
+         patch("subprocess.Popen") as mock_popen:
+        res = play_alert_sound("slot_found", enabled=True)
+        assert res is True
+        mock_popen.assert_called_once()
+        cmd = mock_popen.call_args[0][0]
+        assert cmd == ["paplay", "/fake/sound.oga"]
+
+
+def test_play_alert_sound_linux_bell_fallback(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    with patch("services.sound._find_linux_sound_file", return_value=None), \
+         patch("sys.stdout.write") as mock_write, patch("sys.stdout.flush") as mock_flush:
         res = play_alert_sound("slot_found", enabled=True)
         assert res is True
         assert mock_write.called
