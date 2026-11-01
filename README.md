@@ -1,6 +1,9 @@
 # 🏥 Monitor Appuntamenti Fascicolo Sanitario (Regione Lombardia)
 
-Bot automatizzato che controlla periodicamente le disponibilità per visite ed esami medici specialistici sul portale del Fascicolo Sanitario Elettronico e invia notifiche interattive via **Telegram** per approvare o rifiutare le date trovate.
+> 💡 **Ti hanno fissato una visita o un esame tra 12 o 18 mesi?**  
+> Sul portale sanitario regionale i posti si liberano continuamente per disdette o nuove aperture di agende, ma spariscono nel giro di pochissimi minuti. Passare le giornate ad aggiornare manualmente la pagina sperando in una disdetta è estenuante e inefficiente.
+>
+> Questo bot **fa la guardia 24/7 al posto tuo**: monitora ininterrottamente le disponibilità sul portale regionale, intercetta le cancellazioni all'istante e ti invia una notifica interattiva su **Telegram** (o con avviso sonoro via console). Con un semplice tap su **"Approva"**, il bot blocca e prenota subito il nuovo appuntamento, anticipando la tua visita medica di settimane o addirittura mesi.
 
 > [!IMPORTANT]
 > **Compatibilità e limitazioni attuali**:
