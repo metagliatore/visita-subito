@@ -291,6 +291,41 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
     return True
 
 
+def is_env_configured() -> bool:
+    """Checks if essential configuration is already present in environment variables.
+
+    Allows running seamlessly in containerized environments (Docker, Portainer, Kubernetes)
+    or CI/CD pipelines where parameters are passed via environment variables without a .env file.
+    """
+    # 1. Telegram bot configured
+    if os.environ.get("TG_TOKEN") or os.environ.get("TG_CHAT_ID"):
+        return True
+
+    # 2. Control interface explicitly set (e.g. CLI or Telegram)
+    if os.environ.get("CONTROL_INTERFACE"):
+        return True
+
+    # 3. Auth credentials or method configured
+    if any(
+        os.environ.get(k)
+        for k in (
+            "AUTH_METHOD",
+            "SPID_USERNAME",
+            "SIELTE_USERNAME",
+            "CIE_USERNAME",
+            "CIE_MODE",
+            "SPID_PROVIDER",
+        )
+    ):
+        return True
+
+    # 4. Running inside Docker container
+    if Path("/.dockerenv").exists() or os.environ.get("CONTAINER") or os.environ.get("DOCKER"):
+        return True
+
+    return False
+
+
 def check_or_run_wizard(env_path: Path | None = None, force: bool = False) -> bool:
     """Checks if .env exists or if --wizard is forced. If necessary, executes the wizard."""
     target_env = env_path or (get_base_dir() / ".env")
@@ -298,14 +333,20 @@ def check_or_run_wizard(env_path: Path | None = None, force: bool = False) -> bo
     if force:
         return run_wizard(target_env)
 
-    # If .env exists and size > 0, all good
+    # 1. If .env exists and size > 0, all good
     if target_env.exists() and target_env.stat().st_size > 0:
         return True
 
-    # If stdin is not an interactive terminal (e.g. non-interactive Docker / nohup)
+    # 2. If environment is already configured via environment variables (Docker / Portainer)
+    if is_env_configured():
+        return True
+
+    # 3. If stdin is not an interactive terminal (e.g. non-interactive background daemon)
     if not sys.stdin.isatty():
-        print("[!] File .env non trovato. Per la prima configurazione, esegui il programma da un terminale "
-              "interattivo (es. python main.py) oppure copia .env.example in .env.", file=sys.stderr)
+        print("[!] File .env non trovato e nessuna variabile d'ambiente configurata. "
+              "Per la prima configurazione, esegui il programma da un terminale interattivo "
+              "(es. python main.py) oppure configura le variabili d'ambiente / copia .env.example in .env.",
+              file=sys.stderr)
         return False
 
     return run_wizard(target_env)

@@ -198,8 +198,36 @@ def test_check_or_run_wizard_when_force(tmp_path):
 def test_check_or_run_wizard_missing_non_tty(tmp_path, monkeypatch):
     env_file = tmp_path / ".env"
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    # Ensure no environment variables trigger is_env_configured
+    for k in ("TG_TOKEN", "TG_CHAT_ID", "CONTROL_INTERFACE", "AUTH_METHOD", "SPID_USERNAME", "SIELTE_USERNAME", "CIE_USERNAME", "CIE_MODE", "SPID_PROVIDER", "CONTAINER", "DOCKER"):
+        monkeypatch.delenv(k, raising=False)
 
     with patch("core.wizard.run_wizard") as mock_run:
         res = check_or_run_wizard(env_path=env_file, force=False)
         assert res is False
+        mock_run.assert_not_called()
+
+
+def test_check_or_run_wizard_docker_env_vars(tmp_path, monkeypatch):
+    """Verify that in containerized environments (Docker/Portainer) without .env file, startup succeeds."""
+    env_file = tmp_path / ".env"
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    monkeypatch.setenv("TG_TOKEN", "123456:ABC")
+    monkeypatch.setenv("TG_CHAT_ID", "999888")
+
+    with patch("core.wizard.run_wizard") as mock_run:
+        res = check_or_run_wizard(env_path=env_file, force=False)
+        assert res is True
+        mock_run.assert_not_called()
+
+
+def test_check_or_run_wizard_docker_flag(tmp_path, monkeypatch):
+    """Verify that DOCKER=1 allows non-interactive startup without .env file."""
+    env_file = tmp_path / ".env"
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    monkeypatch.setenv("DOCKER", "1")
+
+    with patch("core.wizard.run_wizard") as mock_run:
+        res = check_or_run_wizard(env_path=env_file, force=False)
+        assert res is True
         mock_run.assert_not_called()

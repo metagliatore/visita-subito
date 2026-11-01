@@ -43,6 +43,7 @@ services:
       # --- Runtime di sistema ---
       - CHROME_BIN=/usr/bin/google-chrome
       - PYTHONUNBUFFERED=1
+      - DOCKER=1
     volumes:
       # Dati persistenti (cookie SPID, stato monitor, log applicativo)
       - ${DATA_PATH:-fascicolo_data}:/app/data
