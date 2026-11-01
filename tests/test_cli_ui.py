@@ -248,16 +248,24 @@ def test_command_anticipa(monkeypatch, capsys):
     ui = CliUI()
     mock_ctl = MagicMock()
     mock_ctl.aggiungi_monitor.return_value = "reschedule-CARD-1"
+    mock_ctl.lista_province.return_value = ["MILANO CITTA'", "MONZA-BRIANZA"]
+    mock_ctl.criteri_default.return_value = {"province": ["MILANO CITTA'"]}
     ui.controller = mock_ctl
     ui._appuntamenti_cache = [
         {"prestazione": "VISITA CARDIOLOGICA", "data_ora": "20/11/2026 10:30", "codice": "COD123"}
     ]
+
+    # Provide inputs for province, data_dal, data_a
+    inputs = ["", "01/11/2026", "15/11/2026"]
+    input_iter = iter(inputs)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(input_iter))
 
     ui._dispatch_input("anticipa 1")
     mock_ctl.aggiungi_monitor.assert_called_once_with(
         tipo="reschedule",
         descrizione="VISITA CARDIOLOGICA",
         nre="COD123",
+        criteri={"province": ["MILANO CITTA'"], "data_dal": "01/11/2026", "data_a": "15/11/2026"},
         data_attuale="20/11/2026 10:30",
     )
     assert "Monitor di anticipo avviato con ID: reschedule-CARD-1" in capsys.readouterr().out

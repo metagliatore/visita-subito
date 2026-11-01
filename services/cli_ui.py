@@ -556,17 +556,54 @@ class CliUI:
         data_ora = target_app.get("data_ora", "")
         codice = target_app.get("codice", "")
 
+        criteri = self._ask_criteri(default_data_a_hint=f"prima del {data_ora or 'limite attuale'}")
+
         mid = self.controller.aggiungi_monitor(
             tipo="reschedule",
             descrizione=prestazione,
             nre=codice,
+            criteri=criteri,
             data_attuale=data_ora,
         )
         if mid:
             print(f"\n✅ Monitor di anticipo avviato con ID: {mid}")
-            print(f"   Ricerca attiva per trovare date precedenti al: {data_ora}\n")
+            limite_txt = (
+                f"tra {criteri['data_dal'] or 'oggi'} e {criteri['data_a'] or data_ora}"
+                if (criteri.get("data_dal") or criteri.get("data_a"))
+                else f"precedenti al: {data_ora}"
+            )
+            print(f"   Ricerca attiva per trovare date {limite_txt} (Province: {', '.join(criteri.get('province', []))})\n")
         else:
             print("❌ Errore durante l'avvio del monitor di anticipo.")
+
+    def _ask_criteri(self, default_data_a: str = "", default_data_a_hint: str = "senza limite") -> dict:
+        """Prompt user for criteria: province, start date, and end date."""
+        prov_disp = self.controller.lista_province() if self.controller else []
+        prov_def = (
+            (self.controller.criteri_default() or {}).get("province", ["MILANO CITTA'"])
+            if self.controller
+            else ["MILANO CITTA'"]
+        )
+        def_str = ", ".join(prov_def) if isinstance(prov_def, list) else str(prov_def)
+
+        if prov_disp:
+            print(f"\nProvince disponibili: {', '.join(prov_disp)}")
+        prov_inp = input(f"Province da cercare separate da virgola [{def_str}]: ").strip()
+        if prov_inp:
+            scelte_prov = [p.strip().upper() for p in prov_inp.split(",") if p.strip()]
+        else:
+            scelte_prov = prov_def if isinstance(prov_def, list) else [prov_def]
+
+        # Dates range
+        data_dal = input("Data 'A partire da' (DD/MM/YYYY o invio per oggi): ").strip()
+        data_a_inp = input(f"Data 'Entro il' (DD/MM/YYYY o invio per {default_data_a_hint}): ").strip()
+        data_a = data_a_inp or default_data_a
+
+        return {
+            "province": scelte_prov,
+            "data_dal": data_dal,
+            "data_a": data_a,
+        }
 
     def _cmd_monitora(self) -> None:
         if not self.controller:
@@ -617,26 +654,7 @@ class CliUI:
             print("Operazione annullata.")
             return
 
-        # Province selection
-        prov_disp = self.controller.lista_province()
-        prov_def = self.controller.criteri_default().get("province", ["MILANO CITTA'"])
-        def_str = ", ".join(prov_def) if isinstance(prov_def, list) else str(prov_def)
-        print(f"\nProvince disponibili: {', '.join(prov_disp)}")
-        prov_inp = input(f"Province da cercare separate da virgola [{def_str}]: ").strip()
-        if prov_inp:
-            scelte_prov = [p.strip().upper() for p in prov_inp.split(",") if p.strip()]
-        else:
-            scelte_prov = prov_def if isinstance(prov_def, list) else [prov_def]
-
-        # Dates range
-        data_dal = input("Data 'A partire da' (DD/MM/YYYY o invio per oggi): ").strip()
-        data_a = input("Data 'Entro il' (DD/MM/YYYY o invio per senza limite): ").strip()
-
-        criteri = {
-            "province": scelte_prov,
-            "data_dal": data_dal,
-            "data_a": data_a,
-        }
+        criteri = self._ask_criteri(default_data_a_hint="senza limite")
 
         mid = self.controller.aggiungi_monitor(
             tipo=tipo,
