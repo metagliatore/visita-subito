@@ -16,6 +16,9 @@ datas += collect_data_files('selenium')
 hiddenimports = [
     'yaml',
     'dotenv',
+    'appdirs',
+    'pkg_resources.extern.appdirs',
+    'pkg_resources.extern.packaging',
     'telegram',
     'telegram.ext',
     'httpx',
