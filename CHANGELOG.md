@@ -1,3 +1,16 @@
+## v0.2.0 (2026-11-02)
+
+### Feat
+
+- **sound**: integrate native Linux PulseAudio/PipeWire playback using freedesktop chime
+- **cli**: allow specifying custom date ranges and provinces in anticipa command
+- **cli**: print help menu automatically upon successful login
+
+### Fix
+
+- **docker**: allow non-interactive startup without .env when configured via environment variables
+- **cli**: harden wizard and terminal UI against invalid inputs and exceptions
+
 ## v0.1.0 (2026-11-01)
 
 ### Feat
