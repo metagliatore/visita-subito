@@ -765,6 +765,41 @@ def test_flow_request_approval_execution_error_sends_screenshot(tmp_path):
         assert any("Prenotazione non riuscita" in call[0][0] for call in bot.notify.call_args_list)
 
 
+def test_flow_request_approval_displays_old_appointment_and_anticipo():
+    monitor = {
+        "id": "reschedule-visita",
+        "type": "reschedule",
+        "data_attuale": "20/12/2026 14:00",
+        "criteri": {},
+    }
+    browser = MagicMock()
+    queue = MagicMock()
+    bot = MagicMock()
+    store = MagicMock()
+
+    flow = DummyFlow(monitor, browser, queue, bot, store)
+    slot = Slot(datetime=datetime(2026, 11, 15, 9, 30))
+
+    queue.create.return_value = "req-resched"
+    queue.wait_decision.return_value = {"cancelled": False, "decision": True, "extra": {"azione": "approve"}}
+    bot.notify_buttons.return_value = [("chat1", 123)]
+    flow.execute = MagicMock()
+
+    res = flow._request_approval(slot)
+    assert res == "ok"
+
+    # Check proposal message
+    proposal_msg = bot.notify_buttons.call_args_list[0][0][0]
+    assert "Nuova data proposta: 15/11/2026 ore 09:30" in proposal_msg
+    assert "📌 Appuntamento attuale da sostituire: 20/12/2026 14:00" in proposal_msg
+    assert "35 giorni di anticipo" in proposal_msg
+
+    # Check booking confirmation message
+    booking_msg = bot.notify.call_args_list[0][0][0]
+    assert "in sostituzione di quello del 20/12/2026 14:00" in booking_msg
+
+
+
 
 
 

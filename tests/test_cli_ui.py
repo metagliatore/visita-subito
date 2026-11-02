@@ -48,6 +48,23 @@ def test_notify_buttons_approval_triggers_sound_and_state(capsys):
         assert "req123" not in out  # clean output
 
 
+def test_notify_buttons_approval_displays_old_appointment_and_anticipo(capsys):
+    ui = CliUI(sound_alert=False)
+    msg = (
+        "🩺 Trovata disponibilità (res-1)\n"
+        "📅 Nuova data proposta: 15/11/2026 ore 09:30 · MI\n"
+        "📌 Appuntamento attuale da sostituire: 20/12/2026 14:00 (35 giorni di anticipo)\n\n"
+        "Vuoi procedere?"
+    )
+    buttons = [[("✅ Approva", "decide:approve:req456"), ("❌ Rifiuta", "decide:deny:req456")]]
+    ui.notify_buttons(msg, buttons)
+
+    out = capsys.readouterr().out
+    assert "Nuova data proposta: 15/11/2026 ore 09:30" in out
+    assert "Appuntamento attuale da sostituire: 20/12/2026 14:00 (35 giorni di anticipo)" in out
+
+
+
 def test_notify_buttons_postbook_sets_state(capsys):
     ui = CliUI()
     buttons = [[("🛑 Ferma", "postbook:stop:mon-1"), ("🔄 Continua", "postbook:continue:mon-1")]]

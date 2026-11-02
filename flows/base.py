@@ -961,9 +961,34 @@ class Flow:
         al = self.criteri.get("data_a")
         if dal or al:
             range_txt = f"\n📅 Range richiesto: {dal or 'da oggi'} → {al or 'senza limite'}"
+
+        vecchio_info = ""
+        d_attuale = (
+            self.monitor.get("data_attuale")
+            or self.criteri.get("data_attuale")
+        )
+        if not d_attuale and hasattr(self.store, "get_prenotazione"):
+            pren = self.store.get_prenotazione(self.mid)
+            d_attuale = pren.get("data_ora") if pren else ""
+
+        if d_attuale:
+            from services.deadline import parse_appuntamento_datetime
+            old_dt = parse_appuntamento_datetime(d_attuale)
+            anticipo_str = ""
+            if old_dt and hasattr(slot, "datetime") and slot.datetime:
+                delta_days = (old_dt.date() - slot.datetime.date()).days
+                if delta_days > 0:
+                    anticipo_str = f" ({delta_days} {'giorno' if delta_days == 1 else 'giorni'} di anticipo)"
+                elif delta_days == 0:
+                    anticipo_str = " (stesso giorno, orario precedente)"
+            vecchio_info = f"\n📌 Appuntamento attuale da sostituire: {esc(d_attuale)}{anticipo_str}"
+
+        data_label = "Nuova data proposta" if vecchio_info else "Data"
         msg = (
             f"🩺 Trovata disponibilità ({self.mid})\n"
-            f"📅 {slot.date_str} ore {slot.time_str}{f' · {prov}' if prov else ''}{range_txt}"
+            f"📅 {data_label}: {slot.date_str} ore {slot.time_str}{f' · {prov}' if prov else ''}"
+            f"{vecchio_info}"
+            f"{range_txt}"
         )
         if azienda:
             msg += f"\n🏥 {esc(azienda)}"
@@ -1010,7 +1035,8 @@ class Flow:
             self._ultima_azione = (decision.get("extra") or {}).get("azione", "approve")
             self.execute(slot)
             self.store.mark_action(self.mid, "done_pending_choice", str(slot))
-            self.bot.notify(f"✅ Appuntamento {slot.date_str} ore {slot.time_str} prenotato.")
+            sostituito_txt = f" in sostituzione di quello del {d_attuale}" if d_attuale else ""
+            self.bot.notify(f"✅ Appuntamento {slot.date_str} ore {slot.time_str} prenotato{sostituito_txt}.")
             self._chiedi_post_prenotazione(slot)
             return "ok"
         except Exception as e:  # noqa: BLE001
