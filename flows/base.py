@@ -1019,6 +1019,22 @@ class Flow:
             self._ultima_azione = "autobook"
             self.execute(slot)
             self.store.mark_action(self.mid, "done_pending_choice", str(slot))
+        except Exception as e:  # noqa: BLE001
+            log.exception("[%s] Fast-track auto-booking fallito", self.mid)
+            dump = self._salva_debug_dump("errore_autobook", invia_telegram=True)
+            dump_msg = f"\n\n{dump['message']}" if dump else ""
+            self.store.mark_action(self.mid, "idle", f"fallita prenotazione automatica: {e}")
+            try:
+                self.bot.notify(
+                    f"❌ <b>Fast-Track Auto-Booking non riuscito</b> per <b>{self.mid}</b>:\n{e}{dump_msg}\n\n"
+                    f"ℹ️ Lo slot potrebbe essere stato occupato da altri nel frattempo. Il monitoraggio rimane attivo e continuerà a cercare nuove date disponibili."
+                )
+            except Exception:
+                pass
+            return "errore"
+
+        # Booking confirmed on portal: notify user and trigger post-booking prompt
+        try:
             play_alert_sound("success")
             sostituito_txt = f" in sostituzione di quello del {esc(d_attuale)}" if d_attuale else ""
             self.bot.notify(
@@ -1029,17 +1045,10 @@ class Flow:
                 f"senza pagare alcuna sanzione (rispettando il termine di 3 giorni lavorativi di preavviso)."
             )
             self._chiedi_post_prenotazione(slot)
-            return "ok"
-        except Exception as e:  # noqa: BLE001
-            log.exception("[%s] Fast-track auto-booking fallito", self.mid)
-            dump = self._salva_debug_dump("errore_autobook", invia_telegram=True)
-            dump_msg = f"\n\n{dump['message']}" if dump else ""
-            self.store.mark_action(self.mid, "idle", f"fallita prenotazione automatica: {e}")
-            self.bot.notify(
-                f"❌ <b>Fast-Track Auto-Booking non riuscito</b> per <b>{self.mid}</b>:\n{e}{dump_msg}\n\n"
-                f"ℹ️ Lo slot potrebbe essere stato occupato da altri nel frattempo. Il monitoraggio rimane attivo e continuerà a cercare nuove date disponibili."
-            )
-            return "errore"
+        except Exception as ex:
+            log.warning("[%s] Errore invio notifica post-autobook: %s", self.mid, ex)
+
+        return "ok"
 
     def _request_approval(self, slot, fallback_autobook_reason: str = "") -> str:
         req_id = self.queue.create(self.mid, {"slot": slot.__dict__, "type": self.type})

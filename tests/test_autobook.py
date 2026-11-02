@@ -300,3 +300,162 @@ def test_status_text_shows_autobook_state(monkeypatch, tmp_path):
     controller2.store = store
     txt_enabled = controller2.status_text()
     assert "Fast-Track Auto-Booking: ATTIVO (soglia minima >= 6 giorni)" in txt_enabled
+
+
+def test_flow_reschedule_fast_track_autobook_with_substitution(monkeypatch):
+    """Reschedule flow autobook displays old appointment replacement text."""
+    monkeypatch.setenv("AUTO_BOOK", "true")
+    monkeypatch.setenv("AUTO_BOOK_MIN_DAYS", "5")
+
+    from flows.reschedule import RescheduleFlow
+
+    mon = {
+        "id": "mon_reschedule_autobook",
+        "type": "reschedule",
+        "ricetta": "Visita Cardiologica",
+        "data_attuale": "28/12/2026 11:00",
+        "criteri": {"province": ["BG"]},
+    }
+    browser = MagicMock()
+    queue = MagicMock()
+    bot = MagicMock()
+    store = MagicMock()
+    store.seen_slots.return_value = set()
+    store.get_blacklist_keys.return_value = set()
+
+    flow = RescheduleFlow(mon, browser, queue, bot, store)
+
+    now = datetime(2026, 11, 2, 10, 0)
+    slot = Slot(
+        datetime=now + timedelta(days=8),
+        extra={"provincia": "BG", "azienda": "Papa Giovanni XXIII", "comune": "Bergamo"}
+    )
+
+    with patch("services.deadline.get_now", return_value=now), \
+         patch.object(flow, "execute") as mock_exec, \
+         patch.object(flow, "_chiedi_post_prenotazione") as mock_postbook:
+
+        result = flow._gestisci_slot_trovato(slot)
+
+        assert result == "ok"
+        mock_exec.assert_called_once_with(slot)
+        mock_postbook.assert_called_once_with(slot)
+
+        sent_messages = [call.args[0] for call in bot.notify.call_args_list]
+        combined = " ".join(sent_messages)
+        assert "[PRENOTATO AUTOMATICAMENTE]" in combined
+        assert "in sostituzione di quello del 28/12/2026 11:00" in combined
+        assert "8 giorni" in combined
+
+
+def test_flow_autobook_resilient_to_post_booking_notification_error(monkeypatch):
+    """If Telegram notify fails AFTER successful execution, action remains recorded as done_pending_choice."""
+    monkeypatch.setenv("AUTO_BOOK", "true")
+    monkeypatch.setenv("AUTO_BOOK_MIN_DAYS", "5")
+
+    from flows.new_booking import NewBookingFlow
+
+    mon = {
+        "id": "mon_notify_error_test",
+        "type": "new",
+        "ricetta": "Ecografia Tiroidea",
+        "criteri": {"province": ["BS"]},
+    }
+    browser = MagicMock()
+    queue = MagicMock()
+    bot = MagicMock()
+    # bot.notify fails on the second call (post-booking message)
+    bot.notify.side_effect = ["Pre-ok", RuntimeError("Telegram connection timeout")]
+    store = MagicMock()
+    store.seen_slots.return_value = set()
+    store.get_blacklist_keys.return_value = set()
+
+    flow = NewBookingFlow(mon, browser, queue, bot, store)
+
+    now = datetime(2026, 11, 2, 10, 0)
+    slot = Slot(
+        datetime=now + timedelta(days=9),
+        extra={"provincia": "BS", "azienda": "Spedali Civili", "comune": "Brescia"}
+    )
+
+    with patch("services.deadline.get_now", return_value=now), \
+         patch.object(flow, "execute") as mock_exec, \
+         patch.object(flow, "_chiedi_post_prenotazione") as mock_postbook:
+
+        result = flow._gestisci_slot_trovato(slot)
+
+        # Still considered ok because portal booking succeeded
+        assert result == "ok"
+        mock_exec.assert_called_once_with(slot)
+        # Store was marked done_pending_choice and NOT idle
+        store.mark_action.assert_called_once_with("mon_notify_error_test", "done_pending_choice", str(slot))
+
+
+def test_cerca_first_and_best_match_dispatch_autobook(monkeypatch):
+    """Both first_match and best_match search strategies dispatch to _gestisci_slot_trovato."""
+    monkeypatch.setenv("AUTO_BOOK", "true")
+    monkeypatch.setenv("AUTO_BOOK_MIN_DAYS", "5")
+
+    from flows.new_booking import NewBookingFlow
+
+    mon = {
+        "id": "mon_strat_test",
+        "type": "new",
+        "ricetta": "Visita Fisiatrica",
+        "criteri": {"province": ["MI"]},
+    }
+    browser = MagicMock()
+    queue = MagicMock()
+    bot = MagicMock()
+    store = MagicMock()
+    store.seen_slots.return_value = set()
+    store.get_blacklist_keys.return_value = set()
+
+    flow = NewBookingFlow(mon, browser, queue, bot, store)
+
+    now = datetime(2026, 11, 2, 10, 0)
+    slot = Slot(
+        datetime=now + timedelta(days=7),
+        extra={"provincia": "MI", "azienda": "Gaetano Pini", "comune": "Milano"}
+    )
+
+    # 1. first_match dispatch
+    flow.extract_slots_current_province = MagicMock(return_value=[slot])
+    with patch.object(flow, "_gestisci_slot_trovato", return_value="autobook_ok") as mock_gest:
+        res1 = flow._cerca_first_match()
+        assert res1 == "autobook_ok"
+        mock_gest.assert_called_once_with(slot)
+
+    # 2. best_match dispatch
+    slot2 = Slot(
+        datetime=now + timedelta(days=8),
+        extra={"provincia": "MI", "azienda": "Gaetano Pini 2", "comune": "Milano"}
+    )
+    flow.extract_slots = MagicMock(return_value=[slot2])
+    with patch.object(flow, "_gestisci_slot_trovato", return_value="autobook_ok") as mock_gest2:
+        res2 = flow._cerca_best_match()
+        assert res2 == "autobook_ok"
+        mock_gest2.assert_called_once_with(slot2)
+
+
+def test_autobook_eligibility_edge_cases():
+    """Verify boundary conditions and edge cases in eligibility checks."""
+    now = datetime(2028, 2, 24, 10, 0)  # Leap year 2028
+
+    # Leap day test (Feb 29 is +5 days from Feb 24)
+    leap_slot = DummySlot(datetime(2028, 2, 29, 9, 0))
+    eligible, delta, _ = check_autobook_eligibility(leap_slot, min_days=5, now=now)
+    assert eligible is True
+    assert delta == 5
+
+    # Zero min_days (any future date is accepted)
+    same_week_slot = DummySlot(now + timedelta(days=1))
+    eligible0, delta0, _ = check_autobook_eligibility(same_week_slot, min_days=0, now=now)
+    assert eligible0 is True
+    assert delta0 == 1
+
+    # Raw date string with Italian format
+    eligible_str, delta_str, _ = check_autobook_eligibility("05/03/2028 14:30", min_days=5, now=now)
+    assert eligible_str is True
+    assert delta_str == 10
+
