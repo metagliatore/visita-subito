@@ -713,6 +713,10 @@ class Flow:
         only in that case is the end-of-cycle "no availability" notification sent
         (in automatic ticks it would be spammy).
         """
+        if hasattr(self.store, "is_disabled") and self.store.is_disabled(self.mid) is True:
+            log.info("[%s] Monitor disabilitato: salto il controllo", self.mid)
+            return ""
+
         # If appointment was already booked:
         action_state = self.store.get_action(self.mid)
         # 1) For 'reschedule' monitors: always rearm to 'idle' to keep searching for earlier dates
@@ -744,6 +748,41 @@ class Flow:
                 self.criteri["data_attuale"] = d_str
             self.store.mark_action(self.mid, "idle", "promosso a reschedule da /poll manuale")
             action_state = "idle"
+
+        # Check reschedule working days deadline (avoids penalties / malus ticket)
+        data_attuale = (
+            self.monitor.get("data_attuale")
+            or self.criteri.get("data_attuale")
+        )
+        if not data_attuale and hasattr(self.store, "get_prenotazione"):
+            pren = self.store.get_prenotazione(self.mid)
+            data_attuale = pren.get("data_ora") if pren else ""
+
+        if data_attuale and (self.type == "reschedule" or self.monitor.get("type") == "reschedule"):
+            from services.deadline import check_reschedule_deadline, get_reschedule_min_working_days
+            from services.sound import play_alert_sound
+
+            min_days = get_reschedule_min_working_days(getattr(self.store, "cfg", None), self.criteri)
+            is_too_late, app_dt, dl_dt, dl_msg = check_reschedule_deadline(data_attuale, min_working_days=min_days)
+            if is_too_late:
+                log.warning("[%s] Scadenza limite raggiunta: %s. Arresto automatico monitor.", self.mid, dl_msg)
+                if hasattr(self.store, "remove_monitor"):
+                    self.store.remove_monitor(self.mid)
+                self.store.mark_action(self.mid, "stopped_deadline", dl_msg)
+                self.monitor["enabled"] = False
+                app_fmt = app_dt.strftime('%d/%m/%Y alle %H:%M') if app_dt else str(data_attuale)
+                dl_fmt = dl_dt.strftime('%d/%m/%Y alle %H:%M') if dl_dt else "scaduto"
+                notify_msg = (
+                    f"⚠️ <b>Monitor {self.mid} arrestato automaticamente</b>\n\n"
+                    f"📌 <b>Appuntamento attuale</b>: {app_fmt}\n"
+                    f"⏳ <b>Termine ultimo utile</b>: {dl_fmt}\n\n"
+                    f"Mancano meno di {min_days} giorni lavorativi (esclusi sab, dom e festivi).\n"
+                    f"Il monitoraggio è stato fermato per evitare l'addebito della penale (malus ticket)."
+                )
+                if hasattr(self.bot, "notify"):
+                    self.bot.notify(notify_msg)
+                play_alert_sound("alert")
+                return f"Monitor {self.mid} arrestato: meno di {min_days} giorni lavorativi all'appuntamento."
 
         if action_state in ("done", "done_pending_choice"):
             log.info("[%s] Visita già prenotata (action_state=%s): salto il controllo", self.mid, action_state)

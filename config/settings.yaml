@@ -43,6 +43,11 @@ scheduler:
   poll_interval_seconds: 300       # 5 min
   # Timeout massimo (sec) per caricamento lista appuntamenti in riprogrammazione
   reschedule_wait_timeout: 30
+  # Giorni lavorativi minimi di preavviso per riprogrammare una visita esistente
+  # (esclusi sabato, domenica e festivi nazionali). Se mancano meno di X giorni lavorativi,
+  # il monitor viene arrestato automaticamente per evitare l'addebito del malus ticket.
+  # Impostare a 0 per disattivare il controllo.
+  reschedule_min_working_days: 3
   # Strategia di ricerca multi-provincia: "first_match" | "best_match"
   # - "first_match" (consigliata / rapida): carica una provincia alla volta;
   #   non appena trova una disponibilità valida nei criteri, si ferma, la propone

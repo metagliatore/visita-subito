@@ -559,7 +559,7 @@ def test_reschedule_flow_poll_once_unblocks_done_or_pending_choice():
     store = MagicMock()
     # Simulate reschedule monitor with action_state 'done' (previously blocked)
     store.get_action.return_value = "done"
-    store.get_prenotazione.return_value = {"data_ora": "25/10/2026 10:00"}
+    store.get_prenotazione.return_value = {"data_ora": "25/10/2027 10:00"}
 
     flow = RescheduleFlow(
         {"id": "res-1", "ricetta": "VISITA UROLOGICA", "type": "reschedule"},
@@ -583,7 +583,7 @@ def test_new_booking_flow_poll_once_manual_auto_promotes_done_pending_choice():
     from flows.new_booking import NewBookingFlow
     store = MagicMock()
     store.get_action.return_value = "done_pending_choice"
-    store.get_prenotazione.return_value = {"data_ora": "25/10/2026 10:00"}
+    store.get_prenotazione.return_value = {"data_ora": "25/10/2027 10:00"}
     bot = MagicMock()
 
     flow = NewBookingFlow(
@@ -601,7 +601,7 @@ def test_new_booking_flow_poll_once_manual_auto_promotes_done_pending_choice():
 
     assert flow.type == "reschedule"
     assert flow.monitor["type"] == "reschedule"
-    assert flow.criteri["data_attuale"] == "25/10/2026 10:00"
+    assert flow.criteri["data_attuale"] == "25/10/2027 10:00"
     store.mark_action.assert_called_with("new-1", "idle", "promosso a reschedule da /poll manuale")
     bot.notify.assert_called()
     assert any("anticipare" in call[0][0] for call in bot.notify.call_args_list)

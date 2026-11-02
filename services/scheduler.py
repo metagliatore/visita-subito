@@ -562,6 +562,22 @@ class Controller:
             if nre:
                 riga += f"\n  🔖 NRE: {nre}"
             riga += f"\n  Tipo: {tipo_nome.get(f.type, f.type)}"
+            if f.type == "reschedule" or (isinstance(mon, dict) and mon.get("data_attuale")):
+                d_att = (mon.get("data_attuale") or "").strip() if isinstance(mon, dict) else ""
+                if not d_att and hasattr(f, "criteri"):
+                    d_att = str(f.criteri.get("data_attuale", "")).strip()
+                if d_att:
+                    riga += f"\n  📌 Appuntamento attuale: {d_att}"
+                    from services.deadline import check_reschedule_deadline, get_reschedule_min_working_days
+                    min_days = get_reschedule_min_working_days(self.cfg, mon.get("criteri") if isinstance(mon, dict) else None)
+                    if min_days > 0:
+                        is_late, app_dt, dl_dt, _ = check_reschedule_deadline(d_att, min_working_days=min_days)
+                        if dl_dt:
+                            dl_str = dl_dt.strftime('%d/%m/%Y alle %H:%M')
+                            if is_late:
+                                riga += f"\n  ⚠️ Scaduto termine disdetta senza penale (era {dl_str})"
+                            else:
+                                riga += f"\n  ⏳ Limite disdetta/spostamento senza penale: {dl_str}"
             province = crit.get("province")
             if province:
                 if isinstance(province, (list, tuple)):
@@ -833,6 +849,9 @@ class Controller:
                     if self._force.is_set():
                         log.info("Polling interrotto a metà: /poll richiesto dall'utente")
                         break
+                    if hasattr(self.store, "is_disabled") and self.store.is_disabled(f.mid) is True:
+                        log.debug("[%s] Monitor disabilitato: salto ciclo", f.mid)
+                        continue
                     # Synchronize flow if monitor type changed in store (e.g. promoted to reschedule)
                     mon_stored = next((m for m in self.store.get_monitors() if m.get("id") == f.mid), None)
                     if mon_stored and mon_stored.get("type") and mon_stored.get("type") != f.type and mon_stored.get("type") in FLOW_TYPES:
@@ -855,6 +874,7 @@ class Controller:
                     if self._force.is_set():
                         log.info("Polling interrotto:a fine %s: /poll richiesto dall'utente", f.mid)
                         break
+                self._flows = [f for f in self._flows if not (hasattr(self.store, "is_disabled") and self.store.is_disabled(f.mid) is True)]
         finally:
             self.polling_in_corso = False
 

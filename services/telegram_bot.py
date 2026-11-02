@@ -496,6 +496,23 @@ class TelegramBot:
         was_paused = bool(self.controller and getattr(self.controller, "paused", False) is True)
         data_ricetta = target.get("data_ricetta") or ""
         data_attuale = target.get("data_ora") or ""
+        if tipo == "reschedule" and data_attuale:
+            from services.deadline import check_reschedule_deadline, get_reschedule_min_working_days
+            min_days = get_reschedule_min_working_days()
+            is_too_late, app_dt, dl_dt, dl_msg = check_reschedule_deadline(data_attuale, min_working_days=min_days)
+            if is_too_late:
+                self._wizard.pop(chat_id, None)
+                q = update.callback_query
+                dl_fmt = dl_dt.strftime('%d/%m/%Y alle %H:%M') if dl_dt else "scaduto"
+                await q.edit_message_text(
+                    f"⚠️ <b>Impossibile avviare il monitor di anticipo</b>\n\n"
+                    f"📌 <b>Appuntamento attuale</b>: {self._esc(data_attuale)}\n"
+                    f"⏳ <b>Termine ultimo utile</b>: {self._esc(dl_fmt)}\n\n"
+                    f"Mancano meno di {min_days} giorni lavorativi (esclusi sab, dom e festivi).\n"
+                    f"La modifica o disdetta comporterebbe la penale (malus ticket).",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
         mid = self.controller.aggiungi_monitor(
             tipo, desc, nre=nre,
             criteri={"province": prov_list, "data_dal": data_dal, "data_a": data_a},
@@ -627,8 +644,8 @@ class TelegramBot:
                 elif scelta == "continue":
                     ok = self.controller.converti_in_reschedule(mid)
                     if ok:
-                        pren = self.controller.store.get_prenotazione(mid)
-                        data_ora = pren.get("data_ora") or "la data prenotata"
+                        pren = self.controller.store.get_prenotazione(mid) if hasattr(self.controller, "store") else {}
+                        data_ora = (pren.get("data_ora") if isinstance(pren, dict) else "") or "la data prenotata"
                         await q.edit_message_text(
                             f"🔄 <b>Monitoraggio aggiornato: ricerca anticipo attiva!</b>\n\n"
                             f"📌 Appuntamento attuale: <b>{self._esc(data_ora)}</b>\n"
@@ -646,8 +663,8 @@ class TelegramBot:
                     return
                 ok = self.controller.converti_in_reschedule(mid)
                 if ok:
-                    pren = self.controller.store.get_prenotazione(mid)
-                    d_str = pren.get("data_ora") or ""
+                    pren = self.controller.store.get_prenotazione(mid) if hasattr(self.controller, "store") else {}
+                    d_str = pren.get("data_ora") if isinstance(pren, dict) else ""
                     data_info = f"\n📌 Appuntamento attuale: <b>{self._esc(d_str)}</b>" if d_str else ""
                     await q.edit_message_text(
                         f"🔄 <b>Ricerca anticipo attivata per {self._esc(mid)}!</b>{data_info}\n\n"

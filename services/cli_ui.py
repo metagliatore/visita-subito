@@ -335,6 +335,20 @@ class CliUI:
                 return
             elif low in ("2", "continua", "anticipa", "c"):
                 if self.controller:
+                    pren = self.controller.store.get_prenotazione(mid)
+                    d_ora = pren.get("data_ora", "")
+                    if d_ora:
+                        from services.deadline import check_reschedule_deadline, get_reschedule_min_working_days
+                        min_days = get_reschedule_min_working_days()
+                        is_too_late, app_dt, dl_dt, dl_msg = check_reschedule_deadline(d_ora, min_working_days=min_days)
+                        if is_too_late:
+                            print(f"\n⚠️ Impossibile convertire in anticipo:")
+                            print(f"   {dl_msg}")
+                            print(f"   Mancano meno di {min_days} giorni lavorativi all'appuntamento.")
+                            print(f"   La riprogrammazione comporterebbe l'addebito della penale (malus ticket).\n")
+                            self.controller.rimuovi_monitor(mid)
+                            self._pending_postbook = None
+                            return
                     self.controller.converti_in_reschedule(mid)
                 self._pending_postbook = None
                 print(f"🔄 Monitoraggio convertito in ricerca anticipi per {mid}.")
@@ -555,6 +569,16 @@ class CliUI:
         prestazione = target_app.get("prestazione", "Visita")
         data_ora = target_app.get("data_ora", "")
         codice = target_app.get("codice", "")
+
+        from services.deadline import check_reschedule_deadline, get_reschedule_min_working_days
+        min_days = get_reschedule_min_working_days()
+        is_too_late, app_dt, dl_dt, dl_msg = check_reschedule_deadline(data_ora, min_working_days=min_days)
+        if is_too_late:
+            print(f"\n⚠️ Impossibile avviare il monitor di anticipo:")
+            print(f"   {dl_msg}")
+            print(f"   Mancano meno di {min_days} giorni lavorativi all'appuntamento.")
+            print(f"   La riprogrammazione comporterebbe l'addebito della penale (malus ticket).\n")
+            return
 
         criteri = self._ask_criteri(default_data_a_hint=f"prima del {data_ora or 'limite attuale'}")
 
