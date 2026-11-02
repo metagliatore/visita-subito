@@ -573,8 +573,18 @@ class RescheduleFlow(Flow):
         # ICS
         try:
             from pathlib import Path
-            ics = write_ics(info, Path("data/ics"))
-            self.bot.send_file(str(ics), caption=f"📅 Evento calendario {info.data_ora}")
+            d_attuale = (
+                self.monitor.get("data_attuale")
+                or self.criteri.get("data_attuale")
+            )
+            if not d_attuale and hasattr(self.store, "get_prenotazione"):
+                pren = self.store.get_prenotazione(self.mid)
+                d_attuale = pren.get("data_ora") if pren else ""
+            ics = write_ics(info, Path("data/ics"), vecchio_appuntamento=d_attuale)
+            caption = f"📅 Evento calendario {info.data_ora}"
+            if d_attuale:
+                caption += f"\n<i>(Include richiesta cancellazione precedente appuntamento del {d_attuale})</i>"
+            self.bot.send_file(str(ics), caption=caption)
         except Exception as ex:  # noqa: BLE001
             log.warning("ICS reschedule: %s", ex)
         # Store updated appointment in store
