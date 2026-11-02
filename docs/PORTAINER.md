@@ -81,6 +81,8 @@ CIE_PASSWORD=
 POLL_INTERVAL_SECONDS=300
 MAX_LOGIN_RETRIES=3
 APPROVAL_TIMEOUT_SECONDS=600
+RESCHEDULE_WAIT_TIMEOUT=30
+RESCHEDULE_MIN_WORKING_DAYS=3
 
 # --- Volumi (opzionale: default su named volumes 'fascicolo_data') ---
 # Imposta questi percorsi solo se desideri mappare directory assolute sull'host:
@@ -105,6 +107,8 @@ APPROVAL_TIMEOUT_SECONDS=600
 | `CIE_PASSWORD` | No | `""` | Password della CIE per accesso Livello 2. |
 | `POLL_INTERVAL_SECONDS` | No | `300` | Intervallo in secondi tra un controllo e l'altro (es. `300` = 5 minuti). |
 | `APPROVAL_TIMEOUT_SECONDS` | No | `600` | Secondi di attesa per la conferma dell'utente su Telegram prima che lo slot scada. |
+| `RESCHEDULE_WAIT_TIMEOUT` | No | `30` | Timeout massimo in secondi per il caricamento della lista appuntamenti in riprogrammazione. |
+| `RESCHEDULE_MIN_WORKING_DAYS` | No | `3` | Giorni lavorativi minimi di preavviso per riprogrammare (esclusi sabati, domeniche e festivi nazionali). Se mancano meno di X giorni lavorativi, il monitor si arresta automaticamente per prevenire l'addebito del malus ticket. `0` per disattivare. |
 | `MAX_LOGIN_RETRIES` | No | `3` | Numero massimo di tentativi di login consecutivi falliti prima di mettere in pausa i tentativi. |
 | `SEARCH_STRATEGY` | No | `first_match` | Strategia di ricerca multi-provincia: `first_match` (consigliata/rapida, blocca il primo posto e non cambia pagina) oppure `best_match` (globale, confronta tutte le province). |
 | `DEBUG_DUMP_DIR` | No | `data/debug` | Cartella di destinazione per gli screenshot PNG e HTML di diagnostica (inviati anche su Telegram se si verifica un errore). |

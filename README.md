@@ -16,6 +16,8 @@
 
 - **Monitoraggio nuove prenotazioni (Flow A)**: ricerca disponibilità a partire da ricette dematerializzate (NRE) prescritte e non ancora prenotate.
 - **Anticipo / spostamento appuntamenti (Flow B)**: monitora visite già fissate per trovare date precedenti (anticipo) o più comode all'interno di un intervallo temporale desiderato.
+- **Protezione automatica Malus Ticket (3 giorni lavorativi)**: arresto preventivo automatico dei monitor di anticipo quando mancano meno di 3 giorni lavorativi alla visita già fissata (escludendo sabati, domeniche e festività nazionali italiane), evitando l'addebito delle penali regionali per mancata o tardiva disdetta.
+- **Riepilogo comparativo con vecchio appuntamento**: all'individuazione di un posto utile, il bot mostra chiaramente la nuova data a confronto con l'appuntamento originario e i giorni esatti di anticipo guadagnati.
 - **Wizard interattivo su Telegram**: creazione guidata dei monitor direttamente dalla chat con selezione di ricetta/appuntamento, scelta multi-provincia e calendario inline per l'intervallo date.
 - **Gestione sessione SPID / CIE**: keep-alive automatico della sessione e rinnovo intelligente tramite SielteID o CIE (Livello 2 / QR Code) con supporto interattivo su Telegram.
 - **Strategie di ricerca multi-provincia**: modalità `first_match` (consigliata/rapida, blocca la prima data utile senza cambiare provincia riducendo le race condition sul portale) oppure `best_match` (globale, confronta tutte le province alla ricerca della data migliore).
@@ -191,6 +193,9 @@ APPROVAL_TIMEOUT_SECONDS=600
 
 # Strategia ricerca multi-provincia: first_match (consigliata/rapida) o best_match (globale)
 SEARCH_STRATEGY=first_match
+
+# Prevenzione penali malus ticket (giorni lavorativi minimi di preavviso per riprogrammare; default 3, 0 per disabilitare)
+RESCHEDULE_MIN_WORKING_DAYS=3
 DEBUG_DUMP_DIR=data/debug
 ```
 
@@ -234,6 +239,44 @@ Se utilizzi **Portainer** per gestire i tuoi container Docker, è disponibile un
 
 ---
 
+## 🛡️ Prevenzione Penali e "Malus Ticket" (3 Giorni Lavorativi)
+
+In Italia e nello specifico in **Regione Lombardia** (D.G.R. n. IX/3379 e regolamenti di gestione delle liste d'attesa delle ASST/ATS), il cittadino che non può presentarsi a un appuntamento già prenotato **ha l'obbligo di disdire o spostare la prenotazione con almeno 3 giorni lavorativi di anticipo**. 
+
+> [!WARNING]
+> **Che cos'è il Malus Ticket?**  
+> In caso di mancata disdetta o disdetta tardiva (con meno di 3 giorni lavorativi di preavviso), la legge regionale prevede l'addebito del cosiddetto **"Malus Ticket"**, ovvero l'obbligo di pagare l'**intera tariffa della prestazione** non fruita (fino al massimale previsto per singola ricetta), **anche per i cittadini in possesso di esenzione ticket** per reddito o patologia.
+
+Per tutelare l'utente da addebiti economici sanzionatori dovuti a spostamenti dell'ultimo momento, il bot integra una **protezione preventiva intelligente**:
+
+### 1. Calcolo rigoroso dei giorni lavorativi
+- **Esclusione dei fine settimana**: sabati e domeniche non vengono mai conteggiati come giorni lavorativi.
+- **Festività nazionali italiane**: il sistema esclude automaticamente tutte le festività civili e religiose nazionali (Capodanno, Epifania, 25 Aprile, 1° Maggio, 2 Giugno, Ferragosto, Tutti i Santi, Immacolata, Natale, Santo Stefano) e il **Lunedì dell'Angelo (Pasquetta)**, calcolato dinamicamente tramite algoritmo astronomico per qualsiasi anno solare.
+
+### 2. Arresto preventivo automatico del monitor
+- Durante il ciclo di polling (`poll_once`), se mancano **meno di 3 giorni lavorativi** alla data della visita già prenotata (`data_attuale`), il monitor viene **arrestato immediatamente** e contrassegnato come `stopped_deadline`.
+- **Notifica e allarme sonoro**: il bot invia una notifica immediata (su Telegram o terminale) informando che il monitoraggio è stato fermato a scopo preventivo per evitare il rischio di penale, riproducendo contemporaneamente un segnale acustico di avviso (`alert`).
+- **Blocco in fase di creazione**: se tenti di avviare un monitor di anticipo (`/anticipa` o `/monitora`) per una visita la cui deadline di 3 giorni lavorativi è già superata, il bot rifiuterà la creazione spiegando chiaramente il motivo.
+
+### 3. Confronto trasparente delle date
+Quando viene individuata una data utile prima della deadline di sicurezza:
+- La notifica di approvazione riporta in modo esplicito sia la **Nuova data proposta** sia l'**Appuntamento attuale da sostituire**, indicando i giorni esatti di anticipo guadagnati:
+  ```text
+  Nuova data proposta: 22/05/2027 09:30
+  📌 Appuntamento attuale da sostituire: 24/09/2027 10:30 (124 giorni di anticipo)
+  ```
+- Anche il messaggio finale di conferma prenotazione specifica la sostituzione della visita precedente.
+
+### 4. Configurazione della soglia
+La soglia di default è di **3 giorni lavorativi**, ma può essere modificata o disabilitata tramite la variabile d'ambiente `RESCHEDULE_MIN_WORKING_DAYS` nel file `.env` (o in `config/settings.yaml` alla voce `reschedule_min_working_days`):
+
+```env
+# Default: 3 giorni lavorativi. Imposta a 0 per disabilitare il blocco preventivo.
+RESCHEDULE_MIN_WORKING_DAYS=3
+```
+
+---
+
 ## 🤖 Comandi Telegram
 
 Una volta avviato, tutte le operazioni si gestiscono comodamente dalla chat con il bot:
@@ -242,8 +285,9 @@ Una volta avviato, tutte le operazioni si gestiscono comodamente dalla chat con 
 | :--- | :--- |
 | `/start` | Messaggio di benvenuto e scorciatoie principali. |
 | `/monitora` | **Wizard guidato**: seleziona se monitorare una nuova ricetta o un appuntamento esistente, scegli le province di ricerca e imposta l'intervallo temporale tramite calendario interattivo. |
+| `/anticipa` | **Scorciatoia rapida anticipo**: seleziona un appuntamento esistente per cercare una data precedente, con verifica preventiva immediata della deadline anti-penale. |
 | `/stop` | Mostra i monitor attivi e permette di interromperne uno con un click. |
-| `/status` | Visualizza lo stato di tutti i monitor attivi, lo stato della sessione SPID/CIE e il tempo rimanente al prossimo controllo. |
+| `/status` | Visualizza lo stato di tutti i monitor attivi (inclusa la deadline di sicurezza per le riprogrammazioni), lo stato della sessione SPID/CIE e il tempo rimanente al prossimo controllo. |
 | `/poll` | Forza un giro di verifica immediato delle disponibilità senza attendere l'intervallo schedulato. |
 | `/ricette` | Mostra le ricette dematerializzate più recenti presenti sul fascicolo (con stato e pulsante per scaricare il PDF promemoria). |
 | `/appuntamenti` | Mostra l'elenco degli appuntamenti già prenotati con data, struttura sanitaria, indirizzo e link rapido a Google Maps. |
