@@ -213,3 +213,137 @@ def get_reschedule_min_working_days(cfg: Any = None, criteri: dict | None = None
             pass
 
     return 3
+
+
+def is_autobook_enabled(cfg: Any = None, criteri: dict | None = None) -> bool:
+    """Check if fast-track auto-booking is enabled.
+
+    Priority:
+        1. Explicit monitor criteria ('auto_book' in criteri)
+        2. Environment variable 'AUTO_BOOK'
+        3. Config settings.yaml ('scheduler.auto_book')
+        4. Default: False
+    """
+    if criteri and "auto_book" in criteri:
+        v = criteri["auto_book"]
+        if isinstance(v, bool):
+            return v
+        return str(v).strip().lower() in ("true", "1", "yes", "si", "sì", "on")
+
+    env_val = os.environ.get("AUTO_BOOK")
+    if env_val is not None:
+        return env_val.strip().lower() in ("true", "1", "yes", "si", "sì", "on")
+
+    if cfg is not None:
+        try:
+            val = cfg.settings.get("scheduler", {}).get("auto_book")
+            if val is not None:
+                if isinstance(val, bool):
+                    return val
+                return str(val).strip().lower() in ("true", "1", "yes", "si", "sì", "on")
+        except Exception:
+            pass
+    else:
+        try:
+            from core.config import Config
+            c = Config.load()
+            val = c.settings.get("scheduler", {}).get("auto_book")
+            if val is not None:
+                if isinstance(val, bool):
+                    return val
+                return str(val).strip().lower() in ("true", "1", "yes", "si", "sì", "on")
+        except Exception:
+            pass
+
+    return False
+
+
+def get_autobook_min_days(cfg: Any = None, criteri: dict | None = None) -> int:
+    """Retrieve minimum days required to allow auto-booking (default: 5).
+
+    Priority:
+        1. Explicit monitor criteria ('auto_book_min_days' in criteri)
+        2. Environment variable 'AUTO_BOOK_MIN_DAYS'
+        3. Config settings.yaml ('scheduler.auto_book_min_days')
+        4. Default: 5
+    """
+    if criteri and "auto_book_min_days" in criteri:
+        try:
+            return int(criteri["auto_book_min_days"])
+        except (ValueError, TypeError):
+            pass
+
+    env_val = os.environ.get("AUTO_BOOK_MIN_DAYS")
+    if env_val is not None:
+        try:
+            return int(env_val)
+        except (ValueError, TypeError):
+            pass
+
+    if cfg is not None:
+        try:
+            val = cfg.settings.get("scheduler", {}).get("auto_book_min_days")
+            if val is not None:
+                return int(val)
+        except Exception:
+            pass
+    else:
+        try:
+            from core.config import Config
+            c = Config.load()
+            val = c.settings.get("scheduler", {}).get("auto_book_min_days")
+            if val is not None:
+                return int(val)
+        except Exception:
+            pass
+
+    return 5
+
+
+def check_autobook_eligibility(
+    slot_or_dt: Any,
+    min_days: int = 5,
+    now: datetime | None = None,
+) -> tuple[bool, int, str]:
+    """Check if an appointment slot satisfies the minimum days threshold for auto-booking.
+
+    Args:
+        slot_or_dt: Slot object, datetime object, or date string.
+        min_days: Minimum days notice required between now and slot date.
+        now: Reference datetime (defaults to get_now()).
+
+    Returns:
+        (is_eligible, delta_days, reason_message)
+    """
+    if slot_or_dt is None:
+        return False, 0, "Slot o data non valida."
+
+    if hasattr(slot_or_dt, "datetime") and isinstance(slot_or_dt.datetime, datetime):
+        slot_dt = slot_or_dt.datetime
+    elif isinstance(slot_or_dt, datetime):
+        slot_dt = slot_or_dt
+    elif isinstance(slot_or_dt, str):
+        slot_dt = parse_appuntamento_datetime(slot_or_dt)
+        if not slot_dt:
+            return False, 0, f"Impossibile interpretare la data '{slot_or_dt}'."
+    else:
+        return False, 0, "Formato slot non supportato."
+
+    curr_now = now if now is not None else get_now()
+    delta_days = (slot_dt.date() - curr_now.date()).days
+
+    if delta_days < 0:
+        return False, delta_days, "Data dell'appuntamento antecedente alla data odierna."
+
+    if min_days <= 0:
+        return True, delta_days, "Controllo giorni minimi auto-booking disabilitato."
+
+    if delta_days >= min_days:
+        msg = f"Slot a {delta_days} giorni di distanza (soglia minima: {min_days} giorni)."
+        return True, delta_days, msg
+
+    reason = (
+        f"L'appuntamento dista solo {delta_days} {'giorno' if delta_days == 1 else 'giorni'} "
+        f"(soglia minima configurata: {min_days} giorni)."
+    )
+    return False, delta_days, reason

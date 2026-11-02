@@ -48,6 +48,15 @@ scheduler:
   # il monitor viene arrestato automaticamente per evitare l'addebito del malus ticket.
   # Impostare a 0 per disattivare il controllo.
   reschedule_min_working_days: 3
+  # Fast-Track Auto-Booking ("Sniper mode"): prenota subito lo slot senza attendere l'approvazione manuale.
+  # Ideale per disponibilità critiche che spariscono in pochi secondi. Impostare a true per attivare.
+  # Default: false (disattivato per prudenza).
+  auto_book: false
+  # Giorni minimi di anticipo rispetto ad oggi per cui l'auto-booking immediato è consentito.
+  # Serve a tutelarsi da possibili appuntamenti scomodi che poi non potrebbero essere più spostati o
+  # disdetti senza pagare una sanzione economica (regola dei 3 giorni lavorativi / malus ticket).
+  # Se lo slot trovato dista meno di X giorni, il bot passa automaticamente alla richiesta manuale.
+  auto_book_min_days: 5
   # Strategia di ricerca multi-provincia: "first_match" | "best_match"
   # - "first_match" (consigliata / rapida): carica una provincia alla volta;
   #   non appena trova una disponibilità valida nei criteri, si ferma, la propone

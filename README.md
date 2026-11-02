@@ -17,6 +17,7 @@
 - **Monitoraggio nuove prenotazioni (Flow A)**: ricerca disponibilità a partire da ricette dematerializzate (NRE) prescritte e non ancora prenotate.
 - **Anticipo / spostamento appuntamenti (Flow B)**: monitora visite già fissate per trovare date precedenti (anticipo) o più comode all'interno di un intervallo temporale desiderato.
 - **Protezione automatica Malus Ticket (3 giorni lavorativi)**: arresto preventivo automatico dei monitor di anticipo quando mancano meno di 3 giorni lavorativi alla visita già fissata (escludendo sabati, domeniche e festività nazionali italiane), evitando l'addebito delle penali regionali per mancata o tardiva disdetta.
+- **Fast-Track Auto-Booking ("Sniper mode" istantaneo)**: opzione disattivata di default che prenota all'istante le disponibilità ad altissima richiesta senza attendere il tap su Telegram, con vincolo di sicurezza configurabile (default $\ge 5$ giorni da `.env`) per tutelarsi da appuntamenti scomodi che non si potrebbero più disdire senza penale.
 - **Riepilogo comparativo con vecchio appuntamento**: all'individuazione di un posto utile, il bot mostra chiaramente la nuova data a confronto con l'appuntamento originario e i giorni esatti di anticipo guadagnati.
 - **Wizard interattivo su Telegram**: creazione guidata dei monitor direttamente dalla chat con selezione di ricetta/appuntamento, scelta multi-provincia e calendario inline per l'intervallo date.
 - **Gestione sessione SPID / CIE**: keep-alive automatico della sessione e rinnovo intelligente tramite SielteID o CIE (Livello 2 / QR Code) con supporto interattivo su Telegram.
@@ -196,6 +197,11 @@ SEARCH_STRATEGY=first_match
 
 # Prevenzione penali malus ticket (giorni lavorativi minimi di preavviso per riprogrammare; default 3, 0 per disabilitare)
 RESCHEDULE_MIN_WORKING_DAYS=3
+
+# Fast-Track Auto-Booking: prenota subito senza attendere approvazione manuale (default: false)
+AUTO_BOOK=false
+# Giorni minimi di anticipo richiesti per auto-booking (tutela da appuntamenti scomodi non disdicibili; default: 5)
+AUTO_BOOK_MIN_DAYS=5
 DEBUG_DUMP_DIR=data/debug
 ```
 
@@ -274,6 +280,40 @@ La soglia di default è di **3 giorni lavorativi**, ma può essere modificata o 
 # Default: 3 giorni lavorativi. Imposta a 0 per disabilitare il blocco preventivo.
 RESCHEDULE_MIN_WORKING_DAYS=3
 ```
+
+---
+
+## ⚡ Fast-Track Auto-Booking ("Sniper Mode")
+
+Sulle prestazioni sanitarie ad altissima richiesta (es. risonanze magnetiche, ecografie o prime visite specialistiche a Milano), i posti resi disponibili da cancellazioni altrui spariscono spesso nel giro di **30-90 secondi**. Il flusso tradizionale con richiesta interattiva su Telegram (notifica $\to$ lettura dello smartphone $\to$ tap su "Approva") può risultare troppo lento per bloccare lo slot in tempo (*race condition* con altri utenti o sportelli CUP).
+
+Per massimizzare le probabilità di successo, il bot include la modalità **Fast-Track Auto-Booking**:
+
+### 1. Disattivata di default per massima sicurezza
+La funzionalità è disattivata di default (`AUTO_BOOK=false`): per impostazione predefinita il bot richiede **sempre** la tua approvazione manuale. Nessun appuntamento verrà mai prenotato in automatico a tua insaputa a meno che tu non scelga espressamente di abilitarla.
+
+### 2. Soglia di tutela preventiva (`AUTO_BOOK_MIN_DAYS`)
+Quando la modalità è attiva, entra in gioco un vincolo di sicurezza fondamentale:
+
+> [!IMPORTANT]
+> **A cosa serve il margine di anticipo minimo (default: 5 giorni)?**  
+> Questo numero serve a tutelarsi da possibili appuntamenti scomodi che, se prenotati con scarso preavviso (es. per il giorno successivo o due giorni dopo), **non potrebbero più essere spostati in avanti o disdetti senza pagare la sanzione economica** (regola dei 3 giorni lavorativi di preavviso per evitare il *malus ticket*).
+
+- **Slot con preavviso $\ge 5$ giorni**: il bot procede all'istante con la prenotazione senza attendere la risposta su Telegram, riproduce un segnale acustico prioritario e ti notifica subito la conferma con il riepilogo della visita e della vecchia data sostituita. Avrai giorni a sufficienza per consultare la tua agenda e, se l'orario o la sede non fossero comodi, disdire o spostare la visita in tutta serenità prima che scatti il termine di 3 giorni lavorativi.
+- **Slot con preavviso $< 5$ giorni (Fallback trasparente)**: se viene trovato un posto valido ma troppo vicino nel tempo (a meno di 5 giorni da oggi), il bot **non lo prenota in automatico per prudenza**, ma invia la consueta richiesta con bottoni interattivi (`Approva` / `Rifiuta`), spiegando che l'auto-booking è stato escluso per evitare il rischio di penale. Se sei disponibile puoi comunque approvarlo manualmente in un tap.
+
+### 3. Configurazione
+Puoi abilitare l'auto-booking e personalizzare il margine di giorni nel file `.env`:
+
+```env
+# Abilita la prenotazione istantanea automatica (default: false)
+AUTO_BOOK=true
+
+# Giorni minimi di anticipo rispetto ad oggi per autorizzare l'auto-booking (default: 5)
+AUTO_BOOK_MIN_DAYS=5
+```
+
+È inoltre possibile abilitare o disabilitare l'auto-booking a livello di singolo monitor impostando `auto_book: true` all'interno della sezione `criteri` in `config/monitors.yaml`.
 
 ---
 

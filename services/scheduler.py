@@ -521,6 +521,16 @@ class Controller:
             lines.append(f"⏱ Prossimo controllo tra: {rimanenti} s")
         else:
             lines.append("⏱ Prossimo controllo: non avviato")
+
+        # Fast-track auto-booking status
+        from services.deadline import is_autobook_enabled, get_autobook_min_days
+        ab_on = is_autobook_enabled(self.cfg)
+        ab_min = get_autobook_min_days(self.cfg)
+        if ab_on:
+            lines.append(f"⚡ Fast-Track Auto-Booking: ATTIVO (soglia minima >= {ab_min} giorni)")
+        else:
+            lines.append("⚡ Fast-Track Auto-Booking: disattivato (richiesta approvazione manuale)")
+
         if not self._flows:
             lines.append("\nNessun monitor configurato. Usa /monitora per crearne uno.")
         for f in self._flows:
@@ -592,6 +602,13 @@ class Controller:
                 strat = getattr(f, "search_strategy", "first_match")
                 strat_lbl = "immediata (ferma al primo match)" if strat == "first_match" else "globale (miglior data tra tutte le province)"
                 riga += f"\n  ⚡ Ricerca multi-provincia: {strat_lbl}"
+            if "auto_book" in crit:
+                v = crit["auto_book"]
+                mon_ab = v if isinstance(v, bool) else str(v).lower() in ("true", "1", "yes")
+                if mon_ab:
+                    riga += "\n  ⚡ Auto-booking: abilitato per questo monitor"
+                else:
+                    riga += "\n  ⚡ Auto-booking: disabilitato per questo monitor"
             riga += f"\n  Stato: {stato_txt}"
             lines.append(riga)
         return "\n".join(lines)

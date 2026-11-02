@@ -871,7 +871,7 @@ class Flow:
 
         # Propose slot to user
         self.store.record_slots(self.mid, [s.key for s in slots])
-        return self._request_approval(match)
+        return self._gestisci_slot_trovato(match)
 
     def _cerca_first_match(self, manual: bool = False) -> str:
         """'first_match' mode: evaluates provinces sequentially.
@@ -909,7 +909,7 @@ class Flow:
                     self.mid, prov, match.date_str, match.time_str
                 )
                 self.store.record_slots(self.mid, [s.key for s in slots])
-                return self._request_approval(match)
+                return self._gestisci_slot_trovato(match)
             else:
                 self.store.record_slots(self.mid, [s.key for s in slots])
 
@@ -945,7 +945,103 @@ class Flow:
                 f"🔍 Controllo completato: nessuna disponibilità trovata per {self.mid}."
             )
 
-    def _request_approval(self, slot) -> str:
+    def _gestisci_slot_trovato(self, match) -> str:
+        """Route a discovered slot: either fast-track auto-booking or manual approval."""
+        from services.deadline import is_autobook_enabled, get_autobook_min_days, check_autobook_eligibility
+
+        if is_autobook_enabled(criteri=self.criteri):
+            min_days = get_autobook_min_days(criteri=self.criteri)
+            is_eligible, delta_days, reason = check_autobook_eligibility(match, min_days=min_days)
+            if is_eligible:
+                log.info(
+                    "[%s] Fast-Track Auto-Booking: slot %s ore %s a %d giorni (soglia minima: %d). Esecuzione immediata...",
+                    self.mid, match.date_str, match.time_str, delta_days, min_days,
+                )
+                return self._esegui_autobook(match, delta_days=delta_days, min_days=min_days)
+            else:
+                log.info(
+                    "[%s] Fast-Track Auto-Booking: fallback ad approvazione manuale (%s)",
+                    self.mid, reason,
+                )
+                return self._request_approval(match, fallback_autobook_reason=reason)
+
+        return self._request_approval(match)
+
+    def _esegui_autobook(self, slot, delta_days: int, min_days: int) -> str:
+        """Execute instant booking without waiting for manual user approval on Telegram."""
+        import html as _html
+        from services.sound import play_alert_sound
+
+        esc = lambda s: _html.escape(str(s or ""))
+        extra = slot.extra or {}
+        prov = extra.get("provincia", "")
+        azienda = extra.get("azienda", "")
+        sede = extra.get("sede", "")
+        comune = extra.get("comune", "")
+
+        d_attuale = (
+            self.monitor.get("data_attuale")
+            or self.criteri.get("data_attuale")
+        )
+        if not d_attuale and hasattr(self.store, "get_prenotazione"):
+            pren = self.store.get_prenotazione(self.mid)
+            d_attuale = pren.get("data_ora") if pren else ""
+
+        luogo = []
+        if sede and sede != azienda:
+            luogo.append(esc(sede))
+        elif azienda and not sede:
+            luogo.append(esc(azienda))
+        if comune:
+            luogo.append(f"({esc(comune)})")
+        luogo_str = f"\n📍 {' · '.join(luogo)}" if luogo else ""
+
+        vecchio_info = ""
+        if d_attuale:
+            vecchio_info = f"\n📌 In sostituzione di: {esc(d_attuale)}"
+
+        pre_msg = (
+            f"⚡ <b>[FAST-TRACK AUTO-BOOKING]</b>\n"
+            f"Trovata disponibilità per <b>{esc(self.mid)}</b>!\n"
+            f"📅 Data: <b>{slot.date_str} ore {slot.time_str}</b>{f' · {esc(prov)}' if prov else ''}"
+            f"{vecchio_info}"
+            f"{luogo_str}\n"
+            f"ℹ️ <i>Data a {delta_days} giorni di anticipo (soglia minima: {min_days} giorni). "
+            f"Prenotazione automatica istantanea in corso senza attesa...</i>"
+        )
+        try:
+            play_alert_sound("alert")
+            self.bot.notify(pre_msg)
+        except Exception as e:
+            log.warning("[%s] Errore invio notifica pre-autobook: %s", self.mid, e)
+
+        try:
+            self._ultima_azione = "autobook"
+            self.execute(slot)
+            self.store.mark_action(self.mid, "done_pending_choice", str(slot))
+            play_alert_sound("success")
+            sostituito_txt = f" in sostituzione di quello del {esc(d_attuale)}" if d_attuale else ""
+            self.bot.notify(
+                f"🎯 <b>[PRENOTATO AUTOMATICAMENTE]</b>\n"
+                f"L'appuntamento del <b>{slot.date_str} ore {slot.time_str}</b> è stato confermato con successo{sostituito_txt}!\n\n"
+                f"🛡️ <b>Sicurezza disdetta:</b> la visita è programmata tra {delta_days} giorni. "
+                f"Se la data o la sede non fossero comode, hai tempo a sufficienza per disdire o spostare l'appuntamento "
+                f"senza pagare alcuna sanzione (rispettando il termine di 3 giorni lavorativi di preavviso)."
+            )
+            self._chiedi_post_prenotazione(slot)
+            return "ok"
+        except Exception as e:  # noqa: BLE001
+            log.exception("[%s] Fast-track auto-booking fallito", self.mid)
+            dump = self._salva_debug_dump("errore_autobook", invia_telegram=True)
+            dump_msg = f"\n\n{dump['message']}" if dump else ""
+            self.store.mark_action(self.mid, "idle", f"fallita prenotazione automatica: {e}")
+            self.bot.notify(
+                f"❌ <b>Fast-Track Auto-Booking non riuscito</b> per <b>{self.mid}</b>:\n{e}{dump_msg}\n\n"
+                f"ℹ️ Lo slot potrebbe essere stato occupato da altri nel frattempo. Il monitoraggio rimane attivo e continuerà a cercare nuove date disponibili."
+            )
+            return "errore"
+
+    def _request_approval(self, slot, fallback_autobook_reason: str = "") -> str:
         req_id = self.queue.create(self.mid, {"slot": slot.__dict__, "type": self.type})
         import html as _html
         import urllib.parse as _up
@@ -1006,7 +1102,17 @@ class Flow:
                 luogo.append(f"({esc(comune)})")
             msg += f"\n📍 {' · '.join(luogo)}"
             msg += f'\n🗺 <a href="{maps_url.replace("&", "&amp;")}">Apri in Google Maps</a>'
-        msg += f"\n{esc(self.criteri.get('note', ''))}"
+        if self.criteri.get("note"):
+            msg += f"\n{esc(self.criteri.get('note', ''))}"
+
+        if fallback_autobook_reason:
+            msg += (
+                f"\n\n⚠️ <b>Auto-Booking escluso per sicurezza:</b>\n"
+                f"<i>{esc(fallback_autobook_reason)}</i>\n"
+                f"<i>Per evitare il rischio di non poter disdire o spostare l'appuntamento senza incorrere in sanzioni "
+                f"(malus ticket), è richiesta l'approvazione manuale.</i>"
+            )
+
         msg += f"\n\nVuoi procedere?"
         # Inline buttons: Approve/Reject
         righe = [[("✅ Approva", f"decide:approve:{req_id}"),
