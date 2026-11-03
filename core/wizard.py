@@ -291,6 +291,11 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
     values.setdefault("RESCHEDULE_MIN_WORKING_DAYS", "3")
     values.setdefault("AUTO_BOOK", "false")
     values.setdefault("AUTO_BOOK_MIN_DAYS", "5")
+    values.setdefault("CALENDAR_SYNC_ENABLED", "false")
+    values.setdefault("CALENDAR_ICS_URL", "")
+    values.setdefault("CALENDAR_BUFFER_MINUTES", "45")
+    values.setdefault("CALENDAR_CONFLICT_MODE", "warn")
+    values.setdefault("CALENDAR_IGNORE_ALL_DAY", "true")
     values.setdefault("DEBUG_DUMP_DIR", "data/debug")
 
     # Write .env file

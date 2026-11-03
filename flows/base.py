@@ -966,10 +966,33 @@ class Flow:
     def _gestisci_slot_trovato(self, match) -> str:
         """Route a discovered slot: either fast-track auto-booking or manual approval."""
         from services.deadline import is_autobook_enabled, get_autobook_min_days, check_autobook_eligibility
+        from services.calendar_sync import (
+            check_calendar_conflict,
+            get_calendar_conflict_mode,
+        )
+
+        # Check calendar conflict
+        has_conflict, conf_event, conf_msg = check_calendar_conflict(
+            match.datetime, durata_minuti=30, criteri=self.criteri
+        )
+
+        if has_conflict:
+            conflict_mode = get_calendar_conflict_mode(criteri=self.criteri)
+            if conflict_mode == "skip":
+                log.info(
+                    "[%s] Slot %s ore %s scartato per conflitto calendario (%s)",
+                    self.mid, match.date_str, match.time_str, conf_msg,
+                )
+                return "skip_conflict"
 
         if is_autobook_enabled(criteri=self.criteri):
             min_days = get_autobook_min_days(criteri=self.criteri)
             is_eligible, delta_days, reason = check_autobook_eligibility(match, min_days=min_days)
+            if is_eligible and has_conflict and conf_event:
+                # Fast-track auto-booking is safety-blocked when user has an active calendar commitment
+                is_eligible = False
+                reason = f"conflitto su calendario con '{conf_event.summary}' ({conf_event.start_str}-{conf_event.end_str})"
+
             if is_eligible:
                 log.info(
                     "[%s] Fast-Track Auto-Booking: slot %s ore %s a %d giorni (soglia minima: %d). Esecuzione immediata...",
@@ -981,9 +1004,16 @@ class Flow:
                     "[%s] Fast-Track Auto-Booking: fallback ad approvazione manuale (%s)",
                     self.mid, reason,
                 )
-                return self._request_approval(match, fallback_autobook_reason=reason)
+                return self._request_approval(
+                    match,
+                    fallback_autobook_reason=reason,
+                    calendar_conflict=conf_event if has_conflict else None,
+                )
 
-        return self._request_approval(match)
+        return self._request_approval(
+            match,
+            calendar_conflict=conf_event if has_conflict else None,
+        )
 
     def _esegui_autobook(self, slot, delta_days: int, min_days: int) -> str:
         """Execute instant booking without waiting for manual user approval on Telegram."""
@@ -1077,7 +1107,7 @@ class Flow:
 
         return "ok"
 
-    def _request_approval(self, slot, fallback_autobook_reason: str = "") -> str:
+    def _request_approval(self, slot, fallback_autobook_reason: str = "", calendar_conflict=None) -> str:
         req_id = self.queue.create(self.mid, {"slot": slot.__dict__, "type": self.type})
         import html as _html
         import urllib.parse as _up
@@ -1158,6 +1188,16 @@ class Flow:
                 f"<i>{esc(fallback_autobook_reason)}</i>\n"
                 f"<i>Per evitare il rischio di non poter disdire o spostare l'appuntamento senza incorrere in sanzioni "
                 f"(malus ticket), è richiesta l'approvazione manuale.</i>"
+            )
+
+        if calendar_conflict:
+            from services.calendar_sync import get_calendar_buffer_minutes
+            buf_min = get_calendar_buffer_minutes(self.criteri)
+            buf_txt = f" <i>(incluso margine di spostamento ±{buf_min}m)</i>" if buf_min > 0 else ""
+            msg += (
+                f"\n\n⚠️ <b>Attenzione Conflitto Calendario:</b>\n"
+                f"Hai già un impegno in quell'orario: <b>{esc(calendar_conflict.summary)}</b> "
+                f"({esc(calendar_conflict.start_str)} - {esc(calendar_conflict.end_str)}){buf_txt}"
             )
 
         msg += f"\n\nVuoi procedere?"

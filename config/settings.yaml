@@ -75,6 +75,15 @@ commute:
   # Se vuoto, il calcolo della distanza è disattivato.
   home_coordinates: ""
 
+calendar:
+  # Sincronizzazione calendari personali per evitare sovrapposizioni di orario
+  enabled: false
+  ics_url: ""                # URL segreto iCal (.ics) del calendario personale
+  buffer_minutes: 45         # Margine prima e dopo la visita per il tragitto
+  conflict_mode: "warn"      # "warn" (mostra avviso in notifica) | "skip" (scarta slot)
+  ignore_all_day: true       # Ignora eventi tutto il giorno (compleanni/promemoria)
+  cache_ttl_seconds: 600     # Durata cache feed in secondi (10 minuti)
+
 telegram:
   # Token del bot creato con @BotFather
   token: ""  # leggi da .env (TG_TOKEN)
