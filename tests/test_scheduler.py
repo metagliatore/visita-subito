@@ -1,6 +1,6 @@
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import pytest
 
 from services.scheduler import Controller
@@ -457,6 +457,7 @@ def test_converti_in_reschedule_resets_pause_when_paused():
     ctrl._force.set.assert_called_once()
 
 
+
 def test_avvia_login_failure_sends_screenshot_telegram(tmp_path):
     from unittest.mock import patch
     png_file = tmp_path / "login_fallito.png"
@@ -672,6 +673,162 @@ def test_browser_screenshot_wrapper():
 
     mock_driver.save_screenshot.side_effect = Exception("failed")
     assert b.screenshot("any.png") is False
+
+
+def test_controller_monitors_attivi():
+    ctrl = MagicMock()
+    m1 = {"id": "m1", "type": "new"}
+    m2 = {"id": "m2", "type": "reschedule"}
+    ctrl.store.get_monitors.return_value = [m1, m2]
+    ctrl.store.is_disabled.side_effect = lambda mid: mid == "m2"
+
+    attivi = Controller.monitors_attivi(ctrl)
+    assert attivi == [m1]
+
+
+def test_controller_blacklist_delegations():
+    ctrl = MagicMock()
+    ctrl.store.get_blacklist.return_value = [{"id": "b1"}]
+    ctrl.store.get_blacklist_dates.return_value = {"15/10/2026"}
+    ctrl.store.remove_blacklist_entry.return_value = {"id": "b1"}
+    ctrl.store.clear_blacklist.return_value = 1
+
+    assert Controller.get_blacklist(ctrl, "m1") == [{"id": "b1"}]
+    assert Controller.get_blacklist_dates(ctrl, "m1") == {"15/10/2026"}
+    assert Controller.rimuovi_da_blacklist(ctrl, "m1", "b1") == {"id": "b1"}
+    assert Controller.svuota_blacklist(ctrl, "m1") == 1
+
+
+def test_controller_default_preferences_and_setters():
+    ctrl = MagicMock()
+    ctrl.store.get_preferenze.return_value = {
+        "provincia_default": "BERGAMO",
+        "data_dal": "10/11/2026",
+    }
+    ctrl.lista_province = lambda: ["MILANO CITTA'", "BERGAMO", "BRESCIA"]
+
+    # 1. criteri_default
+    crit = Controller.criteri_default(ctrl)
+    assert crit["province"] == ["BERGAMO"]
+    assert crit["data_dal"] == "10/11/2026"
+
+    # 2. set_provincia_default
+    assert Controller.set_provincia_default(ctrl, "BRESCIA") is True
+    ctrl.store.set_preferenza.assert_called_with("provincia_default", "BRESCIA")
+    assert Controller.set_provincia_default(ctrl, "PROVINCIA_FANTASMA") is False
+
+    # 3. set_data_dal_default
+    assert Controller.set_data_dal_default(ctrl, "25/12/2026") is True
+    ctrl.store.set_preferenza.assert_called_with("data_dal", "25/12/2026")
+    assert Controller.set_data_dal_default(ctrl, "2026-12-25") is False
+    assert Controller.set_data_dal_default(ctrl, "") is False
+
+
+def test_controller_aggiungi_monitor_validation_and_creation():
+    ctrl = MagicMock()
+    ctrl.paused = False
+    ctrl.store.get_monitors.return_value = []
+    ctrl.criteri_default.return_value = {"province": ["MILANO CITTA'"]}
+
+    # Invalid tipo
+    mid_invalid = Controller.aggiungi_monitor(ctrl, tipo="invalid_type", descrizione="VISITA")
+    assert mid_invalid == ""
+
+    # Valid tipo
+    mid_valid = Controller.aggiungi_monitor(
+        ctrl,
+        tipo="new",
+        descrizione="VISITA OCULISTICA",
+        nre="0300A123",
+        criteri={"data_dal": "01/12/2026"},
+    )
+    assert mid_valid.startswith("new-VISITA-OCULISTICA-")
+    ctrl.store.add_monitor.assert_called_once()
+    saved = ctrl.store.add_monitor.call_args[0][0]
+    assert saved["id"] == mid_valid
+    assert saved["nre"] == "0300A123"
+    assert saved["criteri"]["data_dal"] == "01/12/2026"
+
+
+def test_controller_decide_request():
+    ctrl = MagicMock()
+    Controller.decide_request(ctrl, "req_123", approved=True, extra={"k": "v"})
+    ctrl.queue.decide.assert_called_once_with("req_123", True, {"k": "v"})
+
+
+def test_status_text_extended_branches():
+    import time
+    ctrl = MagicMock()
+    ctrl._flows = []
+    ctrl.cfg.settings = {"session": {"max_idle_seconds": 3600}}
+    ctrl.store.get_monitors.return_value = []
+    ctrl._nome_leggibile = Controller._nome_leggibile
+    ctrl.login_bloccato = False
+    ctrl.login_in_corso = False
+    ctrl.paused = False
+    ctrl.polling_in_corso = False
+    ctrl.sess.session_valid = False
+    ctrl.sess.is_expired.return_value = False
+    ctrl.sess.needs_login.return_value = True
+
+    # 1. Needs login session state and next poll countdown
+    ctrl._next_poll_time = time.time() + 45
+    text_needs_login = Controller.status_text(ctrl)
+    assert "⚠️ Mai loggato" in text_needs_login
+    assert "⏱ Prossimo controllo tra: " in text_needs_login
+
+    # 2. Countdown expired (negative remaining clamped to 0)
+    ctrl._next_poll_time = time.time() - 10
+    text_expired_countdown = Controller.status_text(ctrl)
+    assert "⏱ Prossimo controllo tra: 0 s" in text_expired_countdown
+
+    # 3. Flow with multi-province and search strategy, single province string, auto_book and custom hours
+    mock_flow = MagicMock()
+    mock_flow.mid = "new-cardio-multi"
+    mock_flow.type = "new"
+    mock_flow.search_strategy = "best_match"
+    mock_flow.criteri = {
+        "province": ["MILANO CITTA'", "MONZA E DELLA BRIANZA"],
+        "ora_min": "09:00",
+        "ora_max": "18:00",
+        "auto_book": True,
+    }
+    ctrl._flows = [mock_flow]
+    ctrl.store.get_monitors.return_value = [{
+        "id": "new-cardio-multi",
+        "ricetta": "VISITA CARDIOLOGICA",
+        "nre": "0300NRE99",
+        "criteri": mock_flow.criteri,
+    }]
+    ctrl.sess.session_valid = True
+
+    text_multi = Controller.status_text(ctrl)
+    assert "MILANO CITTA', MONZA E DELLA BRIANZA" in text_multi
+    assert "miglior data tra tutte le province" in text_multi
+    assert "Orario: da 09:00 a 18:00" in text_multi
+    assert "⚡ Auto-booking: abilitato per questo monitor" in text_multi
+
+    # 4. Reschedule monitor with deadline warning (past deadline)
+    mock_resched = MagicMock()
+    mock_resched.mid = "reschedule-visita"
+    mock_resched.type = "reschedule"
+    mock_resched.criteri = {
+        "province": "BRESCIA",
+        "auto_book": False,
+    }
+    ctrl._flows = [mock_resched]
+    # Existing appointment yesterday (deadline expired)
+    ctrl.store.get_monitors.return_value = [{
+        "id": "reschedule-visita",
+        "ricetta": "VISITA DERMATOLOGICA",
+        "data_attuale": "02/11/2026 10:00",
+        "criteri": mock_resched.criteri,
+    }]
+    with patch("services.deadline.check_reschedule_deadline", return_value=(True, None, None, "scaduto")):
+        text_resched = Controller.status_text(ctrl)
+        assert "📌 Appuntamento attuale: 02/11/2026 10:00" in text_resched
+        assert "Provincia: BRESCIA" in text_resched
+        assert "⚡ Auto-booking: disabilitato per questo monitor" in text_resched
 
 
 

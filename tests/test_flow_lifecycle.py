@@ -36,8 +36,8 @@ def test_flow_poll_once_skips_when_done():
     # In case of manual poll, notify status to the user with decision buttons
     res_man = flow.poll_once(manual=True)
     assert res_man == ""
-    assert bot.notify_buttons.called or bot.notify.called
-    msg = bot.notify_buttons.call_args[0][0] if bot.notify_buttons.called else bot.notify.call_args[0][0]
+    assert bot.notify_buttons.called
+    msg = bot.notify_buttons.call_args[0][0]
     assert "risulta già prenotata" in msg
 
 
