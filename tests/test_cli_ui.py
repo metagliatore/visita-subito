@@ -279,8 +279,8 @@ def test_command_anticipa(monkeypatch, capsys):
         {"prestazione": "VISITA CARDIOLOGICA", "data_ora": "20/11/2026 10:30", "codice": "COD123"}
     ]
 
-    # Provide inputs for province, data_dal, data_a
-    inputs = ["", "01/11/2026", "15/11/2026"]
+    # Provide inputs for province, data_dal, data_a, fascia
+    inputs = ["", "01/11/2026", "15/11/2026", "1"]
     input_iter = iter(inputs)
     monkeypatch.setattr("builtins.input", lambda prompt="": next(input_iter))
 
@@ -289,7 +289,7 @@ def test_command_anticipa(monkeypatch, capsys):
         tipo="reschedule",
         descrizione="VISITA CARDIOLOGICA",
         nre="COD123",
-        criteri={"province": ["MILANO CITTA'"], "data_dal": "01/11/2026", "data_a": "15/11/2026"},
+        criteri={"province": ["MILANO CITTA'"], "data_dal": "01/11/2026", "data_a": "15/11/2026", "fascia": ""},
         data_attuale="20/11/2026 10:30",
     )
     assert "Monitor di anticipo avviato con ID: reschedule-CARD-1" in capsys.readouterr().out

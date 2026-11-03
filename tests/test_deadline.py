@@ -488,8 +488,8 @@ def test_cli_ui_pending_postbook_choice_continues_or_blocks_based_on_deadline():
     assert ui._pending_postbook is None
 
 
-@pytest.mark.asyncio
-async def test_telegram_bot_crea_monitor_finale_blocks_expired_and_allows_valid():
+def test_telegram_bot_crea_monitor_finale_blocks_expired_and_allows_valid():
+    import asyncio
     from unittest.mock import AsyncMock
     from services.telegram_bot import TelegramBot
 
@@ -512,7 +512,7 @@ async def test_telegram_bot_crea_monitor_finale_blocks_expired_and_allows_valid(
         "data_a": "",
     }
     with patch("services.deadline.get_now", return_value=datetime(2026, 11, 9, 10, 0)):
-        await bot._crea_monitor_finale(update_mock, "12345", wiz_expired)
+        asyncio.run(bot._crea_monitor_finale(update_mock, "12345", wiz_expired))
 
     q_mock.edit_message_text.assert_called_once()
     assert "Impossibile avviare il monitor di anticipo" in q_mock.edit_message_text.call_args[0][0]
@@ -530,7 +530,7 @@ async def test_telegram_bot_crea_monitor_finale_blocks_expired_and_allows_valid(
         "data_dal": "",
         "data_a": "",
     }
-    await bot._crea_monitor_finale(update_mock, "12345", wiz_valid)
+    asyncio.run(bot._crea_monitor_finale(update_mock, "12345", wiz_valid))
 
     bot.controller.aggiungi_monitor.assert_called_once()
     assert bot.controller.aggiungi_monitor.call_args[1]["data_attuale"] == future_date
