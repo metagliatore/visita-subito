@@ -136,6 +136,38 @@ def test_ask_auth_fallback_and_dispatch():
         assert ui._pending_auth_fallback is False
 
 
+def test_ask_auth_fallback_with_buttons_and_send_photo(capsys):
+    ui = CliUI()
+
+    # Test send_photo with deep link button
+    ui.send_photo("data/test_qr.png", caption="Inquadra il QR", buttons=[[("Apri App", "https://cieid.gov.it")]])
+    out = capsys.readouterr().out
+    assert "data/test_qr.png" in out
+    assert "Inquadra il QR" in out
+    assert "https://cieid.gov.it" in out
+
+    # Test ask_auth_fallback with custom buttons (e.g. CIE QR fallback)
+    cie_buttons = [
+        [("📲 Invia QR Code", "auth:qr"), ("🔄 Attendi notifica", "auth:notify")],
+        [("❌ Annulla login", "auth:cancel")],
+    ]
+
+    def call_fallback():
+        return ui.ask_auth_fallback(prompt="Notifica non arrivata", timeout_s=5, buttons=cie_buttons)
+
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future = executor.submit(call_fallback)
+        import time
+        time.sleep(0.1)
+        assert ui._pending_auth_fallback is True
+        # Choose option 1 (which corresponds to 'qr')
+        ui._dispatch_input("1")
+        res = future.result(timeout=2)
+        assert res == "qr"
+        assert ui._pending_auth_fallback is False
+
+
 def test_dispatch_approval_yes_and_no():
     ui = CliUI()
     mock_ctl = MagicMock()
