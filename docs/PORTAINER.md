@@ -85,6 +85,10 @@ RESCHEDULE_WAIT_TIMEOUT=30
 RESCHEDULE_MIN_WORKING_DAYS=3
 AUTO_BOOK=false
 AUTO_BOOK_MIN_DAYS=5
+CALENDAR_SYNC_ENABLED=false
+CALENDAR_ICS_URL=
+CALENDAR_BUFFER_MINUTES=45
+CALENDAR_CONFLICT_MODE=warn
 HOME_COORDINATES=
 
 # --- Volumi (opzionale: default su named volumes 'fascicolo_data') ---
@@ -114,6 +118,10 @@ HOME_COORDINATES=
 | `RESCHEDULE_MIN_WORKING_DAYS` | No | `3` | Giorni lavorativi minimi di preavviso per riprogrammare (esclusi sabati, domeniche e festivi nazionali). Se mancano meno di X giorni lavorativi, il monitor si arresta automaticamente per prevenire l'addebito del malus ticket. `0` per disattivare. |
 | `AUTO_BOOK` | No | `false` | Se `true`, attiva il **Fast-Track Auto-Booking ("Sniper mode")** che prenota subito lo slot senza attendere la conferma dell'utente. Default `false`. |
 | `AUTO_BOOK_MIN_DAYS` | No | `5` | Giorni minimi di anticipo richiesti per l'auto-booking (tutela da appuntamenti scomodi che non si potrebbero più disdire senza penale). Se lo slot dista meno di X giorni, scatta il fallback ad approvazione manuale. |
+| `CALENDAR_SYNC_ENABLED` | No | `false` | Se `true`, attiva la verifica disponibilità con i calendari personali collegati. Si abilita automaticamente se viene specificato `CALENDAR_ICS_URL`. |
+| `CALENDAR_ICS_URL` | No | `""` | Uno o più URL segreti iCal (`.ics`) separati da virgola (Google Calendar, Outlook/M365, Apple iCloud, Nextcloud). |
+| `CALENDAR_BUFFER_MINUTES` | No | `45` | Minuti di margine prima e dopo la visita per considerare il tragitto (default `45`). |
+| `CALENDAR_CONFLICT_MODE` | No | `warn` | Gestione conflitti in manuale: `warn` (evidenzia l'impegno nel messaggio Telegram) oppure `skip` (scarta lo slot). In Auto-Booking lo slot in conflitto non viene mai prenotato da solo per sicurezza. |
 | `HOME_COORDINATES` | No | `""` | Coordinate di casa tua (`lat, lon`, es. `45.4642, 9.1900`) per calcolare tempo e distanza sia in auto che con il trasporto pubblico. Se vuoto, il calcolo della distanza è disattivato. |
 | `MAX_LOGIN_RETRIES` | No | `3` | Numero massimo di tentativi di login consecutivi falliti prima di mettere in pausa i tentativi. |
 | `SEARCH_STRATEGY` | No | `first_match` | Strategia di ricerca multi-provincia: `first_match` (consigliata/rapida, blocca il primo posto e non cambia pagina) oppure `best_match` (globale, confronta tutte le province). |
