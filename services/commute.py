@@ -37,7 +37,7 @@ class CommuteInfo:
     car_text: str                       # e.g. "🚗 24 min in auto (14.2 km)"
     transit_minutes: int                # Public transit duration in minutes
     transit_route: str                  # e.g. "M2 + M1" or "M3" or "a piedi"
-    transit_text: str                   # e.g. "🚇 38 min con mezzi (M2 + M1)"
+    transit_text: str                   # e.g. "🚇 38 min con trasporto pubblico (M2 + M1)"
     walking_minutes: int | None = None  # Walking duration in min (if pedestrian distance)
     is_walking: bool = False            # True if within pedestrian walking distance (<= 850m)
     summary_text: str = ""              # Formatted summary for notifications
@@ -777,7 +777,7 @@ def calculate_commute(
         route_desc += " + bus"
 
     transit_min = w1_min + ride_min + w2_min
-    transit_text = f"🚇 {transit_min} min con mezzi ({route_desc})"
+    transit_text = f"🚇 {transit_min} min con trasporto pubblico ({route_desc})"
     summary_text = f"{car_text} · {transit_text}"
 
     return CommuteInfo(
@@ -873,7 +873,7 @@ def check_commute_filter(commute: CommuteInfo | None, criteri: dict | None = Non
     if max_transit is not None:
         try:
             if commute.transit_minutes > int(max_transit):
-                return False, f"tempo mezzi eccessivo ({commute.transit_minutes} min > max {max_transit} min)"
+                return False, f"tempo trasporto pubblico eccessivo ({commute.transit_minutes} min > max {max_transit} min)"
         except (ValueError, TypeError):
             pass
 
@@ -884,5 +884,5 @@ def get_commute_status_text(criteri: dict | None = None) -> str:
     """Return status description string for display in /status."""
     coords = get_home_coordinates(criteri)
     if coords:
-        return f"Calcolo distanza: ATTIVO (casa: {coords[0]:.4f}, {coords[1]:.4f} - auto e mezzi)"
+        return f"Calcolo distanza: ATTIVO (casa: {coords[0]:.4f}, {coords[1]:.4f} - auto e trasporto pubblico)"
     return "Calcolo distanza: non configurato (imposta HOME_COORDINATES in .env)"

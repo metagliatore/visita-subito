@@ -308,7 +308,7 @@ def test_check_commute_filter():
     assert check_commute_filter(commute, {"max_transit_minutes": 45})[0] is True
     ok, reason = check_commute_filter(commute, {"max_transit_minutes": 35})
     assert ok is False
-    assert "tempo mezzi eccessivo" in reason
+    assert "tempo trasporto pubblico eccessivo" in reason
 
 
 def test_match_slot_with_commute_filter(monkeypatch):
