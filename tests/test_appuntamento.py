@@ -92,3 +92,52 @@ def test_appuntamento_to_info():
     assert "Via Di Rudinì, 8" in info.indirizzo
     assert "20142 Milano" in info.indirizzo
     assert info.note == ["Portare esami precedenti"]
+
+
+def test_parse_conferma_with_notes_and_multiline_address():
+    sample_modal_html = """
+    <div modal-render="true">
+        <span>verificaPrenotazioneCtrl.nrDisponibilita</span>
+        <div>Data e ora: 18/11/2026 - 09:30</div>
+        <div>Prestazione: VISITA DERMATOLOGICA</div>
+        <div>Azienda: ASST NIGUARDA</div>
+        <div>Comune: MILANO</div>
+        <div>Presentarsi in: Padiglione 1  Piano Terra  Stanza 4</div>
+        <div>Ulteriori indicazioni: Ingresso Principale</div>
+        <div>Note di preparazione: - Digiuno da 6 ore - Portare tessera sanitaria Note operatore: Paziente con allergie Presa visione</div>
+        <div class="modal-backdrop"></div>
+    </div>
+    """
+    info = parse_conferma(sample_modal_html)
+    assert info.data_ora == "18/11/2026 - 09:30"
+    assert info.prestazione == "VISITA DERMATOLOGICA"
+    assert info.azienda == "ASST NIGUARDA"
+    assert "Padiglione 1" in info.presentarsi_in
+    assert "Ingresso Principale" in info.indirizzo
+    assert "Digiuno da 6 ore" in info.note
+    assert "Portare tessera sanitaria" in info.note
+    assert "Paziente con allergie" in info.note
+
+
+def test_appuntamento_to_info_single_string_note():
+    from services.appuntamento import appuntamento_to_info
+    raw = {
+        "prestazione": "VISITA OCULISTICA",
+        "data_ora": "15/12/2026 10:00",
+        "note": "Presentarsi con 15 minuti di anticipo",
+    }
+    info = appuntamento_to_info(raw)
+    assert info.note == ["Presentarsi con 15 minuti di anticipo"]
+    assert info.data_ora == "15/12/2026 - 10:00"
+
+
+def test_modale_testo_fallbacks():
+    # 1. HTML without 'verificaPrenotazioneCtrl' strips tags directly
+    html_raw = "<div><span>Solo testo senza controller</span></div>"
+    assert "Solo testo senza controller" in _modale_testo(html_raw)
+
+    # 2. HTML with 'verificaPrenotazioneCtrl' but without 'modal-render' marker
+    html_no_render = "<div><span>verificaPrenotazioneCtrl.nrDisponibilita</span><p>Contenuto</p><div class='navbar-toggle'></div></div>"
+    extracted = _modale_testo(html_no_render)
+    assert "Contenuto" in extracted
+

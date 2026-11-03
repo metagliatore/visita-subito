@@ -180,3 +180,83 @@ def test_store_corrupted_json_or_invalid_structure(tmp_path):
     assert store.get_action("m_broken") == "idle"
     assert isinstance(store.data["m_broken"], dict)
 
+
+def test_date_prefix_from_str():
+    from state.store import _date_prefix_from_str
+
+    assert _date_prefix_from_str("15/10/2026") == "20261015T"
+    assert _date_prefix_from_str("2026-10-15") == "20261015T"
+    assert _date_prefix_from_str("not_a_date") == ""
+    assert _date_prefix_from_str(None) == ""
+
+
+def test_store_json_syntax_error(tmp_path):
+    f = tmp_path / "broken_syntax.json"
+    f.write_text("{this is not valid json:", encoding="utf-8")
+    store = Store(f)
+    assert store.data == {}
+
+
+def test_store_blacklist_slot_object_and_datetime_dict(tmp_path):
+    store = Store(tmp_path / "test_store.json")
+
+    # 1. Slot passed as an object with attributes
+    class FakeSlot:
+        key = "20261120T1030|prov=MI"
+        date_str = "20/11/2026"
+        time_str = "10:30"
+        extra = {"azienda": "San Paolo", "provincia": "MI"}
+
+    entry_obj = store.add_blacklist_entry("mon-obj", FakeSlot(), data_ricetta="20/05/2026")
+    assert entry_obj["slot_key"] == "20261120T1030|prov=MI"
+    assert entry_obj["date_str"] == "20/11/2026"
+    assert entry_obj["azienda"] == "San Paolo"
+
+    # 2. Slot passed as a dict with isoformat datetime string
+    slot_iso = {
+        "datetime": "2026-11-25T14:45:00",
+        "extra": {"azienda": "Niguarda"},
+    }
+    entry_iso = store.add_blacklist_entry("mon-iso", slot_iso, data_ricetta="invalid_date")
+    assert entry_iso["date_str"] == "25/11/2026"
+    assert entry_iso["time_str"] == "14:45"
+    assert entry_iso["slot_key"] == "25/11/2026_14:45"
+
+
+def test_store_blacklist_update_existing_entry(tmp_path):
+    store = Store(tmp_path / "test_store.json")
+    slot = {
+        "key": "20261015T1030",
+        "date_str": "15/10/2026",
+        "time_str": "10:30",
+    }
+
+    entry1 = store.add_blacklist_entry("mon-1", slot, nre="0300A1")
+    initial_rejected_at = entry1["rejected_at"]
+
+    # Re-adding same slot updates existing entry
+    time.sleep(0.01)
+    entry2 = store.add_blacklist_entry("mon-1", slot, nre="0300A2")
+    assert len(store.get_blacklist("mon-1")) == 1
+    assert entry2["id"] == entry1["id"]
+    assert entry2["nre"] == "0300A2"
+    assert entry2["rejected_at"] >= initial_rejected_at
+
+    # Re-adding same day with block_day=True updates existing day entry
+    day_entry1 = store.add_blacklist_entry("mon-1", slot, block_day=True)
+    day_entry2 = store.add_blacklist_entry("mon-1", slot, block_day=True)
+    assert day_entry1["id"] == day_entry2["id"]
+
+
+def test_store_remove_nonexistent_and_preferences(tmp_path):
+    store = Store(tmp_path / "test_store.json")
+
+    # Non-existent entry removal returns None
+    assert store.remove_blacklist_entry("mon-1", "nonexistent_id") is None
+
+    # Preferences
+    assert store.get_preferenze() == {}
+    store.set_preferenza("provincia_default", "BRESCIA")
+    assert store.get_preferenze()["provincia_default"] == "BRESCIA"
+
+

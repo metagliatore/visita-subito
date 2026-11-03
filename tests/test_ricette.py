@@ -18,7 +18,8 @@ def test_classify_laboratorio():
 
 def test_classify_farmaceutica():
     assert classify(["PARACETAMOLO 1000 MG 16 CPR"]) == "farmaceutica"
-    assert classify(["AMOXICILLINA 12 BUST"]) == "farmaceutica" or classify(["AMOXICILLINA 1000 MG CPR"]) == "farmaceutica"
+    assert classify(["AMOXICILLINA 12 BUST"]) == "farmaceutica"
+    assert classify(["AMOXICILLINA 1000 MG CPR"]) == "farmaceutica"
     assert classify(["GOCCE ORALI 20 FLACONI"]) == "farmaceutica"
     assert prenotabile_in_automatico("farmaceutica") is False
 

@@ -602,3 +602,65 @@ def test_flow_request_approval_displays_anticipo_singular_day_and_same_day():
     assert "📅 Data: 15/11/2026 ore 10:00" in msg3
     assert "da sostituire" not in msg3
 
+
+def test_is_autobook_enabled_cfg_and_criteri(monkeypatch):
+    from services.deadline import is_autobook_enabled
+
+    monkeypatch.delenv("AUTO_BOOK", raising=False)
+
+    # 1. Criteri string variants
+    assert is_autobook_enabled(criteri={"auto_book": "si"}) is True
+    assert is_autobook_enabled(criteri={"auto_book": "sì"}) is True
+    assert is_autobook_enabled(criteri={"auto_book": "on"}) is True
+    assert is_autobook_enabled(criteri={"auto_book": "1"}) is True
+    assert is_autobook_enabled(criteri={"auto_book": "0"}) is False
+
+    # 2. CFG settings variants
+    cfg_true = MagicMock()
+    cfg_true.settings = {"scheduler": {"auto_book": True}}
+    assert is_autobook_enabled(cfg=cfg_true) is True
+
+    cfg_str = MagicMock()
+    cfg_str.settings = {"scheduler": {"auto_book": "yes"}}
+    assert is_autobook_enabled(cfg=cfg_str) is True
+
+    # 3. Criteri overrides CFG
+    assert is_autobook_enabled(cfg=cfg_true, criteri={"auto_book": False}) is False
+
+
+def test_get_autobook_min_days_cfg_and_criteri(monkeypatch):
+    from services.deadline import get_autobook_min_days
+
+    monkeypatch.delenv("AUTO_BOOK_MIN_DAYS", raising=False)
+
+    # 1. Criteri
+    assert get_autobook_min_days(criteri={"auto_book_min_days": "7"}) == 7
+    assert get_autobook_min_days(criteri={"auto_book_min_days": "invalid"}) == 5
+
+    # 2. CFG settings
+    cfg = MagicMock()
+    cfg.settings = {"scheduler": {"auto_book_min_days": 10}}
+    assert get_autobook_min_days(cfg=cfg) == 10
+
+    # 3. Criteri overrides CFG
+    assert get_autobook_min_days(cfg=cfg, criteri={"auto_book_min_days": 4}) == 4
+
+
+def test_get_reschedule_min_working_days_cfg_and_criteri(monkeypatch):
+    from services.deadline import get_reschedule_min_working_days
+
+    monkeypatch.delenv("RESCHEDULE_MIN_WORKING_DAYS", raising=False)
+
+    # 1. Criteri
+    assert get_reschedule_min_working_days(criteri={"reschedule_min_working_days": "4"}) == 4
+    assert get_reschedule_min_working_days(criteri={"reschedule_min_working_days": "invalid"}) == 3
+
+    # 2. CFG settings
+    cfg = MagicMock()
+    cfg.settings = {"scheduler": {"reschedule_min_working_days": 2}}
+    assert get_reschedule_min_working_days(cfg=cfg) == 2
+
+    # 3. Criteri overrides CFG
+    assert get_reschedule_min_working_days(cfg=cfg, criteri={"reschedule_min_working_days": 5}) == 5
+
+

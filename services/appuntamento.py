@@ -126,9 +126,9 @@ def parse_conferma(html: str) -> AppuntamentoInfo:
             s = text.find(stop, ni + 20)
             if 0 < s < stop_i:
                 stop_i = s
-        note_txt = _clean(text[ni + len("Note di preparazione"):stop_i])
+        note_txt = _clean(text[ni + len("Note di preparazione"):stop_i]).lstrip(": ")
         if note_txt:
-            info.note = [x.strip("- ") for x in note_txt.split("-") if x.strip("- ")]
+            info.note = [x.strip("- :") for x in note_txt.split("-") if x.strip("- :")]
 
     # Operator / other notes
     nio = text.find("Note operatore")
@@ -138,7 +138,7 @@ def parse_conferma(html: str) -> AppuntamentoInfo:
             s = text.find(stop, nio + 20)
             if 0 < s < stop_i:
                 stop_i = s
-        extra = _clean(text[nio + len("Note operatore"):stop_i])
+        extra = _clean(text[nio + len("Note operatore"):stop_i]).lstrip(": ")
         if extra:
             info.note.append(extra)
 

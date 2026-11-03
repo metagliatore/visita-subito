@@ -24,7 +24,7 @@ _LAB_KEYWORDS = (
     "biopsia", "tampone rino", "test rapido",
 )
 # Keywords typical of pharmaceutical prescriptions (drugs)
-_FARM_KEYWORDS = ("mg", "cpr", "cps", "sir", "flacon", "fiale", "gtt", "unit.")
+_FARM_KEYWORDS = ("mg", "cpr", "cps", "sir", "flacon", "fiale", "gtt", "unit.", "bust", "bustin", "suppost", "sciropp", "collirio", "spray")
 
 # Fragment pattern: a "prestazione" is often separated by comma or semicolon.
 
