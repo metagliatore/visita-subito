@@ -857,9 +857,18 @@ class Flow:
         slots = self.extract_slots()
         seen = self.store.seen_slots(self.mid)
         bl_keys = self.store.get_blacklist_keys(self.mid) if hasattr(self.store, "get_blacklist_keys") else set()
-        fresh = [s for s in slots if s.key not in seen and s.key not in bl_keys]
+        bl_dates = self.store.get_blacklist_dates(self.mid) if hasattr(self.store, "get_blacklist_dates") else set()
+        fresh = [
+            s for s in slots
+            if s.key not in seen
+            and s.key not in bl_keys
+            and s.date_str not in bl_dates
+        ]
 
-        match = best_match(fresh, self.criteri)
+        crit = dict(self.criteri)
+        if bl_dates:
+            crit["blacklist_dates"] = bl_dates
+        match = best_match(fresh, crit)
         if not match:
             # Update seen slots anyway (for new upcoming slots)
             self.store.record_slots(self.mid, [s.key for s in slots])
@@ -899,8 +908,17 @@ class Flow:
 
             slots = self.extract_slots_current_province()
             all_slots.extend(slots)
-            fresh = [s for s in slots if s.key not in seen and s.key not in bl_keys]
-            match = best_match(fresh, self.criteri)
+            bl_dates = self.store.get_blacklist_dates(self.mid) if hasattr(self.store, "get_blacklist_dates") else set()
+            fresh = [
+                s for s in slots
+                if s.key not in seen
+                and s.key not in bl_keys
+                and s.date_str not in bl_dates
+            ]
+            crit = dict(self.criteri)
+            if bl_dates:
+                crit["blacklist_dates"] = bl_dates
+            match = best_match(fresh, crit)
 
             if match:
                 log.info(
@@ -1066,6 +1084,10 @@ class Flow:
         al = self.criteri.get("data_a")
         if dal or al:
             range_txt = f"\n📅 Range richiesto: {dal or 'da oggi'} → {al or 'senza limite'}"
+        fascia = self.criteri.get("fascia") or self.criteri.get("fasce_orarie")
+        if fascia:
+            from services.matcher import descrivi_fascia
+            range_txt += f"\n⏰ Fascia: {descrivi_fascia(fascia)}"
 
         vecchio_info = ""
         d_attuale = (
@@ -1123,9 +1145,12 @@ class Flow:
             )
 
         msg += f"\n\nVuoi procedere?"
-        # Inline buttons: Approve/Reject
-        righe = [[("✅ Approva", f"decide:approve:{req_id}"),
-                  ("❌ Rifiuta", f"decide:deny:{req_id}")]]
+        # Inline buttons: Approve/Reject/Reject entire day
+        righe = [
+            [("✅ Approva", f"decide:approve:{req_id}"),
+             ("❌ Rifiuta", f"decide:deny:{req_id}")],
+            [("🚫 Rifiuta intera giornata", f"decide:deny_day:{req_id}")],
+        ]
         inviati = self.bot.notify_buttons(msg, righe)
         # Await decision (blocking, with timeout)
         decision = self.queue.wait_decision(req_id)
@@ -1137,12 +1162,22 @@ class Flow:
                 testo = f"{msg}\n\n⏳ Proposta scaduta: il tempo per rispondere è terminato, la disponibilità potrebbe non essere più valida."
                 self.bot.edit_message(testo, inviati)
             else:
-                # Explicit user rejection: add slot to blacklist
+                # Explicit user rejection: add slot (or entire day) to blacklist
+                azione = (decision.get("extra") or {}).get("azione", "deny")
+                block_day = (azione == "deny_day")
                 if hasattr(self.store, "add_blacklist_entry"):
                     nre = (self.monitor.get("nre") or "").strip()
                     data_ricetta = (self.monitor.get("data_ricetta") or "").strip()
-                    self.store.add_blacklist_entry(self.mid, slot, nre=nre, data_ricetta=data_ricetta)
-                    log.info("[%s] Aggiunto slot %s alla blacklist", self.mid, getattr(slot, "key", str(slot)))
+                    if block_day:
+                        self.store.add_blacklist_entry(
+                            self.mid, slot, nre=nre, data_ricetta=data_ricetta, block_day=True
+                        )
+                        log.info("[%s] Aggiunta intera giornata %s alla blacklist", self.mid, getattr(slot, "date_str", str(slot)))
+                    else:
+                        self.store.add_blacklist_entry(
+                            self.mid, slot, nre=nre, data_ricetta=data_ricetta
+                        )
+                        log.info("[%s] Aggiunto slot %s alla blacklist", self.mid, getattr(slot, "key", str(slot)))
             return f"Disponibilità {slot} non confermata."
 
         # Approved -> execute actual booking

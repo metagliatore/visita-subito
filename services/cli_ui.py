@@ -129,7 +129,7 @@ class CliUI:
             print("=" * 66)
             print(clean)
             print("=" * 66)
-            print("⚡ RISPONDI SUBITO: digita 's' per approvare, 'n' per rifiutare.")
+            print("⚡ RISPONDI SUBITO: digita 's' per approvare, 'n' per rifiutare l'orario, 'g' per bloccare l'intera giornata.")
             print("=" * 66 + "\n")
             return [("cli", 1)]
 
@@ -315,14 +315,20 @@ class CliUI:
                     play_alert_sound("success")
                 print("✅ Proposta approvata! Procedo con la conferma sul portale...")
                 return
+            elif low in ("g", "giorno", "giornata", "day"):
+                if self.controller:
+                    self.controller.decide_request(req_id, False, extra={"azione": "deny_day"})
+                self._pending_approval = None
+                print("🚫 Proposta rifiutata. L'intera giornata è stata aggiunta alla blacklist del monitor.")
+                return
             elif low in ("n", "no", "rifiuta", "annulla"):
                 if self.controller:
-                    self.controller.decide_request(req_id, False)
+                    self.controller.decide_request(req_id, False, extra={"azione": "deny"})
                 self._pending_approval = None
                 print("❌ Proposta rifiutata. Aggiunta alla blacklist del monitor.")
                 return
-            # If not s/n, fall through to command processing, but remind user
-            print("[!] Nota: c'è una proposta in sospeso. Digita 's' per approvare o 'n' per rifiutare.")
+            # If not s/n/g, fall through to command processing, but remind user
+            print("[!] Nota: c'è una proposta in sospeso. Digita 's' per approvare, 'n' per rifiutare o 'g' per bloccare la giornata.")
 
         # 4. Check if waiting for post-booking choice
         if self._pending_postbook:
@@ -623,10 +629,31 @@ class CliUI:
         data_a_inp = input(f"Data 'Entro il' (DD/MM/YYYY o invio per {default_data_a_hint}): ").strip()
         data_a = data_a_inp or default_data_a
 
+        # Time slot preference
+        print("\nFasce orarie disponibili:")
+        print("  [1] Qualsiasi orario / Salta (default)")
+        print("  [2] Solo Mattina (07:00 - 13:00)")
+        print("  [3] Solo Pomeriggio (13:00 - 19:00)")
+        print("  [4] Tardo Pomeriggio / Sera (17:00 - 23:59)")
+        print("  [5] Pausa Pranzo (12:00 - 15:00)")
+        print("  [6] Personalizzata (es. 09:00-12:00)")
+        fascia_scelta = input("Fascia oraria preferita [1-6 o invio per saltare/qualsiasi]: ").strip()
+        fascia_map = {
+            "2": "mattina",
+            "3": "pomeriggio",
+            "4": "sera",
+            "5": "pranzo",
+        }
+        if fascia_scelta == "6":
+            fascia = input("Inserisci fascia personalizzata (es. 09:00-12:00): ").strip()
+        else:
+            fascia = fascia_map.get(fascia_scelta, "")
+
         return {
             "province": scelte_prov,
             "data_dal": data_dal,
             "data_a": data_a,
+            "fascia": fascia,
         }
 
     def _cmd_monitora(self) -> None:
@@ -718,7 +745,10 @@ class CliUI:
                 has_entries = True
                 print(f"  • Monitor [{mid}] ({len(bl)} voci):")
                 for e in bl:
-                    slot_desc = e.get("descrizione") or e.get("slot") or e.get("entry_id")
+                    if e.get("block_day"):
+                        slot_desc = f"🗓 {e.get('date_str')} [INTERA GIORNATA BLOCCATA]"
+                    else:
+                        slot_desc = e.get("descrizione") or e.get("slot") or f"{e.get('date_str')} ore {e.get('time_str')}"
                     print(f"      - {slot_desc}")
         if not has_entries:
             print("  (Nessuna disponibilità attualmente in blacklist).")

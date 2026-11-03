@@ -886,3 +886,156 @@ def test_h_callback_app_ics_all_sends_all_documents(tmp_path):
 
         q.answer.assert_awaited()
         assert q.message.reply_document.await_count == 2
+
+
+def test_data_selezionata_range_a_prompts_fascia():
+    from datetime import date
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot._wizard = {
+        12345: {
+            "step": "range_a",
+            "target": {"prestazione": "VISITA CARDIOLOGICA", "codice": "NRE123"},
+            "province": ["MILANO CITTA'"],
+            "data_dal": "01/11/2026",
+        }
+    }
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    q = up.callback_query
+    q.edit_message_text = AsyncMock()
+
+    asyncio.run(bot._data_selezionata(up, 12345, date(2026, 11, 30)))
+
+    assert bot._wizard[12345]["step"] == "fascia"
+    assert bot._wizard[12345]["data_a"] == "30/11/2026"
+    q.edit_message_text.assert_awaited_once()
+    args, kwargs = q.edit_message_text.call_args
+    assert "Preferenza fascia oraria" in args[0]
+    rm = kwargs.get("reply_markup")
+    assert rm is not None
+    cb_data = [btn[0].callback_data for btn in rm.inline_keyboard]
+    assert "mon:fascia:mattina" in cb_data
+    assert "mon:fascia:pomeriggio" in cb_data
+    assert "mon:fascia:sera" in cb_data
+    assert "mon:fascia:pranzo" in cb_data
+    assert "mon:fascia:qualsiasi" in cb_data
+    assert "mon:annulla" in cb_data
+
+
+def test_callback_mon_fascia_creates_monitor():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    mock_ctl.aggiungi_monitor.return_value = "reschedule-VISITA-CARD-1"
+    bot.controller = mock_ctl
+    bot._wizard = {
+        12345: {
+            "step": "fascia",
+            "tipo": "reschedule",
+            "target": {"prestazione": "VISITA CARDIOLOGICA", "codice": "NRE123", "data_ora": "20/12/2026 10:00"},
+            "province": ["MILANO CITTA'"],
+            "data_dal": "01/11/2026",
+            "data_a": "30/11/2026",
+        }
+    }
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    q = up.callback_query
+    q.data = "mon:fascia:pomeriggio"
+    q.edit_message_text = AsyncMock()
+
+    asyncio.run(bot._h_callback(up, MagicMock()))
+
+    mock_ctl.aggiungi_monitor.assert_called_once_with(
+        "reschedule",
+        "VISITA CARDIOLOGICA",
+        nre="NRE123",
+        criteri={
+            "province": ["MILANO CITTA'"],
+            "data_dal": "01/11/2026",
+            "data_a": "30/11/2026",
+            "fascia": "pomeriggio",
+        },
+        data_ricetta="",
+        data_attuale="20/12/2026 10:00",
+    )
+    q.edit_message_text.assert_awaited_once()
+    msg = q.edit_message_text.call_args[0][0]
+    assert "Monitor creato!" in msg
+    assert "Range: 01/11/2026 → 30/11/2026" in msg
+    assert "Solo Pomeriggio (13:00 - 19:00)" in msg
+    assert 12345 not in bot._wizard
+
+
+def test_callback_mon_fascia_qualsiasi_creates_monitor_empty_fascia():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    mock_ctl.aggiungi_monitor.return_value = "new-VISITA-CARD-1"
+    bot.controller = mock_ctl
+    bot._wizard = {
+        12345: {
+            "step": "fascia",
+            "tipo": "new",
+            "target": {"prestazioni": ["VISITA CARDIOLOGICA"], "codice": "NRE123"},
+            "province": ["MILANO CITTA'"],
+            "data_dal": "01/11/2026",
+            "data_a": "30/11/2026",
+        }
+    }
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    q = up.callback_query
+    q.data = "mon:fascia:qualsiasi"
+    q.edit_message_text = AsyncMock()
+
+    asyncio.run(bot._h_callback(up, MagicMock()))
+
+    mock_ctl.aggiungi_monitor.assert_called_once_with(
+        "new",
+        "VISITA CARDIOLOGICA",
+        nre="NRE123",
+        criteri={
+            "province": ["MILANO CITTA'"],
+            "data_dal": "01/11/2026",
+            "data_a": "30/11/2026",
+            "fascia": "",
+        },
+        data_ricetta="",
+        data_attuale="",
+    )
+    q.edit_message_text.assert_awaited_once()
+    msg = q.edit_message_text.call_args[0][0]
+    assert "Monitor creato!" in msg
+    assert "Fascia:" not in msg
+    assert 12345 not in bot._wizard
+
+
+def test_h_callback_decide_deny_day():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    bot.controller = mock_ctl
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    q = up.callback_query
+    q.data = "decide:deny_day:req_123"
+    q.edit_message_text = AsyncMock()
+
+    asyncio.run(bot._h_callback(up, MagicMock()))
+
+    mock_ctl.decide_request.assert_called_once_with("req_123", False, extra={"azione": "deny_day"})
+    q.edit_message_text.assert_awaited_once()
+    msg = q.edit_message_text.call_args[0][0]
+    assert "Giorno rifiutato" in msg
+    assert "intera giornata è stata aggiunta alla blacklist" in msg

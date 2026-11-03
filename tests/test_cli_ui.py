@@ -151,7 +151,14 @@ def test_dispatch_approval_yes_and_no():
     mock_ctl.reset_mock()
     ui._pending_approval = {"req_id": "req-888", "msg": "Visita"}
     ui._dispatch_input("n")
-    mock_ctl.decide_request.assert_called_once_with("req-888", False)
+    mock_ctl.decide_request.assert_called_once_with("req-888", False, extra={"azione": "deny"})
+    assert ui._pending_approval is None
+
+    # Test rejection of entire day (g)
+    mock_ctl.reset_mock()
+    ui._pending_approval = {"req_id": "req-777", "msg": "Visita"}
+    ui._dispatch_input("g")
+    mock_ctl.decide_request.assert_called_once_with("req-777", False, extra={"azione": "deny_day"})
     assert ui._pending_approval is None
 
 
@@ -272,8 +279,8 @@ def test_command_anticipa(monkeypatch, capsys):
         {"prestazione": "VISITA CARDIOLOGICA", "data_ora": "20/11/2026 10:30", "codice": "COD123"}
     ]
 
-    # Provide inputs for province, data_dal, data_a
-    inputs = ["", "01/11/2026", "15/11/2026"]
+    # Provide inputs for province, data_dal, data_a, fascia
+    inputs = ["", "01/11/2026", "15/11/2026", "1"]
     input_iter = iter(inputs)
     monkeypatch.setattr("builtins.input", lambda prompt="": next(input_iter))
 
@@ -282,7 +289,7 @@ def test_command_anticipa(monkeypatch, capsys):
         tipo="reschedule",
         descrizione="VISITA CARDIOLOGICA",
         nre="COD123",
-        criteri={"province": ["MILANO CITTA'"], "data_dal": "01/11/2026", "data_a": "15/11/2026"},
+        criteri={"province": ["MILANO CITTA'"], "data_dal": "01/11/2026", "data_a": "15/11/2026", "fascia": ""},
         data_attuale="20/11/2026 10:30",
     )
     assert "Monitor di anticipo avviato con ID: reschedule-CARD-1" in capsys.readouterr().out
@@ -322,6 +329,7 @@ def test_command_monitora_interactive(monkeypatch, capsys):
     # "MILANO CITTA', BERGAMO" (Province)
     # "01/11/2026" (Data dal)
     # "31/12/2026" (Data a)
+    # "1" (Fascia oraria: qualsiasi)
     inputs = [
         "3",
         "VISITA DERMATOLOGICA",
@@ -329,6 +337,7 @@ def test_command_monitora_interactive(monkeypatch, capsys):
         "MILANO CITTA', BERGAMO",
         "01/11/2026",
         "31/12/2026",
+        "1",
     ]
     input_iter = iter(inputs)
     monkeypatch.setattr("builtins.input", lambda prompt="": next(input_iter))
@@ -342,4 +351,47 @@ def test_command_monitora_interactive(monkeypatch, capsys):
     assert kwargs["criteri"]["province"] == ["MILANO CITTA'", "BERGAMO"]
     assert kwargs["criteri"]["data_dal"] == "01/11/2026"
     assert kwargs["criteri"]["data_a"] == "31/12/2026"
+    assert kwargs["criteri"]["fascia"] == ""
     assert "Monitor aggiunto con successo! ID: new-VISITA-DERM-1" in capsys.readouterr().out
+
+
+def test_command_monitora_interactive_with_fascia(monkeypatch, capsys):
+    ui = CliUI()
+    mock_ctl = MagicMock()
+    mock_ctl.lista_province.return_value = ["MILANO CITTA'"]
+    mock_ctl.criteri_default.return_value = {"province": ["MILANO CITTA'"]}
+    mock_ctl.aggiungi_monitor.return_value = "new-VISITA-DERM-2"
+    ui.controller = mock_ctl
+
+    # Test selecting named fascia (mattina)
+    inputs_mattina = [
+        "3",
+        "VISITA OCULISTICA",
+        "",
+        "",
+        "",
+        "",
+        "2",  # Mattina
+    ]
+    it_mat = iter(inputs_mattina)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(it_mat))
+    ui._dispatch_input("monitora")
+    kwargs = mock_ctl.aggiungi_monitor.call_args[1]
+    assert kwargs["criteri"]["fascia"] == "mattina"
+
+    # Test selecting custom range fascia (08:30-11:30)
+    inputs_custom = [
+        "3",
+        "VISITA OCULISTICA",
+        "",
+        "",
+        "",
+        "",
+        "6",  # Personalizzata
+        "08:30-11:30",
+    ]
+    input_iter_custom = iter(inputs_custom)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(input_iter_custom))
+    ui._dispatch_input("monitora")
+    kwargs_custom = mock_ctl.aggiungi_monitor.call_args[1]
+    assert kwargs_custom["criteri"]["fascia"] == "08:30-11:30"

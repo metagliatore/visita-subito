@@ -12,6 +12,24 @@ from datetime import datetime
 from pathlib import Path
 
 
+def _date_prefix_from_str(date_str: str) -> str:
+    try:
+        raw = str(date_str).strip()
+        if "/" in raw:
+            parts = raw.split("/")
+            if len(parts) == 3:
+                d, m, y = parts
+                return f"{y}{m.zfill(2)}{d.zfill(2)}T"
+        elif "-" in raw:
+            parts = raw.split("-")
+            if len(parts) == 3:
+                y, m, d = parts
+                return f"{y}{m.zfill(2)}{d.zfill(2)}T"
+    except Exception:
+        pass
+    return ""
+
+
 class Store:
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -94,8 +112,9 @@ class Store:
         slot,
         nre: str = "",
         data_ricetta: str = "",
+        block_day: bool = False,
     ) -> dict:
-        """Add a rejected slot to the blacklist for the specified monitor.
+        """Add a rejected slot or an entire day to the blacklist for the specified monitor.
 
         The entry remains valid for the duration of prescription validity
         (1 year / 365 days from prescription date, or 1 year from rejection date).
@@ -152,11 +171,16 @@ class Store:
         entry_data = self.data.setdefault(monitor_id, {})
         bl = entry_data.setdefault("blacklist", [])
 
-        # If already present with same slot_key, update
+        target_key = f"day:{date_str}" if block_day else slot_key
+
+        # If already present with same slot_key or day, update
         for existing in bl:
-            if existing.get("slot_key") and existing.get("slot_key") == slot_key:
+            is_same_slot = existing.get("slot_key") and existing.get("slot_key") == target_key
+            is_same_day = block_day and existing.get("block_day") and existing.get("date_str") == date_str
+            if is_same_slot or is_same_day:
                 existing["rejected_at"] = now
                 existing["valid_until"] = valid_until
+                existing["block_day"] = bool(block_day)
                 if nre:
                     existing["nre"] = nre
                 self._flush()
@@ -165,9 +189,10 @@ class Store:
         item_id = uuid.uuid4().hex[:8]
         new_entry = {
             "id": item_id,
-            "slot_key": slot_key,
+            "slot_key": target_key,
             "date_str": date_str,
-            "time_str": time_str,
+            "time_str": time_str if not block_day else "",
+            "block_day": bool(block_day),
             "azienda": azienda,
             "sede": sede,
             "comune": comune,
@@ -212,7 +237,15 @@ class Store:
 
     def get_blacklist_keys(self, monitor_id: str) -> set[str]:
         """Set of slot_keys currently in blacklist for monitor_id."""
-        return {item["slot_key"] for item in self.get_blacklist(monitor_id) if item.get("slot_key")}
+        return {item["slot_key"] for item in self.get_blacklist(monitor_id) if item.get("slot_key") and not item.get("block_day")}
+
+    def get_blacklist_dates(self, monitor_id: str) -> set[str]:
+        """Set of date_str (DD/MM/YYYY) for which the entire day is blacklisted."""
+        return {
+            item["date_str"]
+            for item in self.get_blacklist(monitor_id)
+            if item.get("block_day") and item.get("date_str")
+        }
 
     def remove_blacklist_entry(self, monitor_id: str, entry_id: str) -> dict | None:
         """Remove specific entry from blacklist and from seen_slots."""
@@ -229,8 +262,12 @@ class Store:
             self.data.setdefault(monitor_id, {})["blacklist"] = remaining
             sk = removed.get("slot_key")
             seen = self.data.get(monitor_id, {}).get("seen", [])
-            if sk and seen and sk in seen:
-                self.data[monitor_id]["seen"] = [s for s in seen if s != sk]
+            prefix = _date_prefix_from_str(removed.get("date_str")) if removed.get("block_day") else ""
+            if seen:
+                self.data[monitor_id]["seen"] = [
+                    s for s in seen
+                    if s != sk and not (prefix and s.startswith(prefix))
+                ]
             self._flush()
         return removed
 
@@ -239,10 +276,15 @@ class Store:
         bl = self.data.get(monitor_id, {}).get("blacklist", [])
         count = len(bl)
         keys_to_remove = {item.get("slot_key") for item in bl if item.get("slot_key")}
+        day_prefixes = {_date_prefix_from_str(item.get("date_str")) for item in bl if item.get("block_day")}
+        day_prefixes = {p for p in day_prefixes if p}
         self.data.setdefault(monitor_id, {})["blacklist"] = []
         seen = self.data.get(monitor_id, {}).get("seen", [])
-        if seen and keys_to_remove:
-            self.data[monitor_id]["seen"] = [s for s in seen if s not in keys_to_remove]
+        if seen:
+            self.data[monitor_id]["seen"] = [
+                s for s in seen
+                if s not in keys_to_remove and not any(s.startswith(p) for p in day_prefixes)
+            ]
         self._flush()
         return count
 
