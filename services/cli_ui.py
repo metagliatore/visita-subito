@@ -174,12 +174,17 @@ class CliUI:
         if clean_cap:
             print(f"   {clean_cap}\n")
 
-    def send_photo(self, path: str, caption: str = "") -> None:
+    def send_photo(self, path: str, caption: str = "", buttons: list | None = None, **kwargs) -> None:
         """Display image path notification (e.g. QR code or debug screenshot)."""
         clean_cap = strip_html(caption)
         print(f"\n📸 Immagine salvata: {path}")
         if clean_cap:
             print(f"   {clean_cap}\n")
+        if buttons:
+            for row in buttons:
+                for lbl, target in row:
+                    if str(target).startswith(("http://", "https://", "cieid://")):
+                        print(f"   🔗 {lbl}: {target}")
 
     def ask_otp(self, prompt: str = "", timeout_s: int = 120) -> str | None:
         """Prompt user on terminal for OTP code."""
@@ -198,19 +203,31 @@ class CliUI:
         self._pending_otp = False
         return self._otp_value if ok else None
 
-    def ask_auth_fallback(self, prompt: str = "", timeout_s: int = 120) -> str | None:
+    def ask_auth_fallback(self, prompt: str = "", timeout_s: int = 120, buttons: list | None = None, **kwargs) -> str | None:
         """Prompt user on terminal for 2FA fallback method."""
         self._auth_choice = None
         self._auth_event.clear()
         self._pending_auth_fallback = True
 
         print("\n" + "=" * 66)
-        print("⚠️ SECONDO FATTORE SPID")
+        print("⚠️ SECONDO FATTORE AUTENTICAZIONE")
         if prompt:
             print(strip_html(prompt))
-        print("1) Invia nuovamente notifica push sull'app")
-        print("2) Inserisci codice OTP")
-        print(f"Digita '1' o '2' al prompt di comando (timeout {timeout_s}s):")
+        if buttons:
+            self._fallback_options = {}
+            opt_idx = 1
+            for row in buttons:
+                for lbl, cb in row:
+                    val = cb.replace("auth:", "")
+                    self._fallback_options[str(opt_idx)] = val
+                    print(f"{opt_idx}) {strip_html(lbl)}")
+                    opt_idx += 1
+            print(f"Digita il numero dell'opzione al prompt di comando (timeout {timeout_s}s):")
+        else:
+            self._fallback_options = {"1": "notify", "2": "otp"}
+            print("1) Invia nuovamente notifica push sull'app")
+            print("2) Inserisci codice OTP")
+            print(f"Digita '1' o '2' al prompt di comando (timeout {timeout_s}s):")
         print("=" * 66 + "\n")
 
         ok = self._auth_event.wait(timeout_s)
@@ -290,18 +307,35 @@ class CliUI:
 
         # 2. Check if waiting for auth fallback choice
         if self._pending_auth_fallback:
-            if low in ("1", "notifica", "push"):
+            opts = getattr(self, "_fallback_options", {})
+            if low in opts:
+                self._auth_choice = opts[low]
+                self._auth_event.set()
+                print(f"✅ Scelta registrata: {self._auth_choice}")
+                return
+            if any(k in low for k in ["qr", "qrcode", "codice qr"]):
+                self._auth_choice = "qr"
+                self._auth_event.set()
+                print("📲 Passaggio alla modalità QR Code.")
+                return
+            elif low in ("notifica", "push"):
                 self._auth_choice = "notify"
                 self._auth_event.set()
                 print("🔄 Invio nuova notifica push richiesto.")
                 return
-            elif low in ("2", "otp", "codice"):
+            elif low in ("otp", "codice"):
                 self._auth_choice = "otp"
                 self._auth_event.set()
                 print("🔑 Passaggio alla modalità codice OTP.")
                 return
+            elif low in ("annulla", "cancel"):
+                self._auth_choice = "cancel"
+                self._auth_event.set()
+                print("❌ Autenticazione annullata.")
+                return
             else:
-                print("[!] Scelta non valida: digita 1 (notifica push) o 2 (codice OTP).")
+                valid_nums = "/".join(opts.keys()) if opts else "1/2"
+                print(f"[!] Scelta non valida: digita {valid_nums} o il nome dell'azione.")
                 return
 
         # 3. Check if waiting for slot approval

@@ -52,8 +52,7 @@ LOGIN_CIE = {
         ("xpath", "//button[contains(., 'credenziali') or contains(., 'Livello 1 e 2') or contains(., 'Entra con credenziali')]"),
     ],
     "btn_smartphone": [
-        ("css", "a[href*='login/app']"),
-        ("xpath", "//a[contains(., 'smartphone') or contains(., 'CieID')]"),
+        ("xpath", "//a[(contains(., 'smartphone') or contains(., 'CieID')) and not(contains(@href, 'login/app'))]"),
         ("xpath", "//button[contains(., 'smartphone') or contains(., 'CieID')]"),
     ],
     "btn_computer": [
@@ -82,7 +81,12 @@ LOGIN_CIE = {
         ("id", "prosegui"),
         ("xpath", "//button[contains(., 'Procedi') or contains(., 'Prosegui') or contains(., 'Entra')]"),
     ],
-    "link_app_cie": [("css", "a[href*='login/app']")],
+    "link_app_cie": [
+        ("css", "#loginwithappcard a"),
+        ("css", "a[href*='login/app']"),
+        ("css", "a[href*='idp/login/app']"),
+        ("xpath", "//a[contains(@href, 'login/app')]"),
+    ],
     # Second factor: OTP (SMS or app)
     "otp": [
         ("id", "otp"),
@@ -103,15 +107,49 @@ LOGIN_CIE = {
     "btn_richiedi_sms_otp": [
         ("xpath", "//*[contains(., 'Ricevi codice via SMS') or contains(., 'Invia OTP via SMS') or contains(., 'SMS')]"),
     ],
+    # Switch to QR Code view (when push notification does not arrive or as alternative)
+    "btn_mostra_qr": [
+        ("xpath", "//a[contains(., 'QR') or contains(., 'qr') or contains(., 'Inquadra') or contains(., 'inquadra')]"),
+        ("xpath", "//button[contains(., 'QR') or contains(., 'qr') or contains(., 'Inquadra') or contains(., 'inquadra')]"),
+        ("xpath", "//*[contains(text(), 'Non hai ricevuto') or contains(text(), 'non hai ricevuto')]//ancestor::a"),
+        ("xpath", "//*[contains(text(), 'Non hai ricevuto') or contains(text(), 'non hai ricevuto')]//ancestor::button"),
+        ("xpath", "//*[contains(text(), 'codice QR') or contains(text(), 'Codice QR')]//ancestor::a"),
+        ("xpath", "//*[contains(text(), 'codice QR') or contains(text(), 'Codice QR')]//ancestor::button"),
+        ("css", "#qrGeneratorWrapper a"),
+        ("css", "a[href*='qr']"),
+        ("css", "a[href*='login/app']"),
+        ("css", "button[id*='qr']"),
+        ("css", "a[id*='qr']"),
+        ("css", "#btn-qrcode"),
+        ("css", ".btn-qrcode"),
+    ],
+    # Proceed post QR Code scanning
+    "btn_post_qr": [
+        ("css", "#postQRLink a"),
+        ("css", "a[href*='livello1e2postqrcode']"),
+        ("xpath", "//a[contains(@href, 'postqrcode') or contains(., 'dopo aver autenticato')]"),
+    ],
     # QR Code for CieID app
     "qr_code": [
+        ("css", "#qrFigure img"),
+        ("css", "#qrWrapperImg img"),
+        ("css", "#qrWrapper img"),
+        ("css", "figure#qrFigure img"),
         ("css", "#qrcode img"),
         ("css", ".qr-code img"),
-        ("css", "img[src*='qr']"),
-        ("css", "img[src*='QR']"),
-        ("css", "img.qrcode"),
+        ("css", "#qrcode-canvas"),
         ("css", "#qrcode canvas"),
         ("css", ".qr-code canvas"),
+        ("css", "canvas.qrcode"),
+        ("css", "img.qrcode"),
+        ("css", "img[src*='qr']"),
+        ("css", "img[src*='QR']"),
+        ("css", "svg.qrcode"),
+        ("css", "#qrcode svg"),
+        ("css", "#qrcode"),
+        ("css", ".qr-code"),
+        ("css", "[id*='qrcode']"),
+        ("xpath", "//img[contains(@alt, 'QR') or contains(@alt, 'qr') or contains(@alt, 'Qr')]"),
     ],
     # Pending push notification
     "push_waiting": [

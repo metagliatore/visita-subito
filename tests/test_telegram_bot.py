@@ -242,6 +242,14 @@ def test_auth_callback_notify_and_otp():
     assert bot._auth_choice == "otp"
     assert bot._auth_event.is_set()
 
+    # Prova scelta QR
+    bot._auth_event = threading.Event()
+    bot._auth_choice = None
+    up.callback_query.data = "auth:qr"
+    asyncio.run(bot._h_callback(up, MagicMock()))
+    assert bot._auth_choice == "qr"
+    assert bot._auth_event.is_set()
+
     # Prova Annulla
     bot._auth_event = threading.Event()
     bot._auth_choice = None
@@ -303,6 +311,39 @@ def test_echo_chat_text_choices_during_fallback():
     asyncio.run(bot._h_echo_chat(up, MagicMock()))
     assert bot._auth_choice == "notify"
     assert bot._auth_event.is_set()
+
+    # Prova testo 'qr'
+    bot._auth_event = threading.Event()
+    bot._auth_choice = None
+    up.message.text = "mostra qr code"
+    asyncio.run(bot._h_echo_chat(up, MagicMock()))
+    assert bot._auth_choice == "qr"
+    assert bot._auth_event.is_set()
+
+
+def test_ask_auth_fallback_custom_buttons(monkeypatch):
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.token = "fake"
+    bot.chat_ids = ["12345"]
+    bot._received_otp = None
+    bot.notify_buttons = MagicMock(return_value=[("12345", 10)])
+
+    # Simuliamo che l'utente scelga 'qr'
+    orig_event_init = threading.Event
+
+    def fake_event_factory():
+        ev = orig_event_init()
+        # auto-set
+        bot._auth_choice = "qr"
+        ev.set()
+        return ev
+
+    monkeypatch.setattr("threading.Event", fake_event_factory)
+
+    custom_btns = [[("📲 Invia QR Code", "auth:qr")]]
+    res = bot.ask_auth_fallback("Prompt CIE", buttons=custom_btns)
+    assert res == "qr"
+    bot.notify_buttons.assert_called_once_with("Prompt CIE", custom_btns)
 
 
 def test_login_in_corso_guards():
@@ -762,6 +803,29 @@ def test_telegram_send_photo_fallback_to_document(tmp_path):
         mock_app.bot.send_photo.assert_awaited_once()
         mock_app.bot.send_document.assert_awaited_once()
         assert mock_app.bot.send_document.call_args[1]["caption"] == "fallback caption"
+
+
+def test_telegram_send_photo_with_buttons(tmp_path):
+    from services.telegram_bot import TelegramBot
+    test_file = tmp_path / "test.png"
+    test_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    bot = TelegramBot("dummy", "123")
+    with patch("telegram.ext.Application.builder") as mock_builder:
+        mock_app = MagicMock()
+        mock_builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app.__aenter__.return_value = mock_app
+        mock_app.__aexit__.return_value = None
+        mock_app.bot.send_photo = AsyncMock()
+
+        buttons = [[("Apri in App", "https://ios.idserver.servizicie.interno.gov.it/idp/login/app?opId=1")]]
+        bot.send_photo(str(test_file), caption="QR caption", buttons=buttons)
+        mock_app.bot.send_photo.assert_awaited_once()
+        call_kw = mock_app.bot.send_photo.call_args[1]
+        assert call_kw["caption"] == "QR caption"
+        kb = call_kw["reply_markup"].inline_keyboard
+        assert kb[0][0].text == "Apri in App"
+        assert kb[0][0].url == "https://ios.idserver.servizicie.interno.gov.it/idp/login/app?opId=1"
 
 
 def test_h_appuntamenti_renders_calendar_buttons():

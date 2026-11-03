@@ -103,7 +103,8 @@ class TelegramBot:
             log.warning("TG non configurato, notifica con pulsanti non inviata")
             return []
         kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
+            InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://", "cieid://"))
+            else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
         ] for row in buttons])
         sent = []
         app = Application.builder().token(self.token).build()
@@ -201,25 +202,35 @@ class TelegramBot:
             log.error("send_file TG fallita: %s", e)
 
     # ---------- sending images / screenshots ----------
-    async def _send_photo(self, path: str, caption: str = "") -> None:
+    async def _send_photo(self, path: str, caption: str = "", buttons: list | None = None) -> None:
         if not (self.token and self.chat_ids):
             log.warning("TG non configurato, foto non inviata: %s", path)
             return
+        kb = None
+        if buttons:
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://", "cieid://"))
+                else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
+            ] for row in buttons])
         app = Application.builder().token(self.token).build()
         async with app:
             for cid in self.chat_ids:
                 try:
                     with open(path, "rb") as f:
-                        await app.bot.send_photo(chat_id=cid, photo=f, caption=caption, parse_mode=ParseMode.HTML)
+                        await app.bot.send_photo(chat_id=cid, photo=f, caption=caption,
+                                                 parse_mode=ParseMode.HTML, reply_markup=kb)
                 except Exception as e:  # noqa: BLE001
                     log.warning("invio photo TG a %s fallito (%s), provo send_document", cid, e)
                     try:
                         with open(path, "rb") as f:
-                            await app.bot.send_document(chat_id=cid, document=f, filename=path.split("/")[-1], caption=caption, parse_mode=ParseMode.HTML)
+                            await app.bot.send_document(chat_id=cid, document=f,
+                                                        filename=path.split("/")[-1],
+                                                        caption=caption, parse_mode=ParseMode.HTML,
+                                                        reply_markup=kb)
                     except Exception as e2:  # noqa: BLE001
                         log.error("invio fallback file TG a %s fallito: %s", cid, e2)
 
-    def send_photo(self, path: str, caption: str = "") -> None:
+    def send_photo(self, path: str, caption: str = "", buttons: list | None = None) -> None:
         """Send an image (e.g. PNG screenshot) from a flow or poller."""
         try:
             loop = asyncio.get_running_loop()
@@ -227,26 +238,27 @@ class TelegramBot:
             loop = None
 
         if loop is not None and loop.is_running():
-            asyncio.create_task(self._send_photo(path, caption))
+            asyncio.create_task(self._send_photo(path, caption, buttons=buttons))
             return
 
         try:
-            asyncio.run(self._send_photo(path, caption))
+            asyncio.run(self._send_photo(path, caption, buttons=buttons))
         except RuntimeError:
             loop = asyncio.new_event_loop()
             try:
-                loop.run_until_complete(self._send_photo(path, caption))
+                loop.run_until_complete(self._send_photo(path, caption, buttons=buttons))
             finally:
                 loop.close()
         except Exception as e:  # noqa: BLE001
             log.error("send_photo TG fallita: %s", e)
 
-    # ---------- authentication interactions (push fallback / otp) ----------
-    def ask_auth_fallback(self, prompt: str = "", timeout_s: int = 120) -> str | None:
-        """Prompt user via Telegram inline buttons to resend push notification or enter OTP code.
+    # ---------- authentication interactions (push fallback / otp / qr) ----------
+    def ask_auth_fallback(self, prompt: str = "", timeout_s: int = 120, buttons: list | None = None) -> str | None:
+        """Prompt user via Telegram inline buttons to resend push notification, display QR or enter OTP.
 
         Returns:
           - 'notify': user chose 'Invia notifica'
+          - 'qr': user chose 'Invia QR Code'
           - 'otp': user chose 'Immetti codice OTP'
           - 'cancel' or None: cancelled or timed out
         """
@@ -266,7 +278,7 @@ class TelegramBot:
                  "⚠️ <b>Accesso SPID SielteID</b>\n"
                  "La notifica push non è stata approvata o non è arrivata sul telefono.\n\n"
                  "Come vuoi procedere?")
-        bottoni = [
+        bottoni = buttons or [
             [("📲 Invia notifica", "auth:notify"), ("🔢 Immetti codice OTP", "auth:otp")],
             [("❌ Annulla login", "auth:cancel")],
         ]
@@ -611,6 +623,13 @@ class TelegramBot:
                         self._auth_event.set()
                     await q.edit_message_text(
                         "🔢 <b>Scelto: Immetti codice OTP</b>\nPrepara il codice dell'app MySielteID...",
+                        parse_mode=ParseMode.HTML)
+                elif sub == "qr":
+                    if self._auth_event is not None:
+                        self._auth_choice = "qr"
+                        self._auth_event.set()
+                    await q.edit_message_text(
+                        "📲 <b>Scelto: Invia QR Code</b>\nRecupero del QR Code in corso, te lo invio subito qui in chat...",
                         parse_mode=ParseMode.HTML)
                 elif sub == "cancel":
                     if self._auth_event is not None:
@@ -1441,10 +1460,15 @@ class TelegramBot:
             await update.message.reply_text(f"✅ Codice OTP ricevuto ({masked}). Procedo con l'autenticazione...")
             return
 
-        # 2. If waiting for fallback choice (notification vs OTP)
+        # 2. If waiting for fallback choice (notification vs OTP vs QR)
         if getattr(self, "_auth_event", None) is not None:
             low = text.lower()
-            if any(k in low for k in ["notifica", "invia notifica", "push", "1"]):
+            if any(k in low for k in ["qr", "qrcode", "codice qr", "foto"]):
+                self._auth_choice = "qr"
+                self._auth_event.set()
+                await update.message.reply_text("📲 Hai scelto: Mostra QR Code. Recupero l'immagine...")
+                return
+            elif any(k in low for k in ["notifica", "invia notifica", "push", "1"]):
                 self._auth_choice = "notify"
                 self._auth_event.set()
                 await update.message.reply_text("📲 Hai scelto: Invia notifica push.")
