@@ -286,10 +286,10 @@ class CliUI:
                 pass
 
     def _print_welcome(self) -> None:
-        print("\n" + "=" * 66)
-        print("  Fascicolo Sanitario Regione Lombardia - Prenotazioni")
-        print("             Controllo Interattivo da Terminale")
-        print("=" * 66)
+        from services.updater import get_cached_or_check_updates, format_cli_welcome
+        cfg = getattr(self.controller, "cfg", None) if hasattr(self, "controller") else None
+        info = get_cached_or_check_updates(cfg=cfg)
+        print("\n" + format_cli_welcome(info))
         print("I controlli automatici sono attivi in background.")
         print("Digita 'help' o '?' per la lista dei comandi disponibili.\n")
 
@@ -423,6 +423,8 @@ class CliUI:
             self._cmd_monitora()
         elif cmd in ("blacklist", "b"):
             self._cmd_blacklist(arg)
+        elif cmd in ("version", "versione", "update", "aggiornamenti", "v"):
+            self._cmd_version()
         elif cmd in ("clear", "cls"):
             os.system("cls" if sys.platform == "win32" else "clear")
         elif cmd in ("quit", "exit", "q"):
@@ -449,9 +451,17 @@ class CliUI:
         print("  pause              - Mette in pausa il polling automatico")
         print("  resume             - Riattiva il polling automatico")
         print("  blacklist, b       - Visualizza o svuota le disponibilità rifiutate")
+        print("  version, v         - Visualizza versione e verifica aggiornamenti su GitHub")
         print("  clear, cls         - Pulisce lo schermo del terminale")
         print("  quit, exit, q      - Chiude il programma")
         print("=" * 66 + "\n")
+
+    def _cmd_version(self) -> None:
+        from services.updater import check_for_updates, format_cli_welcome
+        cfg = getattr(self.controller, "cfg", None) if hasattr(self, "controller") else None
+        print("\nVerifica aggiornamenti su GitHub in corso...")
+        info = check_for_updates(force=True, cfg=cfg)
+        print(format_cli_welcome(info) + "\n")
 
     def _cmd_status(self) -> None:
         if not self.controller:

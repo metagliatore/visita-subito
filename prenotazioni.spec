@@ -54,6 +54,7 @@ hiddenimports = [
     'services.scheduler',
     'services.sound',
     'services.telegram_bot',
+    'services.updater',
     'state',
     'state.store',
 ]

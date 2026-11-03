@@ -535,6 +535,10 @@ class Controller:
         else:
             lines.append("⚡ Fast-Track Auto-Booking: disattivato (richiesta approvazione manuale)")
 
+        # Commute calculation status
+        from services.commute import get_commute_status_text
+        lines.append(f"🧭 {get_commute_status_text(self.cfg.settings if hasattr(self.cfg, 'settings') else None)}")
+
         if not self._flows:
             lines.append("\nNessun monitor configurato. Usa /monitora per crearne uno.")
         for f in self._flows:
@@ -918,6 +922,9 @@ class Controller:
 
     # ---- main ----
     def run(self, run_bot: bool = True):
+        from services.updater import check_and_log_startup_banner
+        check_and_log_startup_banner(self.cfg, log)
+
         threads = [
             threading.Thread(target=self._keep_alive_loop, daemon=True),
             threading.Thread(target=self._poll_loop, daemon=True),

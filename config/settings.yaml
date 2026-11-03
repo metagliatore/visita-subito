@@ -91,3 +91,10 @@ debug:
   # Cartella dove salvare screenshot e dump HTML in caso di errore (sovrascrivibile da DEBUG_DUMP_DIR in .env)
   dump_dir: "data/debug"
 
+app:
+  # Verifica automatica nuove release su GitHub all'avvio (sovrascrivibile con CHECK_UPDATES in .env)
+  check_updates: true
+  # Invia messaggio di benvenuto con stato versione su Telegram all'avvio (sovrascrivibile con TG_STARTUP_NOTIFICATION in .env)
+  tg_startup_notification: true
+
+
