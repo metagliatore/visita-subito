@@ -43,6 +43,7 @@
 - **Riepilogo comparativo con vecchio appuntamento**: all'individuazione di un posto utile, il bot mostra chiaramente la nuova data a confronto con l'appuntamento originario e i giorni esatti di anticipo guadagnati.
 - **Generazione Calendario (.ics) con cancellazione automatica**: esportazione automatica di file calendario RFC 5545 per ogni prenotazione o anticipo confermato. In caso di spostamento, il file include la revoca del vecchio appuntamento (`STATUS:CANCELLED`, `SEQUENCE:1`) consentendo ai calendari (Apple Calendar, Outlook, Google Calendar) di aggiornare o rimuovere automaticamente l'evento precedente.
 - **Calcolo Distanza e Tempi di Percorso da Casa (Auto e Trasporto Pubblico)**: stima immediata della distanza chilometrica e dei tempi di percorrenza dalla tua abitazione all'ospedale o ambulatorio sia in auto (nelle ore di punta) sia con il trasporto pubblico (metro, treno suburbano/FS, navette e percorsi pedonali). Se non imposti le coordinate di casa in `.env`, la funzionalità rimane disattivata senza mostrare righe vuote. Architettura già predisposta per futuri filtri di distanza massima.
+- **Sincronizzazione Calendario Personale (Anti-Conflitto)**: consultazione in sola lettura dei tuoi calendari personali (Google Calendar, Outlook / M365, Apple iCloud, Nextcloud) tramite indirizzo segreto iCal (`.ics`). Rileva automaticamente gli impegni esistenti per evitare sovrapposizioni e bloccare l'auto-booking in orari occupati, con margine di viaggio configurabile (default buffer $\pm 45$ min).
 - **Wizard interattivo su Telegram**: creazione guidata dei monitor direttamente dalla chat con selezione di ricetta/appuntamento, scelta multi-provincia e calendario inline per l'intervallo date.
 - **Gestione sessione SPID / CIE**: keep-alive automatico della sessione e rinnovo intelligente tramite SielteID o CIE (Livello 2 / QR Code) con supporto interattivo su Telegram.
 - **Strategie di ricerca multi-provincia**: modalità `first_match` (consigliata/rapida, blocca la prima data utile senza cambiare provincia riducendo le race condition sul portale) oppure `best_match` (globale, confronta tutte le province alla ricerca della data migliore).
@@ -416,6 +417,64 @@ criteri:
   max_distance_km: 20       # Scarta visite oltre 20 km di strada da casa
   max_car_minutes: 30       # Scarta visite che richiedono più di 30 min in auto
   max_transit_minutes: 45   # Scarta visite che richiedono più di 45 min con il trasporto pubblico
+```
+
+---
+
+## 📅 Sincronizzazione Calendario Personale & Rilevamento Conflitti
+
+Per evitare che il bot ti proponga o prenoti visite mediche in orari in cui hai già impegni (lavoro, riunioni, altre visite, viaggi), VisitaSubito può collegarsi in **sola lettura** ai tuoi calendari tramite il loro **indirizzo privato iCal (.ics)** dinamico.
+
+### Come funziona
+1. **Aggiornamento in tempo reale & Cache**: il link fornito dal tuo provider non è un file statico, ma un flusso live che si aggiorna non appena aggiungi o modifichi un evento dal tuo smartphone o computer. Il bot mantiene una cache locale in memoria (default: 10 minuti) per interrogare il feed in modo efficiente.
+2. **Margine di tragitto (`CALENDAR_BUFFER_MINUTES`)**: una visita medica non occupa solo il tempo allo sportello. Il bot calcola una finestra di occupazione che include un margine di spostamento prima e dopo la visita (default: $\pm 45$ minuti).
+3. **Rispetto della privacy (Strict Read-Only)**: la connessione è in sola lettura. Il bot non può né modificare né cancellare i tuoi eventi personali sul tuo account Google, Apple o Microsoft.
+4. **Protezione in Fast-Track Auto-Booking ("Sniper Mode")**: se è attiva la prenotazione automatica immediata, un eventuale conflitto sul calendario **blocca sempre l'auto-booking per sicurezza**, retrocedendo alla richiesta di approvazione manuale su Telegram.
+5. **Modalità manuale (`CALENDAR_CONFLICT_MODE`)**:
+   - `warn` (default): invia la notifica con i pulsanti `Approva`/`Rifiuta`, evidenziando in modo chiaro l'impegno coincidente (`⚠️ Attenzione Conflitto Calendario: hai già 'Riunione Team'`).
+   - `skip`: scarta silenziosamente lo slot senza inviare notifiche se coincide con un impegno.
+
+---
+
+### Come recuperare l'indirizzo segreto .ics del tuo calendario
+
+#### 🔴 Google Calendar:
+1. Apri [Google Calendar](https://calendar.google.com/) dal browser web.
+2. A sinistra, vicino al nome del tuo calendario, clicca sui tre puntini **⋮** $\to$ **Impostazioni e condivisione**.
+3. Scorri verso il basso fino alla sezione **"Integra calendario"**.
+4. Troverai la voce **"Indirizzo segreto in formato iCal"** con un pulsante per copiare il link. *(Google avvisa: "Non condividere questo indirizzo con altri perché contiene i tuoi eventi")*.
+
+#### 🔵 Outlook.com / Microsoft 365:
+1. Vai su [Outlook via web](https://outlook.live.com/calendar/) $\to$ clicca sull'icona dell'ingranaggio delle **Impostazioni** in alto a destra.
+2. Vai su **Calendario** $\to$ **Calendari condivisi**.
+3. Sotto **"Pubblica un calendario"**, seleziona il tuo calendario e scegli *"Può visualizzare tutti i dettagli"*.
+4. Clicca su **"ICS"** e copia il collegamento.
+
+#### 🍏 Apple iCloud:
+1. Da Mac (app Calendario) o accedendo a [iCloud.com](https://www.icloud.com/calendar), clicca sull'icona di condivisione accanto al calendario.
+2. Spunta **"Calendario pubblico"** e copia il link generato (basta sostituire `webcal://` con `https://`).
+
+---
+
+### Configurazione in `.env`
+
+Incolla l'URL ottenuto nel file `.env`:
+
+```env
+# Abilita la sincronizzazione del calendario (default: false)
+CALENDAR_SYNC_ENABLED=true
+
+# Indirizzo segreto iCal (.ics) del tuo calendario (puoi inserire più URL separati da virgola)
+CALENDAR_ICS_URL="https://calendar.google.com/calendar/ical/tuonome%40gmail.com/private-xxxxxx/basic.ics"
+
+# Margine di spostamento prima e dopo la visita in minuti (default: 45)
+CALENDAR_BUFFER_MINUTES=45
+
+# Modalità in caso di conflitto: "warn" (mostra avviso in chat) oppure "skip" (scarta lo slot)
+CALENDAR_CONFLICT_MODE=warn
+
+# Ignora eventi 'Tutto il giorno' come compleanni o promemoria generali (default: true)
+CALENDAR_IGNORE_ALL_DAY=true
 ```
 
 ---
