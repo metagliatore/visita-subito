@@ -455,5 +455,113 @@ def test_converti_in_reschedule_resets_pause_when_paused():
     ctrl._force.set.assert_called_once()
 
 
+def test_avvia_login_failure_sends_screenshot_telegram(tmp_path):
+    from unittest.mock import patch
+    png_file = tmp_path / "login_fallito.png"
+    png_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    ctrl = MagicMock()
+    ctrl.browser = MagicMock()
+    ctrl.sess = MagicMock()
+    ctrl.bot = MagicMock()
+    ctrl.auth_provider = MagicMock()
+    ctrl.auth_config = MagicMock()
+    ctrl.auth_config.describe.return_value = "SPID (SielteID, notifica) [automatico]"
+    ctrl.auth_provider.login.side_effect = TimeoutError("Timeout nell'attesa approvazione SielteID")
+
+    with patch("core.debug.salva_debug_dump") as mock_dump:
+        mock_dump.return_value = {
+            "ref": "20261104_193456_login_fallito",
+            "png_path": png_file,
+            "message": "📸 Screenshot di debug salvato: 20261104_193456_login_fallito.png (cartella: data/debug)",
+        }
+        ok = Controller._avvia_login(ctrl)
+
+        assert ok is False
+        assert ctrl.login_in_corso is False
+        assert ctrl.sess.session_valid is False
+        ctrl.bot.notify.assert_called_once()
+        assert "Login fallito" in ctrl.bot.notify.call_args[0][0]
+        assert "Timeout nell'attesa approvazione SielteID" in ctrl.bot.notify.call_args[0][0]
+
+        ctrl.bot.send_photo.assert_called_once()
+        assert str(png_file) in ctrl.bot.send_photo.call_args[0][0]
+        assert "Screenshot di debug" in ctrl.bot.send_photo.call_args[1]["caption"]
+        ctrl.browser.stop.assert_called_once()
+
+
+def test_avvia_login_failure_fallback_send_file(tmp_path):
+    from unittest.mock import patch
+    png_file = tmp_path / "login_fallito.png"
+    png_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    ctrl = MagicMock()
+    ctrl.browser = MagicMock()
+    ctrl.sess = MagicMock()
+    # bot only has send_file, no send_photo
+    bot = MagicMock(spec=["notify", "send_file"])
+    ctrl.bot = bot
+    ctrl.auth_provider = MagicMock()
+    ctrl.auth_config = MagicMock()
+    ctrl.auth_config.describe.return_value = "SPID"
+    ctrl.auth_provider.login.side_effect = RuntimeError("Errore connessione")
+
+    with patch("core.debug.salva_debug_dump") as mock_dump:
+        mock_dump.return_value = {
+            "ref": "ref_123",
+            "png_path": png_file,
+            "message": "msg",
+        }
+        ok = Controller._avvia_login(ctrl)
+
+        assert ok is False
+        bot.send_file.assert_called_once()
+        assert str(png_file) in bot.send_file.call_args[0][0]
+
+
+def test_avvia_login_failure_handles_send_photo_exception(tmp_path):
+    from unittest.mock import patch
+    png_file = tmp_path / "login_fallito.png"
+    png_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    ctrl = MagicMock()
+    ctrl.browser = MagicMock()
+    ctrl.sess = MagicMock()
+    ctrl.bot = MagicMock()
+    ctrl.bot.send_photo.side_effect = RuntimeError("Telegram network error")
+    ctrl.auth_provider = MagicMock()
+    ctrl.auth_config = MagicMock()
+    ctrl.auth_provider.login.side_effect = TimeoutError("Timeout")
+
+    with patch("core.debug.salva_debug_dump") as mock_dump:
+        mock_dump.return_value = {
+            "ref": "ref_fail",
+            "png_path": png_file,
+            "message": "msg",
+        }
+        ok = Controller._avvia_login(ctrl)
+        assert ok is False
+        ctrl.browser.stop.assert_called_once()
+
+
+def test_avvia_login_failure_no_dump():
+    from unittest.mock import patch
+    ctrl = MagicMock()
+    ctrl.browser = MagicMock()
+    ctrl.sess = MagicMock()
+    ctrl.bot = MagicMock()
+    ctrl.auth_provider = MagicMock()
+    ctrl.auth_config = MagicMock()
+    ctrl.auth_provider.login.side_effect = RuntimeError("Fatal browser startup error")
+
+    with patch("core.debug.salva_debug_dump") as mock_dump:
+        mock_dump.return_value = None
+        ok = Controller._avvia_login(ctrl)
+        assert ok is False
+        ctrl.bot.send_photo.assert_not_called()
+        ctrl.bot.notify.assert_called_once()
+
+
+
 
 
