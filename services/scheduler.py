@@ -786,6 +786,16 @@ class Controller:
             dump_msg = f"\n\n{dump['message']}" if dump else ""
             desc = getattr(self.auth_config, "describe", lambda: "Autenticazione")()
             self.bot.notify(f"❌ Login fallito ({desc}): {e}{dump_msg}")
+            if dump and dump.get("png_path") and getattr(self, "bot", None) is not None:
+                png_p = dump.get("png_path")
+                caption = f"📸 <b>Screenshot di debug</b> (Login fallito)\n🏷 Riferimento: <code>{dump.get('ref', '')}</code>"
+                try:
+                    if hasattr(self.bot, "send_photo"):
+                        self.bot.send_photo(str(png_p), caption=caption)
+                    elif hasattr(self.bot, "send_file"):
+                        self.bot.send_file(str(png_p), caption=caption)
+                except Exception as e_tg:  # noqa: BLE001
+                    log.warning("Invio screenshot login Telegram fallito: %s", e_tg)
             if hasattr(self, "browser") and hasattr(self.browser, "stop"):
                 try:
                     self.browser.stop()
