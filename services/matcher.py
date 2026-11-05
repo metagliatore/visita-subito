@@ -263,6 +263,15 @@ def match_slot(slot: Slot, criteri: dict) -> tuple[bool, str]:
         return False, f"troppo presto ({slot.time_str})"
     if ora_max and slot.time_str > ora_max:
         return False, f"troppo tardi ({slot.time_str})"
+
+    # ---- commute distance / travel time filters (if configured) ----
+    if any(k in criteri for k in ("max_distance_km", "max_car_minutes", "max_transit_minutes")):
+        from services.commute import check_commute_filter, resolve_slot_commute
+        commute = resolve_slot_commute(slot, criteri)
+        comm_ok, comm_reason = check_commute_filter(commute, criteri)
+        if not comm_ok:
+            return False, comm_reason
+
     return True, ""
 
 

@@ -1014,6 +1014,14 @@ class Flow:
             luogo.append(f"({esc(comune)})")
         luogo_str = f"\n📍 {' · '.join(luogo)}" if luogo else ""
 
+        try:
+            from services.commute import resolve_slot_commute
+            commute = resolve_slot_commute(slot, self.criteri)
+            if commute and commute.summary_text:
+                luogo_str += f"\n🧭 Distanza da casa: {esc(commute.summary_text)}"
+        except Exception as e_comm:
+            log.debug("[%s] Calcolo distanza fallito: %s", self.mid, e_comm)
+
         vecchio_info = ""
         if d_attuale:
             vecchio_info = f"\n📌 In sostituzione di: {esc(d_attuale)}"
@@ -1133,6 +1141,13 @@ class Flow:
                 luogo.append(f"({esc(comune)})")
             msg += f"\n📍 {' · '.join(luogo)}"
             msg += f'\n🗺 <a href="{maps_url.replace("&", "&amp;")}">Apri in Google Maps</a>'
+        try:
+            from services.commute import resolve_slot_commute
+            commute = resolve_slot_commute(slot, self.criteri)
+            if commute and commute.summary_text:
+                msg += f"\n🧭 Distanza da casa: {esc(commute.summary_text)}"
+        except Exception as e_comm:
+            log.debug("[%s] Calcolo distanza fallito: %s", self.mid, e_comm)
         if self.criteri.get("note"):
             msg += f"\n{esc(self.criteri.get('note', ''))}"
 

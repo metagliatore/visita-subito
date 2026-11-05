@@ -69,6 +69,12 @@ scheduler:
   #   sia già stato occupato da altri.
   search_strategy: "first_match"
 
+commute:
+  # Calcolo distanza da casa e tempi di percorrenza (auto e trasporto pubblico)
+  # Imposta le coordinate della tua abitazione (es. "45.4642, 9.1900")
+  # Se vuoto, il calcolo della distanza è disattivato.
+  home_coordinates: ""
+
 telegram:
   # Token del bot creato con @BotFather
   token: ""  # leggi da .env (TG_TOKEN)

@@ -20,6 +20,7 @@
 - **Fast-Track Auto-Booking ("Sniper mode" istantaneo)**: opzione disattivata di default che prenota all'istante le disponibilità ad altissima richiesta senza attendere il tap su Telegram, con vincolo di sicurezza configurabile (default $\ge 5$ giorni da `.env`) per tutelarsi da appuntamenti scomodi che non si potrebbero più disdire senza penale.
 - **Riepilogo comparativo con vecchio appuntamento**: all'individuazione di un posto utile, il bot mostra chiaramente la nuova data a confronto con l'appuntamento originario e i giorni esatti di anticipo guadagnati.
 - **Generazione Calendario (.ics) con cancellazione automatica**: esportazione automatica di file calendario RFC 5545 per ogni prenotazione o anticipo confermato. In caso di spostamento, il file include la revoca del vecchio appuntamento (`STATUS:CANCELLED`, `SEQUENCE:1`) consentendo ai calendari (Apple Calendar, Outlook, Google Calendar) di aggiornare o rimuovere automaticamente l'evento precedente.
+- **Calcolo Distanza e Tempi di Percorso da Casa (Auto e Trasporto Pubblico)**: stima immediata della distanza chilometrica e dei tempi di percorrenza dalla tua abitazione all'ospedale o ambulatorio sia in auto (nelle ore di punta) sia con il trasporto pubblico (metro, treno suburbano/FS, navette e percorsi pedonali). Se non imposti le coordinate di casa in `.env`, la funzionalità rimane disattivata senza mostrare righe vuote. Architettura già predisposta per futuri filtri di distanza massima.
 - **Wizard interattivo su Telegram**: creazione guidata dei monitor direttamente dalla chat con selezione di ricetta/appuntamento, scelta multi-provincia e calendario inline per l'intervallo date.
 - **Gestione sessione SPID / CIE**: keep-alive automatico della sessione e rinnovo intelligente tramite SielteID o CIE (Livello 2 / QR Code) con supporto interattivo su Telegram.
 - **Strategie di ricerca multi-provincia**: modalità `first_match` (consigliata/rapida, blocca la prima data utile senza cambiare provincia riducendo le race condition sul portale) oppure `best_match` (globale, confronta tutte le province alla ricerca della data migliore).
@@ -320,6 +321,80 @@ AUTO_BOOK_MIN_DAYS=5
 ```
 
 È inoltre possibile abilitare o disabilitare l'auto-booking a livello di singolo monitor impostando `auto_book: true` all'interno della sezione `criteri` in `config/monitors.yaml`.
+
+---
+
+## 🧭 Calcolo Distanza & Tempi di Percorso da Casa (Auto e Trasporto Pubblico)
+
+Quando il bot trova una disponibilità o invia una notifica di approvazione/prenotazione, può mostrare la **distanza stradale effettiva** e i **tempi stimati di viaggio** rispetto a casa tua, sia in **automobile** che con il **trasporto pubblico** (metropolitana, passante/treno, autobus o a piedi).
+
+### 📍 Come funziona
+1. **Origine (Coordinate di casa)**: impostate nel file `.env` tramite la variabile `HOME_COORDINATES` (es. `45.4642, 9.1900`).
+2. **Destinazione (Struttura sanitaria)**: geocodificata all'istante a partire dai dati della visita (`sede`, `azienda`, `comune`).
+   - Il sistema include un database offline pre-mappato dei **principali ospedali, ASST, IRCCS e cliniche della Lombardia** (Niguarda, San Raffaele, Policlinico, San Paolo, San Carlo, Sacco, Fatebenefratelli, Buzzi, Gaetano Pini, San Donato, Humanitas, San Gerardo Monza, Papa Giovanni XXIII Bergamo, Spedali Civili Brescia, Sant'Anna Como, Circolo Varese, Manzoni Lecco, San Matteo Pavia, Ospedale Maggiore di Lodi, Cremona, Mantova, Sondrio, ecc.). La risoluzione è immediata (0 ms di latenza).
+   - In caso di strutture periferiche o poliambulatori non indicizzati, viene effettuata una ricerca tramite OpenStreetMap con memorizzazione permanente nella cache locale (`data/geocache.json`), senza rallentare le notifiche successive.
+3. **Calcolo in Auto (Ore di punta)**:
+   - Stima la distanza stradale effettiva applicando un fattore di tortuosità urbano/suburbano ($1.35 \times$ distanza in linea d'aria).
+   - Calcola il tempo di guida a scaglioni realistici per simulare il traffico cittadino e dell'hinterland (velocità urbana media $\approx 19\text{--}28$ km/h per percorsi brevi, $\approx 40$ km/h per tratte fino a 25 km, e scorrimento tangenziale/autostradale per tragitti extraurbani superiori).
+4. **Calcolo Trasporto Pubblico (Metro, Treno e Autobus)**:
+   - Identifica la stazione metropolitana o ferroviaria suburbana più vicina a casa tua e quella più comoda per la struttura di destinazione (copre la rete metropolitana di Milano M1, M2, M3, M4, M5, la metropolitana di Brescia e tutti i principali nodi ferroviari della Lombardia come Monza, Saronno, Bergamo, Brescia, Como, Pavia, Lecco, Varese, Lodi, Cremona, Mantova, Gallarate, Busto Arsizio, Rho, Treviglio, Pioltello).
+   - Calcola il tempo di accesso a piedi (o con navetta/bus se $> 2\text{ km}$), la percorrenza sui binari/linea metropolitana, le coincidenze con penalità di cambio linea e l'ultimo tratto pedonale verso l'ospedale.
+5. **Riconoscimento Distanze Brevi (A piedi)**:
+   - Se la struttura sanitaria dista $\le 850\text{ metri}$ in linea d'aria dalla tua abitazione, il messaggio evidenzia prioritariamente il tempo a piedi:  
+     `🚶 8 min a piedi (600 m) · 🚗 5 min in auto`
+
+---
+
+### 📱 Esempio di notifica su Telegram
+
+Se le coordinate sono configurate, nel messaggio di richiesta approvazione o auto-booking comparirà la riga dedicata subito sotto il link a Google Maps:
+
+```text
+🩺 Trovata disponibilità (new-VISITA-OCULISTICA-1)
+📅 Data: 12/11/2026 ore 10:30 · MI
+🏥 ASST GRANDE OSPEDALE METROPOLITANO NIGUARDA
+📍 OSPEDALE NIGUARDA CA' GRANDA · MILANO
+🗺 Apri in Google Maps
+🧭 Distanza da casa: 🚗 22 min in auto (14.2 km) · 🚇 35 min con trasporto pubblico (M2 + M1)
+
+Vuoi procedere?
+[✅ Approva] [❌ Rifiuta]
+```
+
+---
+
+### ⚙️ Come configurare le tue coordinate in `.env`
+
+> [!IMPORTANT]  
+> **Se non imposti le coordinate di casa, la funzionalità è completamente disattivata.**  
+> Il bot non calcola distanze, non invia richieste a servizi di geolocalizzazione e non mostra alcuna riga vuota o dicitura anomala nei messaggi.
+
+#### Come trovare le coordinate di casa tua in 10 secondi:
+1. Apri [Google Maps](https://www.google.com/maps) dal tuo browser web o dallo smartphone.
+2. Cerca la tua abitazione o fai **clic con il tasto destro del mouse** esattamente sul punto della tua casa.
+3. Nella finestrella che si apre, la prima riga in alto mostra due numeri separati da virgola (es. `45.4642, 9.1900`). Cliccaci sopra con il mouse: le coordinate verranno **copiate automaticamente negli appunti**.
+4. Incolla il valore nel file `.env`:
+
+```env
+# Coordinate della tua abitazione (latitudine, longitudine)
+HOME_COORDINATES=45.4642, 9.1900
+```
+
+*(In alternativa sono supportate anche le due variabili separate `HOME_LATITUDE=45.4642` e `HOME_LONGITUDE=9.1900`, oppure l'impostazione per singolo monitor o globale in `config/settings.yaml`).*
+
+---
+
+### 🔮 Predisposizione per Filtri Futuri sulla Distanza
+
+L'architettura del modulo `services/commute.py` e del `services/matcher.py` è **già predisposta** per supportare filtri avanzati sui criteri di ricerca (attualmente non attivi di default). In futuro o per monitor specializzati sarà sufficiente specificare nei `criteri` del monitor:
+
+```yaml
+# Esempio di filtri futuri supportati dall'architettura:
+criteri:
+  max_distance_km: 20       # Scarta visite oltre 20 km di strada da casa
+  max_car_minutes: 30       # Scarta visite che richiedono più di 30 min in auto
+  max_transit_minutes: 45   # Scarta visite che richiedono più di 45 min con il trasporto pubblico
+```
 
 ---
 
