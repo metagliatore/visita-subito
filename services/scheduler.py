@@ -535,10 +535,6 @@ class Controller:
         else:
             lines.append("⚡ Fast-Track Auto-Booking: disattivato (richiesta approvazione manuale)")
 
-        # Commute calculation status
-        from services.commute import get_commute_status_text
-        lines.append(f"🧭 {get_commute_status_text(self.cfg.settings if hasattr(self.cfg, 'settings') else None)}")
-
         if not self._flows:
             lines.append("\nNessun monitor configurato. Usa /monitora per crearne uno.")
         for f in self._flows:
