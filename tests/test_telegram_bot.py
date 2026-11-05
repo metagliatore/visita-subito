@@ -321,24 +321,18 @@ def test_echo_chat_text_choices_during_fallback():
     assert bot._auth_event.is_set()
 
 
-def test_ask_auth_fallback_custom_buttons(monkeypatch):
+def test_ask_auth_fallback_custom_buttons():
     bot = TelegramBot.__new__(TelegramBot)
     bot.token = "fake"
     bot.chat_ids = ["12345"]
     bot._received_otp = None
-    bot.notify_buttons = MagicMock(return_value=[("12345", 10)])
 
-    # Simuliamo che l'utente scelga 'qr'
-    orig_event_init = threading.Event
-
-    def fake_event_factory():
-        ev = orig_event_init()
-        # auto-set
+    def fake_notify(testo, bottoni):
         bot._auth_choice = "qr"
-        ev.set()
-        return ev
+        bot._auth_event.set()
+        return [("12345", 10)]
 
-    monkeypatch.setattr("threading.Event", fake_event_factory)
+    bot.notify_buttons = MagicMock(side_effect=fake_notify)
 
     custom_btns = [[("📲 Invia QR Code", "auth:qr")]]
     res = bot.ask_auth_fallback("Prompt CIE", buttons=custom_btns)

@@ -42,6 +42,8 @@ services:
       - AUTO_BOOK_MIN_DAYS=${AUTO_BOOK_MIN_DAYS:-5}
       - SEARCH_STRATEGY=${SEARCH_STRATEGY:-first_match}
       - DEBUG_DUMP_DIR=${DEBUG_DUMP_DIR:-data/debug}
+      - CHECK_UPDATES=${CHECK_UPDATES:-true}
+      - TG_STARTUP_NOTIFICATION=${TG_STARTUP_NOTIFICATION:-true}
 
       # --- Runtime di sistema ---
       - CHROME_BIN=/usr/bin/google-chrome

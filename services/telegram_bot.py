@@ -32,6 +32,7 @@ HELP_TEXT = (
     "\n📋 <b>Informazioni</b>\n"
     "/ricette - elenca le ricette da prenotare\n"
     "/appuntamenti - elenca gli appuntamenti esistenti e genera eventi calendario (.ics)\n"
+    "/version - versione corrente e verifica aggiornamenti su GitHub\n"
     "\n❓ /help - questo messaggio"
 )
 
@@ -375,11 +376,37 @@ class TelegramBot:
             await update.message.reply_text("Bot non disponibile.")
             return
         self._risveglia_se_needed(update)
+        from services.updater import APP_NAME, APP_VERSION, GITHUB_URL
         await update.message.reply_text(
-            "👋 Benvenuto! Scegli su cosa vuoi lavorare:\n\n"
+            f"👋 <b>Benvenuto su {APP_NAME}!</b> (<code>v{APP_VERSION}</code>)\n"
+            f"🔗 <a href=\"{GITHUB_URL}\">Progetto su GitHub</a>\n\n"
+            "Scegli su cosa vuoi lavorare:\n"
             "• /ricette — su una RICETTA da prenotare (nuove disponibilità)\n"
             "• /appuntamenti — su un APPUNTAMENTO già preso (anticipa/posticipa)\n\n"
-            "Oppure /help per l'elenco completo.")
+            "Oppure usa /version per verificare gli aggiornamenti o /help per l'elenco completo.",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+    async def _h_version(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show current version and check GitHub for latest releases."""
+        if not self._autorizzato(update):
+            return
+        self._risveglia_se_needed(update)
+        from services.updater import check_for_updates, format_telegram_welcome
+        cfg = getattr(self.controller, "cfg", None) if hasattr(self, "controller") else None
+        info = check_for_updates(force=True, cfg=cfg)
+        testo, bottoni = format_telegram_welcome(info)
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://"))
+            else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
+        ] for row in bottoni])
+        await update.message.reply_text(
+            testo,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
     # ---------- inline calendar ----------
     @staticmethod
@@ -1612,6 +1639,36 @@ class TelegramBot:
         except Exception as e:  # noqa: BLE001
             await q.answer(f"Errore download: {e}")
 
+    async def _send_startup_welcome(self, application: Application) -> None:
+        """Send startup welcome notification with version and update status."""
+        from services.updater import (
+            get_cached_or_check_updates,
+            format_telegram_welcome,
+            is_tg_startup_notification_enabled,
+        )
+        cfg = getattr(self.controller, "cfg", None) if hasattr(self, "controller") else None
+        if is_tg_startup_notification_enabled(cfg) and self.token and self.chat_ids:
+            try:
+                info = get_cached_or_check_updates(cfg=cfg)
+                text, buttons = format_telegram_welcome(info)
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://"))
+                    else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
+                ] for row in buttons])
+                for cid in self.chat_ids:
+                    try:
+                        await application.bot.send_message(
+                            chat_id=cid,
+                            text=text,
+                            reply_markup=kb,
+                            parse_mode=ParseMode.HTML,
+                            disable_web_page_preview=True,
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("Invio messaggio di benvenuto a %s non riuscito: %s", cid, e)
+            except Exception as e:  # noqa: BLE001
+                log.warning("Errore invio messaggio di benvenuto Telegram all'avvio: %s", e)
+
     # ---------- run ----------
     def run(self) -> None:
         """Start bot polling (blocking; runs in a separate process/thread)."""
@@ -1630,6 +1687,7 @@ class TelegramBot:
                 BotCommand("ricette", "Elenco delle ricette dematerializzate"),
                 BotCommand("appuntamenti", "Elenco degli appuntamenti già presi"),
                 BotCommand("stop", "Interrompi un monitor attivo"),
+                BotCommand("version", "Versione e verifica aggiornamenti"),
                 BotCommand("help", "Guida ai comandi"),
             ]
             try:
@@ -1637,6 +1695,8 @@ class TelegramBot:
                 log.info("Comandi del bot registrati automaticamente su Telegram")
             except Exception as e:  # noqa: BLE001
                 log.warning("Impossibile registrare i comandi su Telegram: %s", e)
+
+            await self._send_startup_welcome(application)
 
         async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
             import telegram.error
@@ -1658,6 +1718,7 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("monitora", self._h_monitora))
         self.app.add_handler(CommandHandler("blacklist", self._h_blacklist))
         self.app.add_handler(CommandHandler("stop", self._h_stop))
+        self.app.add_handler(CommandHandler(["version", "versione", "aggiornamenti", "update"], self._h_version))
         self.app.add_handler(CommandHandler("help", self._h_help))
         # Inline buttons (wizard /monitora and replies)
         self.app.add_handler(CallbackQueryHandler(self._h_callback))

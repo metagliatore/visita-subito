@@ -24,6 +24,7 @@
 - **Gestione sessione SPID / CIE**: keep-alive automatico della sessione e rinnovo intelligente tramite SielteID o CIE (Livello 2 / QR Code) con supporto interattivo su Telegram.
 - **Strategie di ricerca multi-provincia**: modalità `first_match` (consigliata/rapida, blocca la prima data utile senza cambiare provincia riducendo le race condition sul portale) oppure `best_match` (globale, confronta tutte le province alla ricerca della data migliore).
 - **Diagnostica automatica e screenshot Telegram**: salvataggio automatico di screenshot PNG e dump HTML in caso di errore o timeout durante la prenotazione, con invio immediato dell'immagine direttamente nella chat Telegram.
+- **Benvenuto all'avvio e Controllo Aggiornamenti GitHub**: all'avvio dell'applicazione (tramite log, terminale CLI o messaggio di benvenuto Telegram) viene mostrato un banner riepilogativo con il link al repository GitHub, la versione corrente e la verifica immediata di nuove release pubblicate con pulsante per il download diretto o consultazione delle note di rilascio.
 - **Completamente Dockerizzato**: pronto per l'esecuzione 24/7 in background con server X virtuale (`Xvfb`) e volumi persistenti per cookie e stato.
 
 ---
@@ -204,6 +205,10 @@ AUTO_BOOK=false
 # Giorni minimi di anticipo richiesti per auto-booking (tutela da appuntamenti scomodi non disdicibili; default: 5)
 AUTO_BOOK_MIN_DAYS=5
 DEBUG_DUMP_DIR=data/debug
+
+# Controllo aggiornamenti GitHub e notifica di benvenuto all'avvio
+CHECK_UPDATES=true
+TG_STARTUP_NOTIFICATION=true
 ```
 
 ### 4. Avvio del container
@@ -332,6 +337,7 @@ Una volta avviato, tutte le operazioni si gestiscono comodamente dalla chat con 
 | `/poll` | Forza un giro di verifica immediato delle disponibilità senza attendere l'intervallo schedulato. |
 | `/ricette` | Mostra le ricette dematerializzate più recenti presenti sul fascicolo (con stato e pulsante per scaricare il PDF promemoria). |
 | `/appuntamenti` | Mostra l'elenco degli appuntamenti già prenotati con data, struttura sanitaria, indirizzo e link rapido a Google Maps. |
+| `/version` | Mostra la versione attualmente installata e controlla se ci sono nuove release su GitHub. |
 | `/help` | Elenco di riepilogo di tutti i comandi disponibili. |
 
 ---
