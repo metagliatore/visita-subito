@@ -74,6 +74,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
       - name: Download Linux artifact
         uses: actions/download-artifact@v6
         with:
@@ -84,13 +87,32 @@ jobs:
         with:
           name: windows-binary
 
+      - name: Extract Changelog for Release
+        run: |
+          python -c '
+          import os, re
+          tag = os.environ.get("GITHUB_REF_NAME", "")
+          with open("CHANGELOG.md", "r", encoding="utf-8") as f:
+              content = f.read()
+          tag_escaped = re.escape(tag)
+          pattern = rf"(## {tag_escaped}[\s\S]*?)(?=\n## |\Z)"
+          match = re.search(pattern, content)
+          if match:
+              body = match.group(1).strip()
+          else:
+              body = f"Release {tag}"
+          with open("RELEASE_NOTES.md", "w", encoding="utf-8") as f_out:
+              f_out.write(body + "\n")
+          '
+
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
+          body_path: RELEASE_NOTES.md
           files: |
             prenotazioni-linux-x86_64.tar.gz
             prenotazioni-windows-x86_64.zip
           draft: false
           prerelease: false
-          generate_release_notes: true
+          generate_release_notes: false
 
