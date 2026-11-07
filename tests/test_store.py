@@ -126,6 +126,38 @@ def test_store_blacklist(tmp_path):
     assert slot_dict["key"] not in store.seen_slots("mon-1")
 
 
+def test_store_blacklist_entire_day(tmp_path):
+    store = Store(tmp_path / "test_store.json")
+    slot_dict = {
+        "key": "20261015T1030|provincia=MI",
+        "date_str": "15/10/2026",
+        "time_str": "10:30",
+        "extra": {"provincia": "MI", "azienda": "ASST Niguarda"},
+    }
+
+    entry = store.add_blacklist_entry("mon-1", slot_dict, block_day=True)
+    assert entry["block_day"] is True
+    assert entry["slot_key"] == "day:15/10/2026"
+    assert entry["date_str"] == "15/10/2026"
+
+    # Must be in get_blacklist_dates but NOT in get_blacklist_keys
+    dates = store.get_blacklist_dates("mon-1")
+    assert dates == {"15/10/2026"}
+    assert store.get_blacklist_keys("mon-1") == set()
+
+    # Removal must clean seen_slots keys matching date prefix 20261015T
+    store.record_slots("mon-1", ["20261015T1400|other", "20261016T0900|other"])
+    assert "20261015T1400|other" in store.seen_slots("mon-1")
+    assert "20261016T0900|other" in store.seen_slots("mon-1")
+
+    store.remove_blacklist_entry("mon-1", entry["id"])
+    assert len(store.get_blacklist("mon-1")) == 0
+    assert store.get_blacklist_dates("mon-1") == set()
+    # 20261015T prefix cleaned, while 20261016T kept
+    assert "20261015T1400|other" not in store.seen_slots("mon-1")
+    assert "20261016T0900|other" in store.seen_slots("mon-1")
+
+
 def test_store_corrupted_json_or_invalid_structure(tmp_path):
     # Case 1: JSON is not a dict (e.g. list, string or corrupted file)
     f = tmp_path / "corrupt.json"

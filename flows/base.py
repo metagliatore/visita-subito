@@ -713,6 +713,10 @@ class Flow:
         only in that case is the end-of-cycle "no availability" notification sent
         (in automatic ticks it would be spammy).
         """
+        if hasattr(self.store, "is_disabled") and self.store.is_disabled(self.mid) is True:
+            log.info("[%s] Monitor disabilitato: salto il controllo", self.mid)
+            return ""
+
         # If appointment was already booked:
         action_state = self.store.get_action(self.mid)
         # 1) For 'reschedule' monitors: always rearm to 'idle' to keep searching for earlier dates
@@ -744,6 +748,41 @@ class Flow:
                 self.criteri["data_attuale"] = d_str
             self.store.mark_action(self.mid, "idle", "promosso a reschedule da /poll manuale")
             action_state = "idle"
+
+        # Check reschedule working days deadline (avoids penalties / malus ticket)
+        data_attuale = (
+            self.monitor.get("data_attuale")
+            or self.criteri.get("data_attuale")
+        )
+        if not data_attuale and hasattr(self.store, "get_prenotazione"):
+            pren = self.store.get_prenotazione(self.mid)
+            data_attuale = pren.get("data_ora") if pren else ""
+
+        if data_attuale and (self.type == "reschedule" or self.monitor.get("type") == "reschedule"):
+            from services.deadline import check_reschedule_deadline, get_reschedule_min_working_days
+            from services.sound import play_alert_sound
+
+            min_days = get_reschedule_min_working_days(getattr(self.store, "cfg", None), self.criteri)
+            is_too_late, app_dt, dl_dt, dl_msg = check_reschedule_deadline(data_attuale, min_working_days=min_days)
+            if is_too_late:
+                log.warning("[%s] Scadenza limite raggiunta: %s. Arresto automatico monitor.", self.mid, dl_msg)
+                if hasattr(self.store, "remove_monitor"):
+                    self.store.remove_monitor(self.mid)
+                self.store.mark_action(self.mid, "stopped_deadline", dl_msg)
+                self.monitor["enabled"] = False
+                app_fmt = app_dt.strftime('%d/%m/%Y alle %H:%M') if app_dt else str(data_attuale)
+                dl_fmt = dl_dt.strftime('%d/%m/%Y alle %H:%M') if dl_dt else "scaduto"
+                notify_msg = (
+                    f"⚠️ <b>Monitor {self.mid} arrestato automaticamente</b>\n\n"
+                    f"📌 <b>Appuntamento attuale</b>: {app_fmt}\n"
+                    f"⏳ <b>Termine ultimo utile</b>: {dl_fmt}\n\n"
+                    f"Mancano meno di {min_days} giorni lavorativi (esclusi sab, dom e festivi).\n"
+                    f"Il monitoraggio è stato fermato per evitare l'addebito della penale (malus ticket)."
+                )
+                if hasattr(self.bot, "notify"):
+                    self.bot.notify(notify_msg)
+                play_alert_sound("alert")
+                return f"Monitor {self.mid} arrestato: meno di {min_days} giorni lavorativi all'appuntamento."
 
         if action_state in ("done", "done_pending_choice"):
             log.info("[%s] Visita già prenotata (action_state=%s): salto il controllo", self.mid, action_state)
@@ -818,9 +857,18 @@ class Flow:
         slots = self.extract_slots()
         seen = self.store.seen_slots(self.mid)
         bl_keys = self.store.get_blacklist_keys(self.mid) if hasattr(self.store, "get_blacklist_keys") else set()
-        fresh = [s for s in slots if s.key not in seen and s.key not in bl_keys]
+        bl_dates = self.store.get_blacklist_dates(self.mid) if hasattr(self.store, "get_blacklist_dates") else set()
+        fresh = [
+            s for s in slots
+            if s.key not in seen
+            and s.key not in bl_keys
+            and s.date_str not in bl_dates
+        ]
 
-        match = best_match(fresh, self.criteri)
+        crit = dict(self.criteri)
+        if bl_dates:
+            crit["blacklist_dates"] = bl_dates
+        match = best_match(fresh, crit)
         if not match:
             # Update seen slots anyway (for new upcoming slots)
             self.store.record_slots(self.mid, [s.key for s in slots])
@@ -832,7 +880,7 @@ class Flow:
 
         # Propose slot to user
         self.store.record_slots(self.mid, [s.key for s in slots])
-        return self._request_approval(match)
+        return self._gestisci_slot_trovato(match)
 
     def _cerca_first_match(self, manual: bool = False) -> str:
         """'first_match' mode: evaluates provinces sequentially.
@@ -860,8 +908,17 @@ class Flow:
 
             slots = self.extract_slots_current_province()
             all_slots.extend(slots)
-            fresh = [s for s in slots if s.key not in seen and s.key not in bl_keys]
-            match = best_match(fresh, self.criteri)
+            bl_dates = self.store.get_blacklist_dates(self.mid) if hasattr(self.store, "get_blacklist_dates") else set()
+            fresh = [
+                s for s in slots
+                if s.key not in seen
+                and s.key not in bl_keys
+                and s.date_str not in bl_dates
+            ]
+            crit = dict(self.criteri)
+            if bl_dates:
+                crit["blacklist_dates"] = bl_dates
+            match = best_match(fresh, crit)
 
             if match:
                 log.info(
@@ -870,7 +927,7 @@ class Flow:
                     self.mid, prov, match.date_str, match.time_str
                 )
                 self.store.record_slots(self.mid, [s.key for s in slots])
-                return self._request_approval(match)
+                return self._gestisci_slot_trovato(match)
             else:
                 self.store.record_slots(self.mid, [s.key for s in slots])
 
@@ -906,7 +963,120 @@ class Flow:
                 f"🔍 Controllo completato: nessuna disponibilità trovata per {self.mid}."
             )
 
-    def _request_approval(self, slot) -> str:
+    def _gestisci_slot_trovato(self, match) -> str:
+        """Route a discovered slot: either fast-track auto-booking or manual approval."""
+        from services.deadline import is_autobook_enabled, get_autobook_min_days, check_autobook_eligibility
+
+        if is_autobook_enabled(criteri=self.criteri):
+            min_days = get_autobook_min_days(criteri=self.criteri)
+            is_eligible, delta_days, reason = check_autobook_eligibility(match, min_days=min_days)
+            if is_eligible:
+                log.info(
+                    "[%s] Fast-Track Auto-Booking: slot %s ore %s a %d giorni (soglia minima: %d). Esecuzione immediata...",
+                    self.mid, match.date_str, match.time_str, delta_days, min_days,
+                )
+                return self._esegui_autobook(match, delta_days=delta_days, min_days=min_days)
+            else:
+                log.info(
+                    "[%s] Fast-Track Auto-Booking: fallback ad approvazione manuale (%s)",
+                    self.mid, reason,
+                )
+                return self._request_approval(match, fallback_autobook_reason=reason)
+
+        return self._request_approval(match)
+
+    def _esegui_autobook(self, slot, delta_days: int, min_days: int) -> str:
+        """Execute instant booking without waiting for manual user approval on Telegram."""
+        import html as _html
+        from services.sound import play_alert_sound
+
+        esc = lambda s: _html.escape(str(s or ""))
+        extra = slot.extra or {}
+        prov = extra.get("provincia", "")
+        azienda = extra.get("azienda", "")
+        sede = extra.get("sede", "")
+        comune = extra.get("comune", "")
+
+        d_attuale = (
+            self.monitor.get("data_attuale")
+            or self.criteri.get("data_attuale")
+        )
+        if not d_attuale and hasattr(self.store, "get_prenotazione"):
+            pren = self.store.get_prenotazione(self.mid)
+            d_attuale = pren.get("data_ora") if pren else ""
+
+        luogo = []
+        if sede and sede != azienda:
+            luogo.append(esc(sede))
+        elif azienda and not sede:
+            luogo.append(esc(azienda))
+        if comune:
+            luogo.append(f"({esc(comune)})")
+        luogo_str = f"\n📍 {' · '.join(luogo)}" if luogo else ""
+
+        try:
+            from services.commute import resolve_slot_commute
+            commute = resolve_slot_commute(slot, self.criteri)
+            if commute and commute.summary_text:
+                luogo_str += f"\n🧭 Distanza da casa: {esc(commute.summary_text)}"
+        except Exception as e_comm:
+            log.debug("[%s] Calcolo distanza fallito: %s", self.mid, e_comm)
+
+        vecchio_info = ""
+        if d_attuale:
+            vecchio_info = f"\n📌 In sostituzione di: {esc(d_attuale)}"
+
+        pre_msg = (
+            f"⚡ <b>[FAST-TRACK AUTO-BOOKING]</b>\n"
+            f"Trovata disponibilità per <b>{esc(self.mid)}</b>!\n"
+            f"📅 Data: <b>{slot.date_str} ore {slot.time_str}</b>{f' · {esc(prov)}' if prov else ''}"
+            f"{vecchio_info}"
+            f"{luogo_str}\n"
+            f"ℹ️ <i>Data a {delta_days} giorni di anticipo (soglia minima: {min_days} giorni). "
+            f"Prenotazione automatica istantanea in corso senza attesa...</i>"
+        )
+        try:
+            play_alert_sound("alert")
+            self.bot.notify(pre_msg)
+        except Exception as e:
+            log.warning("[%s] Errore invio notifica pre-autobook: %s", self.mid, e)
+
+        try:
+            self._ultima_azione = "autobook"
+            self.execute(slot)
+            self.store.mark_action(self.mid, "done_pending_choice", str(slot))
+        except Exception as e:  # noqa: BLE001
+            log.exception("[%s] Fast-track auto-booking fallito", self.mid)
+            dump = self._salva_debug_dump("errore_autobook", invia_telegram=True)
+            dump_msg = f"\n\n{dump['message']}" if dump else ""
+            self.store.mark_action(self.mid, "idle", f"fallita prenotazione automatica: {e}")
+            try:
+                self.bot.notify(
+                    f"❌ <b>Fast-Track Auto-Booking non riuscito</b> per <b>{self.mid}</b>:\n{e}{dump_msg}\n\n"
+                    f"ℹ️ Lo slot potrebbe essere stato occupato da altri nel frattempo. Il monitoraggio rimane attivo e continuerà a cercare nuove date disponibili."
+                )
+            except Exception:
+                pass
+            return "errore"
+
+        # Booking confirmed on portal: notify user and trigger post-booking prompt
+        try:
+            play_alert_sound("success")
+            sostituito_txt = f" in sostituzione di quello del {esc(d_attuale)}" if d_attuale else ""
+            self.bot.notify(
+                f"🎯 <b>[PRENOTATO AUTOMATICAMENTE]</b>\n"
+                f"L'appuntamento del <b>{slot.date_str} ore {slot.time_str}</b> è stato confermato con successo{sostituito_txt}!\n\n"
+                f"🛡️ <b>Sicurezza disdetta:</b> la visita è programmata tra {delta_days} giorni. "
+                f"Se la data o la sede non fossero comode, hai tempo a sufficienza per disdire o spostare l'appuntamento "
+                f"senza pagare alcuna sanzione (rispettando il termine di 3 giorni lavorativi di preavviso)."
+            )
+            self._chiedi_post_prenotazione(slot)
+        except Exception as ex:
+            log.warning("[%s] Errore invio notifica post-autobook: %s", self.mid, ex)
+
+        return "ok"
+
+    def _request_approval(self, slot, fallback_autobook_reason: str = "") -> str:
         req_id = self.queue.create(self.mid, {"slot": slot.__dict__, "type": self.type})
         import html as _html
         import urllib.parse as _up
@@ -922,9 +1092,38 @@ class Flow:
         al = self.criteri.get("data_a")
         if dal or al:
             range_txt = f"\n📅 Range richiesto: {dal or 'da oggi'} → {al or 'senza limite'}"
+        fascia = self.criteri.get("fascia") or self.criteri.get("fasce_orarie")
+        if fascia:
+            from services.matcher import descrivi_fascia
+            range_txt += f"\n⏰ Fascia: {descrivi_fascia(fascia)}"
+
+        vecchio_info = ""
+        d_attuale = (
+            self.monitor.get("data_attuale")
+            or self.criteri.get("data_attuale")
+        )
+        if not d_attuale and hasattr(self.store, "get_prenotazione"):
+            pren = self.store.get_prenotazione(self.mid)
+            d_attuale = pren.get("data_ora") if pren else ""
+
+        if d_attuale:
+            from services.deadline import parse_appuntamento_datetime
+            old_dt = parse_appuntamento_datetime(d_attuale)
+            anticipo_str = ""
+            if old_dt and hasattr(slot, "datetime") and slot.datetime:
+                delta_days = (old_dt.date() - slot.datetime.date()).days
+                if delta_days > 0:
+                    anticipo_str = f" ({delta_days} {'giorno' if delta_days == 1 else 'giorni'} di anticipo)"
+                elif delta_days == 0:
+                    anticipo_str = " (stesso giorno, orario precedente)"
+            vecchio_info = f"\n📌 Appuntamento attuale da sostituire: {esc(d_attuale)}{anticipo_str}"
+
+        data_label = "Nuova data proposta" if vecchio_info else "Data"
         msg = (
             f"🩺 Trovata disponibilità ({self.mid})\n"
-            f"📅 {slot.date_str} ore {slot.time_str}{f' · {prov}' if prov else ''}{range_txt}"
+            f"📅 {data_label}: {slot.date_str} ore {slot.time_str}{f' · {prov}' if prov else ''}"
+            f"{vecchio_info}"
+            f"{range_txt}"
         )
         if azienda:
             msg += f"\n🏥 {esc(azienda)}"
@@ -942,11 +1141,31 @@ class Flow:
                 luogo.append(f"({esc(comune)})")
             msg += f"\n📍 {' · '.join(luogo)}"
             msg += f'\n🗺 <a href="{maps_url.replace("&", "&amp;")}">Apri in Google Maps</a>'
-        msg += f"\n{esc(self.criteri.get('note', ''))}"
+        try:
+            from services.commute import resolve_slot_commute
+            commute = resolve_slot_commute(slot, self.criteri)
+            if commute and commute.summary_text:
+                msg += f"\n🧭 Distanza da casa: {esc(commute.summary_text)}"
+        except Exception as e_comm:
+            log.debug("[%s] Calcolo distanza fallito: %s", self.mid, e_comm)
+        if self.criteri.get("note"):
+            msg += f"\n{esc(self.criteri.get('note', ''))}"
+
+        if fallback_autobook_reason:
+            msg += (
+                f"\n\n⚠️ <b>Auto-Booking escluso per sicurezza:</b>\n"
+                f"<i>{esc(fallback_autobook_reason)}</i>\n"
+                f"<i>Per evitare il rischio di non poter disdire o spostare l'appuntamento senza incorrere in sanzioni "
+                f"(malus ticket), è richiesta l'approvazione manuale.</i>"
+            )
+
         msg += f"\n\nVuoi procedere?"
-        # Inline buttons: Approve/Reject
-        righe = [[("✅ Approva", f"decide:approve:{req_id}"),
-                  ("❌ Rifiuta", f"decide:deny:{req_id}")]]
+        # Inline buttons: Approve/Reject/Reject entire day
+        righe = [
+            [("✅ Approva", f"decide:approve:{req_id}"),
+             ("❌ Rifiuta", f"decide:deny:{req_id}")],
+            [("🚫 Rifiuta intera giornata", f"decide:deny_day:{req_id}")],
+        ]
         inviati = self.bot.notify_buttons(msg, righe)
         # Await decision (blocking, with timeout)
         decision = self.queue.wait_decision(req_id)
@@ -958,12 +1177,22 @@ class Flow:
                 testo = f"{msg}\n\n⏳ Proposta scaduta: il tempo per rispondere è terminato, la disponibilità potrebbe non essere più valida."
                 self.bot.edit_message(testo, inviati)
             else:
-                # Explicit user rejection: add slot to blacklist
+                # Explicit user rejection: add slot (or entire day) to blacklist
+                azione = (decision.get("extra") or {}).get("azione", "deny")
+                block_day = (azione == "deny_day")
                 if hasattr(self.store, "add_blacklist_entry"):
                     nre = (self.monitor.get("nre") or "").strip()
                     data_ricetta = (self.monitor.get("data_ricetta") or "").strip()
-                    self.store.add_blacklist_entry(self.mid, slot, nre=nre, data_ricetta=data_ricetta)
-                    log.info("[%s] Aggiunto slot %s alla blacklist", self.mid, getattr(slot, "key", str(slot)))
+                    if block_day:
+                        self.store.add_blacklist_entry(
+                            self.mid, slot, nre=nre, data_ricetta=data_ricetta, block_day=True
+                        )
+                        log.info("[%s] Aggiunta intera giornata %s alla blacklist", self.mid, getattr(slot, "date_str", str(slot)))
+                    else:
+                        self.store.add_blacklist_entry(
+                            self.mid, slot, nre=nre, data_ricetta=data_ricetta
+                        )
+                        log.info("[%s] Aggiunto slot %s alla blacklist", self.mid, getattr(slot, "key", str(slot)))
             return f"Disponibilità {slot} non confermata."
 
         # Approved -> execute actual booking
@@ -971,7 +1200,8 @@ class Flow:
             self._ultima_azione = (decision.get("extra") or {}).get("azione", "approve")
             self.execute(slot)
             self.store.mark_action(self.mid, "done_pending_choice", str(slot))
-            self.bot.notify(f"✅ Appuntamento {slot.date_str} ore {slot.time_str} prenotato.")
+            sostituito_txt = f" in sostituzione di quello del {d_attuale}" if d_attuale else ""
+            self.bot.notify(f"✅ Appuntamento {slot.date_str} ore {slot.time_str} prenotato{sostituito_txt}.")
             self._chiedi_post_prenotazione(slot)
             return "ok"
         except Exception as e:  # noqa: BLE001

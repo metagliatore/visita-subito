@@ -1,0 +1,58 @@
+name: 🐛 Segnalazione Bug
+description: Segnala un malfunzionamento, un errore o un problema inatteso in VisitaSubito
+title: "[BUG]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Grazie per aver dedicato del tempo a segnalare un problema!
+        ⚠️ **AVVISO IMPORTANTE SULLA PRIVACY:**
+        Non includere **MAI** password, credenziali SPID, token Telegram, Codice Fiscale, NRE o dati sanitari personali nei log o negli screenshot!
+  - type: textarea
+    id: description
+    attributes:
+      label: Descrizione del problema
+      description: Spiega chiaramente cosa stavi facendo, cosa è successo e cosa ti aspettavi accadesse.
+      placeholder: Ad esempio, durante il monitoraggio per la ricetta dermatologica, il bot si è bloccato con...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Versione di VisitaSubito
+      description: Indica la versione in uso (la trovi digitando `/version` su Telegram o all'avvio nei log).
+      placeholder: es. v0.2.0
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Ambiente di esecuzione
+      options:
+        - Docker / Docker Compose
+        - Portainer
+        - Linux (virtualenv Python nativo)
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: dropdown
+    id: auth_method
+    attributes:
+      label: Metodo di autenticazione configurato
+      options:
+        - SPID SielteID (Notifica Push)
+        - SPID SielteID (SMS OTP)
+        - SPID PosteID
+        - CIE Livello 2 (App CieID)
+        - CIE Livello 2 (Scansione QR Code)
+        - Manuale / Altro
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log di errore o traceback
+      description: Incolla qui le righe di errore del terminale o dal file `data/app.log` (censura password e dati sensibili).
+      render: shell

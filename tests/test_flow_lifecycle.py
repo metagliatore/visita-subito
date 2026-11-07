@@ -94,6 +94,35 @@ def test_flow_request_approval_and_post_booking_prompt():
     assert any("postbook:continue:m1" in btn[1] for btn in second_call_buttons[0])
 
 
+def test_flow_request_approval_formats_fascia_in_notification():
+    monitor = {
+        "id": "m1",
+        "type": "new",
+        "ricetta": "VISITA CARDIOLOGICA",
+        "criteri": {"data_dal": "01/11/2026", "data_a": "30/11/2026", "fascia": "mattina"},
+        "nre": "0300A1",
+    }
+    browser = MagicMock()
+    queue = MagicMock()
+    bot = MagicMock()
+    store = MagicMock()
+
+    flow = DummyFlow(monitor, browser, queue, bot, store)
+    slot = Slot(datetime=datetime(2026, 11, 15, 10, 30))
+
+    queue.create.return_value = "req_fascia"
+    queue.wait_decision.return_value = {"cancelled": False, "decision": False, "extra": {"azione": "deny"}}
+    bot.notify_buttons.return_value = [("chat1", 123)]
+
+    flow._request_approval(slot)
+
+    # First notify_buttons call sends the approval prompt
+    first_call_args = bot.notify_buttons.call_args_list[0][0]
+    prompt_text = first_call_args[0]
+    assert "⏰ Fascia: Solo Mattina (07:00 - 13:00)" in prompt_text
+    assert "📅 Range richiesto: 01/11/2026 → 30/11/2026" in prompt_text
+
+
 def test_flow_rejection_adds_to_blacklist():
     monitor = {"id": "m1", "type": "new", "ricetta": "VISITA CARDIOLOGICA", "criteri": {}, "nre": "0300A1"}
     browser = MagicMock()
@@ -112,6 +141,62 @@ def test_flow_rejection_adds_to_blacklist():
     res = flow._request_approval(slot)
     assert "non confermata" in res
     store.add_blacklist_entry.assert_called_once_with("m1", slot, nre="0300A1", data_ricetta="")
+
+
+def test_flow_rejection_deny_day_adds_entire_day_to_blacklist():
+    monitor = {"id": "m1", "type": "new", "ricetta": "VISITA CARDIOLOGICA", "criteri": {}, "nre": "0300A1"}
+    browser = MagicMock()
+    queue = MagicMock()
+    bot = MagicMock()
+    store = MagicMock()
+
+    flow = DummyFlow(monitor, browser, queue, bot, store)
+    slot = Slot(datetime=datetime(2026, 10, 25, 9, 30))
+
+    queue.create.return_value = "req_deny_day"
+    # User rejection of entire day
+    queue.wait_decision.return_value = {"cancelled": False, "decision": False, "extra": {"azione": "deny_day"}}
+    bot.notify_buttons.return_value = [("chat1", 123)]
+
+    res = flow._request_approval(slot)
+    assert "non confermata" in res
+    store.add_blacklist_entry.assert_called_once_with("m1", slot, nre="0300A1", data_ricetta="", block_day=True)
+
+
+def test_flow_poll_once_ignores_blacklisted_entire_days():
+    monitor = {"id": "m1", "type": "new", "criteri": {}}
+    browser = MagicMock()
+    queue = MagicMock()
+    bot = MagicMock()
+    store = MagicMock()
+
+    # slot1 is on 25/10/2026 at 09:30
+    slot1 = Slot(datetime=datetime(2026, 10, 25, 9, 30))
+    # slot1b is on same day 25/10/2026 at 15:00
+    slot1b = Slot(datetime=datetime(2026, 10, 25, 15, 0))
+    # slot2 is on next day 26/10/2026 at 11:00
+    slot2 = Slot(datetime=datetime(2026, 10, 26, 11, 0))
+
+    flow = DummyFlow(monitor, browser, queue, bot, store)
+    flow._is_autenticato = MagicMock(return_value=True)
+    flow.extract_slots = MagicMock(return_value=[slot1, slot1b, slot2])
+
+    store.get_action.return_value = "idle"
+    store.seen_slots.return_value = set()
+    store.get_blacklist_keys.return_value = set()
+    # 25/10/2026 is an entire day in blacklist!
+    store.get_blacklist_dates.return_value = {"25/10/2026"}
+
+    queue.create.return_value = "req_next_day"
+    queue.wait_decision.return_value = {"cancelled": True, "reason": "timeout"}
+    bot.notify_buttons.return_value = [("chat1", 123)]
+
+    flow.poll_once()
+
+    # Must skip slot1 and slot1b, and propose slot2!
+    queue.create.assert_called_once()
+    payload = queue.create.call_args[0][1]
+    assert payload["slot"]["datetime"] == slot2.datetime
 
 
 def test_flow_poll_once_ignores_blacklisted_slots():
@@ -559,7 +644,7 @@ def test_reschedule_flow_poll_once_unblocks_done_or_pending_choice():
     store = MagicMock()
     # Simulate reschedule monitor with action_state 'done' (previously blocked)
     store.get_action.return_value = "done"
-    store.get_prenotazione.return_value = {"data_ora": "25/10/2026 10:00"}
+    store.get_prenotazione.return_value = {"data_ora": "25/10/2027 10:00"}
 
     flow = RescheduleFlow(
         {"id": "res-1", "ricetta": "VISITA UROLOGICA", "type": "reschedule"},
@@ -583,7 +668,7 @@ def test_new_booking_flow_poll_once_manual_auto_promotes_done_pending_choice():
     from flows.new_booking import NewBookingFlow
     store = MagicMock()
     store.get_action.return_value = "done_pending_choice"
-    store.get_prenotazione.return_value = {"data_ora": "25/10/2026 10:00"}
+    store.get_prenotazione.return_value = {"data_ora": "25/10/2027 10:00"}
     bot = MagicMock()
 
     flow = NewBookingFlow(
@@ -601,7 +686,7 @@ def test_new_booking_flow_poll_once_manual_auto_promotes_done_pending_choice():
 
     assert flow.type == "reschedule"
     assert flow.monitor["type"] == "reschedule"
-    assert flow.criteri["data_attuale"] == "25/10/2026 10:00"
+    assert flow.criteri["data_attuale"] == "25/10/2027 10:00"
     store.mark_action.assert_called_with("new-1", "idle", "promosso a reschedule da /poll manuale")
     bot.notify.assert_called()
     assert any("anticipare" in call[0][0] for call in bot.notify.call_args_list)
@@ -763,6 +848,41 @@ def test_flow_request_approval_execution_error_sends_screenshot(tmp_path):
         mock_salva.assert_called_once_with("errore_prenotazione", invia_telegram=True)
         bot.notify.assert_called()
         assert any("Prenotazione non riuscita" in call[0][0] for call in bot.notify.call_args_list)
+
+
+def test_flow_request_approval_displays_old_appointment_and_anticipo():
+    monitor = {
+        "id": "reschedule-visita",
+        "type": "reschedule",
+        "data_attuale": "20/12/2026 14:00",
+        "criteri": {},
+    }
+    browser = MagicMock()
+    queue = MagicMock()
+    bot = MagicMock()
+    store = MagicMock()
+
+    flow = DummyFlow(monitor, browser, queue, bot, store)
+    slot = Slot(datetime=datetime(2026, 11, 15, 9, 30))
+
+    queue.create.return_value = "req-resched"
+    queue.wait_decision.return_value = {"cancelled": False, "decision": True, "extra": {"azione": "approve"}}
+    bot.notify_buttons.return_value = [("chat1", 123)]
+    flow.execute = MagicMock()
+
+    res = flow._request_approval(slot)
+    assert res == "ok"
+
+    # Check proposal message
+    proposal_msg = bot.notify_buttons.call_args_list[0][0][0]
+    assert "Nuova data proposta: 15/11/2026 ore 09:30" in proposal_msg
+    assert "📌 Appuntamento attuale da sostituire: 20/12/2026 14:00" in proposal_msg
+    assert "35 giorni di anticipo" in proposal_msg
+
+    # Check booking confirmation message
+    booking_msg = bot.notify.call_args_list[0][0][0]
+    assert "in sostituzione di quello del 20/12/2026 14:00" in booking_msg
+
 
 
 

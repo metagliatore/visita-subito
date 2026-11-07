@@ -1,3 +1,31 @@
+## v0.3.0 (2026-11-07)
+
+### Feat
+
+- **issue**: add GitHub issue templates and /bug guidance command
+- **commute**: add driving and public transit distance calculation from home to appointments
+- **updater**: add startup welcome banner and automatic GitHub update checking
+- **cli**: support buttons and action dispatch in CLI auth fallback and photo display
+- add direct CieID app deep linking and dual instructions for QR auth
+- implement CIE QR code capture and Telegram fallback
+- **blacklist**: allow rejecting and blacklisting entire day from proposal
+- **ui**: make time slot skip option explicit in Telegram and CLI prompts
+- **matcher**: add time slot criteria filtering and UI selectors for monitoring
+- **calendar**: embed cancellation VEVENT in .ics when rescheduling appointments
+- **booking**: add fast-track auto-booking sniper mode with safety threshold
+- **flows**: display current appointment date and advance in approval proposal
+- **scheduler**: auto-stop reschedule monitors within 3 working days to prevent penalties
+
+### Fix
+
+- **scheduler**: remove unmerged commute reference from status_text
+- **scheduler**: send debug screenshot via telegram on login failure
+
+### Refactor
+
+- **issue**: simplify to single /bug command and streamline issue guide
+- **commute**: replace 'mezzi' with 'trasporto pubblico' across messages and docs
+
 ## v0.2.0 (2026-11-02)
 
 ### Feat

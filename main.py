@@ -62,6 +62,9 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(cfg)
     log = logging.getLogger("main")
 
+    from services.updater import check_and_log_startup_banner
+    check_and_log_startup_banner(cfg, log)
+
     # Detect interface mode: Telegram vs CLI Terminal
     ctrl_interface = os.environ.get("CONTROL_INTERFACE", "").strip().lower()
     tg = section(cfg, "telegram")

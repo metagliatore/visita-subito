@@ -269,6 +269,9 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
     values.setdefault("MAX_LOGIN_RETRIES", "3")
     values.setdefault("APPROVAL_TIMEOUT_SECONDS", "600")
     values.setdefault("RESCHEDULE_WAIT_TIMEOUT", "30")
+    values.setdefault("RESCHEDULE_MIN_WORKING_DAYS", "3")
+    values.setdefault("AUTO_BOOK", "false")
+    values.setdefault("AUTO_BOOK_MIN_DAYS", "5")
     values.setdefault("DEBUG_DUMP_DIR", "data/debug")
 
     # Write .env file

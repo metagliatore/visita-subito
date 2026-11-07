@@ -151,3 +151,122 @@ def test_match_slot_same_day_time_anticipation():
     ok_dt_late, _ = match_slot(s_same_day_later, crit_dt)
     assert ok_dt_late is False
 
+
+def test_match_slot_fasce_orarie():
+    from services.matcher import descrivi_fascia
+
+    slot_morning = Slot(datetime=datetime(2026, 10, 5, 9, 30))      # 09:30
+    slot_lunch = Slot(datetime=datetime(2026, 10, 5, 13, 0))        # 13:00
+    slot_afternoon = Slot(datetime=datetime(2026, 10, 5, 15, 30))   # 15:30
+    slot_evening = Slot(datetime=datetime(2026, 10, 5, 18, 15))     # 18:15
+    slot_early = Slot(datetime=datetime(2026, 10, 5, 6, 30))        # 06:30
+
+    # Mattina (07:00 - 13:00)
+    crit_mat = {"fascia": "mattina"}
+    ok, _ = match_slot(slot_morning, crit_mat)
+    assert ok is True
+    ok, _ = match_slot(slot_lunch, crit_mat)
+    assert ok is True
+    ok, reason = match_slot(slot_early, crit_mat)
+    assert ok is False
+    assert "orario fuori fascia" in reason
+    ok, reason = match_slot(slot_afternoon, crit_mat)
+    assert ok is False
+    assert "orario fuori fascia" in reason
+
+    # Pomeriggio (13:00 - 19:00)
+    crit_pom = {"fascia": "pomeriggio"}
+    ok, _ = match_slot(slot_afternoon, crit_pom)
+    assert ok is True
+    ok, _ = match_slot(slot_lunch, crit_pom)
+    assert ok is True
+    ok, reason = match_slot(slot_morning, crit_pom)
+    assert ok is False
+    assert "orario fuori fascia" in reason
+
+    # Sera / tardo pomeriggio (17:00 - 23:59)
+    crit_sera = {"fascia": "sera"}
+    ok, _ = match_slot(slot_evening, crit_sera)
+    assert ok is True
+    ok, _ = match_slot(slot_afternoon, crit_sera)
+    assert ok is False
+
+    # Pausa pranzo (12:00 - 15:00)
+    crit_pranzo = {"fascia": "pranzo"}
+    ok, _ = match_slot(slot_lunch, crit_pranzo)
+    assert ok is True
+    ok, _ = match_slot(slot_morning, crit_pranzo)
+    assert ok is False
+
+    # Custom range "09:00-11:00"
+    crit_custom = {"fascia": "09:00-11:00"}
+    ok, _ = match_slot(slot_morning, crit_custom)
+    assert ok is True
+    ok, _ = match_slot(slot_lunch, crit_custom)
+    assert ok is False
+
+    # List of fasce: ["mattina", "sera"]
+    crit_multi = {"fasce_orarie": ["mattina", "sera"]}
+    ok, _ = match_slot(slot_morning, crit_multi)
+    assert ok is True
+    ok, _ = match_slot(slot_evening, crit_multi)
+    assert ok is True
+    ok, _ = match_slot(slot_afternoon, crit_multi)
+    assert ok is False
+
+    # Qualsiasi orario
+    crit_all = {"fascia": "qualsiasi"}
+    ok, _ = match_slot(slot_morning, crit_all)
+    assert ok is True
+    ok, _ = match_slot(slot_afternoon, crit_all)
+    assert ok is True
+
+    # Comma-separated string: "mattina, sera"
+    crit_csv = {"fascia": "mattina, sera"}
+    ok, _ = match_slot(slot_morning, crit_csv)
+    assert ok is True
+    ok, _ = match_slot(slot_evening, crit_csv)
+    assert ok is True
+    ok, _ = match_slot(slot_afternoon, crit_csv)
+    assert ok is False
+
+    # Spaced and unpadded range: " 9 - 12 "
+    crit_spaced = {"fascia": " 9 - 12 "}
+    ok, _ = match_slot(slot_morning, crit_spaced)
+    assert ok is True
+    ok, _ = match_slot(slot_lunch, crit_spaced)
+    assert ok is False
+
+    # Boundary slot tests
+    slot_0700 = Slot(datetime=datetime(2026, 10, 5, 7, 0))
+    slot_1300 = Slot(datetime=datetime(2026, 10, 5, 13, 0))
+    slot_1900 = Slot(datetime=datetime(2026, 10, 5, 19, 0))
+    slot_2359 = Slot(datetime=datetime(2026, 10, 5, 23, 59))
+    ok, _ = match_slot(slot_0700, crit_mat)
+    assert ok is True
+    ok, _ = match_slot(slot_1300, crit_mat)
+    assert ok is True
+    ok, _ = match_slot(slot_1300, crit_pom)
+    assert ok is True
+    ok, _ = match_slot(slot_1900, crit_pom)
+    assert ok is True
+    ok, _ = match_slot(slot_2359, crit_sera)
+    assert ok is True
+
+    # Empty, None, wildcard bypass
+    for bypass_val in ("", None, "qualsiasi", "all", "tutte", "*"):
+        ok, _ = match_slot(slot_early, {"fascia": bypass_val})
+        assert ok is True
+        ok, _ = match_slot(slot_evening, {"fascia": bypass_val})
+        assert ok is True
+
+    # Check descrivi_fascia
+    assert descrivi_fascia("mattina") == "Solo Mattina (07:00 - 13:00)"
+    assert descrivi_fascia("pomeriggio") == "Solo Pomeriggio (13:00 - 19:00)"
+    assert descrivi_fascia("08:30-11:30") == "Personalizzata (08:30 - 11:30)"
+    assert descrivi_fascia(" 9 - 12 ") == "Personalizzata (09:00 - 12:00)"
+    assert descrivi_fascia("mattina, sera") == "Solo Mattina (07:00 - 13:00), Tardo Pomeriggio / Sera (17:00 - 23:59)"
+    assert descrivi_fascia(["mattina", "pomeriggio"]) == "Solo Mattina (07:00 - 13:00), Solo Pomeriggio (13:00 - 19:00)"
+    assert descrivi_fascia("qualsiasi") == "Qualsiasi orario"
+    assert descrivi_fascia(None) == "Qualsiasi orario"
+

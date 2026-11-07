@@ -451,6 +451,10 @@ class Controller:
         """Return blacklist entries for the specified monitor."""
         return self.store.get_blacklist(monitor_id)
 
+    def get_blacklist_dates(self, monitor_id: str) -> set[str]:
+        """Return blacklisted entire days (DD/MM/YYYY) for the specified monitor."""
+        return self.store.get_blacklist_dates(monitor_id)
+
     def rimuovi_da_blacklist(self, monitor_id: str, entry_id: str) -> dict | None:
         """Remove an entry from blacklist allowing the bot to repropose it."""
         return self.store.remove_blacklist_entry(monitor_id, entry_id)
@@ -521,6 +525,20 @@ class Controller:
             lines.append(f"⏱ Prossimo controllo tra: {rimanenti} s")
         else:
             lines.append("⏱ Prossimo controllo: non avviato")
+
+        # Fast-track auto-booking status
+        from services.deadline import is_autobook_enabled, get_autobook_min_days
+        ab_on = is_autobook_enabled(self.cfg)
+        ab_min = get_autobook_min_days(self.cfg)
+        if ab_on:
+            lines.append(f"⚡ Fast-Track Auto-Booking: ATTIVO (soglia minima >= {ab_min} giorni)")
+        else:
+            lines.append("⚡ Fast-Track Auto-Booking: disattivato (richiesta approvazione manuale)")
+
+        # Commute calculation status
+        from services.commute import get_commute_status_text
+        lines.append(f"🧭 {get_commute_status_text(self.cfg.settings if hasattr(self.cfg, 'settings') else None)}")
+
         if not self._flows:
             lines.append("\nNessun monitor configurato. Usa /monitora per crearne uno.")
         for f in self._flows:
@@ -562,6 +580,22 @@ class Controller:
             if nre:
                 riga += f"\n  🔖 NRE: {nre}"
             riga += f"\n  Tipo: {tipo_nome.get(f.type, f.type)}"
+            if f.type == "reschedule" or (isinstance(mon, dict) and mon.get("data_attuale")):
+                d_att = (mon.get("data_attuale") or "").strip() if isinstance(mon, dict) else ""
+                if not d_att and hasattr(f, "criteri"):
+                    d_att = str(f.criteri.get("data_attuale", "")).strip()
+                if d_att:
+                    riga += f"\n  📌 Appuntamento attuale: {d_att}"
+                    from services.deadline import check_reschedule_deadline, get_reschedule_min_working_days
+                    min_days = get_reschedule_min_working_days(self.cfg, mon.get("criteri") if isinstance(mon, dict) else None)
+                    if min_days > 0:
+                        is_late, app_dt, dl_dt, _ = check_reschedule_deadline(d_att, min_working_days=min_days)
+                        if dl_dt:
+                            dl_str = dl_dt.strftime('%d/%m/%Y alle %H:%M')
+                            if is_late:
+                                riga += f"\n  ⚠️ Scaduto termine disdetta senza penale (era {dl_str})"
+                            else:
+                                riga += f"\n  ⏳ Limite disdetta/spostamento senza penale: {dl_str}"
             province = crit.get("province")
             if province:
                 if isinstance(province, (list, tuple)):
@@ -572,10 +606,23 @@ class Controller:
             al = crit.get("data_a") or ""
             if dal or al:
                 riga += f"\n  📅 Range: da {dal or 'oggi'} a {al or 'senza limite'}"
+            fascia = crit.get("fascia") or crit.get("fasce_orarie")
+            if fascia:
+                from services.matcher import descrivi_fascia
+                riga += f"\n  ⏰ Fascia: {descrivi_fascia(fascia)}"
+            elif crit.get("ora_min") or crit.get("ora_max"):
+                riga += f"\n  ⏰ Orario: da {crit.get('ora_min', '00:00')} a {crit.get('ora_max', '23:59')}"
             if province and isinstance(province, (list, tuple)) and len(province) > 1:
                 strat = getattr(f, "search_strategy", "first_match")
                 strat_lbl = "immediata (ferma al primo match)" if strat == "first_match" else "globale (miglior data tra tutte le province)"
                 riga += f"\n  ⚡ Ricerca multi-provincia: {strat_lbl}"
+            if "auto_book" in crit:
+                v = crit["auto_book"]
+                mon_ab = v if isinstance(v, bool) else str(v).lower() in ("true", "1", "yes")
+                if mon_ab:
+                    riga += "\n  ⚡ Auto-booking: abilitato per questo monitor"
+                else:
+                    riga += "\n  ⚡ Auto-booking: disabilitato per questo monitor"
             riga += f"\n  Stato: {stato_txt}"
             lines.append(riga)
         return "\n".join(lines)
@@ -703,9 +750,20 @@ class Controller:
 
         def _auth_cb(action: str, **kwargs):
             if action == "ask_action":
-                return self.bot.ask_auth_fallback(prompt=kwargs.get("prompt", ""))
+                return self.bot.ask_auth_fallback(
+                    prompt=kwargs.get("prompt", ""),
+                    buttons=kwargs.get("buttons", None),
+                )
             elif action == "ask_otp":
                 return self.bot.ask_otp(kwargs.get("prompt", ""))
+            elif action == "send_photo":
+                path = kwargs.get("path", "")
+                caption = kwargs.get("caption", "")
+                buttons = kwargs.get("buttons", None)
+                if hasattr(self.bot, "send_photo"):
+                    return self.bot.send_photo(path, caption=caption, buttons=buttons)
+                if hasattr(self.bot, "send_file"):
+                    return self.bot.send_file(path, caption=caption)
             elif action == "send_file":
                 if hasattr(self.bot, "send_file"):
                     return self.bot.send_file(kwargs.get("path", ""), caption=kwargs.get("caption", ""))
@@ -732,6 +790,16 @@ class Controller:
             dump_msg = f"\n\n{dump['message']}" if dump else ""
             desc = getattr(self.auth_config, "describe", lambda: "Autenticazione")()
             self.bot.notify(f"❌ Login fallito ({desc}): {e}{dump_msg}")
+            if dump and dump.get("png_path") and getattr(self, "bot", None) is not None:
+                png_p = dump.get("png_path")
+                caption = f"📸 <b>Screenshot di debug</b> (Login fallito)\n🏷 Riferimento: <code>{dump.get('ref', '')}</code>"
+                try:
+                    if hasattr(self.bot, "send_photo"):
+                        self.bot.send_photo(str(png_p), caption=caption)
+                    elif hasattr(self.bot, "send_file"):
+                        self.bot.send_file(str(png_p), caption=caption)
+                except Exception as e_tg:  # noqa: BLE001
+                    log.warning("Invio screenshot login Telegram fallito: %s", e_tg)
             if hasattr(self, "browser") and hasattr(self.browser, "stop"):
                 try:
                     self.browser.stop()
@@ -833,6 +901,9 @@ class Controller:
                     if self._force.is_set():
                         log.info("Polling interrotto a metà: /poll richiesto dall'utente")
                         break
+                    if hasattr(self.store, "is_disabled") and self.store.is_disabled(f.mid) is True:
+                        log.debug("[%s] Monitor disabilitato: salto ciclo", f.mid)
+                        continue
                     # Synchronize flow if monitor type changed in store (e.g. promoted to reschedule)
                     mon_stored = next((m for m in self.store.get_monitors() if m.get("id") == f.mid), None)
                     if mon_stored and mon_stored.get("type") and mon_stored.get("type") != f.type and mon_stored.get("type") in FLOW_TYPES:
@@ -855,11 +926,15 @@ class Controller:
                     if self._force.is_set():
                         log.info("Polling interrotto:a fine %s: /poll richiesto dall'utente", f.mid)
                         break
+                self._flows = [f for f in self._flows if not (hasattr(self.store, "is_disabled") and self.store.is_disabled(f.mid) is True)]
         finally:
             self.polling_in_corso = False
 
     # ---- main ----
     def run(self, run_bot: bool = True):
+        from services.updater import check_and_log_startup_banner
+        check_and_log_startup_banner(self.cfg, log)
+
         threads = [
             threading.Thread(target=self._keep_alive_loop, daemon=True),
             threading.Thread(target=self._poll_loop, daemon=True),

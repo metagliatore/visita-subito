@@ -81,6 +81,11 @@ CIE_PASSWORD=
 POLL_INTERVAL_SECONDS=300
 MAX_LOGIN_RETRIES=3
 APPROVAL_TIMEOUT_SECONDS=600
+RESCHEDULE_WAIT_TIMEOUT=30
+RESCHEDULE_MIN_WORKING_DAYS=3
+AUTO_BOOK=false
+AUTO_BOOK_MIN_DAYS=5
+HOME_COORDINATES=
 
 # --- Volumi (opzionale: default su named volumes 'fascicolo_data') ---
 # Imposta questi percorsi solo se desideri mappare directory assolute sull'host:
@@ -105,6 +110,11 @@ APPROVAL_TIMEOUT_SECONDS=600
 | `CIE_PASSWORD` | No | `""` | Password della CIE per accesso Livello 2. |
 | `POLL_INTERVAL_SECONDS` | No | `300` | Intervallo in secondi tra un controllo e l'altro (es. `300` = 5 minuti). |
 | `APPROVAL_TIMEOUT_SECONDS` | No | `600` | Secondi di attesa per la conferma dell'utente su Telegram prima che lo slot scada. |
+| `RESCHEDULE_WAIT_TIMEOUT` | No | `30` | Timeout massimo in secondi per il caricamento della lista appuntamenti in riprogrammazione. |
+| `RESCHEDULE_MIN_WORKING_DAYS` | No | `3` | Giorni lavorativi minimi di preavviso per riprogrammare (esclusi sabati, domeniche e festivi nazionali). Se mancano meno di X giorni lavorativi, il monitor si arresta automaticamente per prevenire l'addebito del malus ticket. `0` per disattivare. |
+| `AUTO_BOOK` | No | `false` | Se `true`, attiva il **Fast-Track Auto-Booking ("Sniper mode")** che prenota subito lo slot senza attendere la conferma dell'utente. Default `false`. |
+| `AUTO_BOOK_MIN_DAYS` | No | `5` | Giorni minimi di anticipo richiesti per l'auto-booking (tutela da appuntamenti scomodi che non si potrebbero più disdire senza penale). Se lo slot dista meno di X giorni, scatta il fallback ad approvazione manuale. |
+| `HOME_COORDINATES` | No | `""` | Coordinate di casa tua (`lat, lon`, es. `45.4642, 9.1900`) per calcolare tempo e distanza sia in auto che con il trasporto pubblico. Se vuoto, il calcolo della distanza è disattivato. |
 | `MAX_LOGIN_RETRIES` | No | `3` | Numero massimo di tentativi di login consecutivi falliti prima di mettere in pausa i tentativi. |
 | `SEARCH_STRATEGY` | No | `first_match` | Strategia di ricerca multi-provincia: `first_match` (consigliata/rapida, blocca il primo posto e non cambia pagina) oppure `best_match` (globale, confronta tutte le province). |
 | `DEBUG_DUMP_DIR` | No | `data/debug` | Cartella di destinazione per gli screenshot PNG e HTML di diagnostica (inviati anche su Telegram se si verifica un errore). |

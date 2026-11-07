@@ -129,7 +129,7 @@ class CliUI:
             print("=" * 66)
             print(clean)
             print("=" * 66)
-            print("⚡ RISPONDI SUBITO: digita 's' per approvare, 'n' per rifiutare.")
+            print("⚡ RISPONDI SUBITO: digita 's' per approvare, 'n' per rifiutare l'orario, 'g' per bloccare l'intera giornata.")
             print("=" * 66 + "\n")
             return [("cli", 1)]
 
@@ -174,12 +174,17 @@ class CliUI:
         if clean_cap:
             print(f"   {clean_cap}\n")
 
-    def send_photo(self, path: str, caption: str = "") -> None:
+    def send_photo(self, path: str, caption: str = "", buttons: list | None = None, **kwargs) -> None:
         """Display image path notification (e.g. QR code or debug screenshot)."""
         clean_cap = strip_html(caption)
         print(f"\n📸 Immagine salvata: {path}")
         if clean_cap:
             print(f"   {clean_cap}\n")
+        if buttons:
+            for row in buttons:
+                for lbl, target in row:
+                    if str(target).startswith(("http://", "https://", "cieid://")):
+                        print(f"   🔗 {lbl}: {target}")
 
     def ask_otp(self, prompt: str = "", timeout_s: int = 120) -> str | None:
         """Prompt user on terminal for OTP code."""
@@ -198,19 +203,31 @@ class CliUI:
         self._pending_otp = False
         return self._otp_value if ok else None
 
-    def ask_auth_fallback(self, prompt: str = "", timeout_s: int = 120) -> str | None:
+    def ask_auth_fallback(self, prompt: str = "", timeout_s: int = 120, buttons: list | None = None, **kwargs) -> str | None:
         """Prompt user on terminal for 2FA fallback method."""
         self._auth_choice = None
         self._auth_event.clear()
         self._pending_auth_fallback = True
 
         print("\n" + "=" * 66)
-        print("⚠️ SECONDO FATTORE SPID")
+        print("⚠️ SECONDO FATTORE AUTENTICAZIONE")
         if prompt:
             print(strip_html(prompt))
-        print("1) Invia nuovamente notifica push sull'app")
-        print("2) Inserisci codice OTP")
-        print(f"Digita '1' o '2' al prompt di comando (timeout {timeout_s}s):")
+        if buttons:
+            self._fallback_options = {}
+            opt_idx = 1
+            for row in buttons:
+                for lbl, cb in row:
+                    val = cb.replace("auth:", "")
+                    self._fallback_options[str(opt_idx)] = val
+                    print(f"{opt_idx}) {strip_html(lbl)}")
+                    opt_idx += 1
+            print(f"Digita il numero dell'opzione al prompt di comando (timeout {timeout_s}s):")
+        else:
+            self._fallback_options = {"1": "notify", "2": "otp"}
+            print("1) Invia nuovamente notifica push sull'app")
+            print("2) Inserisci codice OTP")
+            print(f"Digita '1' o '2' al prompt di comando (timeout {timeout_s}s):")
         print("=" * 66 + "\n")
 
         ok = self._auth_event.wait(timeout_s)
@@ -269,10 +286,10 @@ class CliUI:
                 pass
 
     def _print_welcome(self) -> None:
-        print("\n" + "=" * 66)
-        print("  Fascicolo Sanitario Regione Lombardia - Prenotazioni")
-        print("             Controllo Interattivo da Terminale")
-        print("=" * 66)
+        from services.updater import get_cached_or_check_updates, format_cli_welcome
+        cfg = getattr(self.controller, "cfg", None) if hasattr(self, "controller") else None
+        info = get_cached_or_check_updates(cfg=cfg)
+        print("\n" + format_cli_welcome(info))
         print("I controlli automatici sono attivi in background.")
         print("Digita 'help' o '?' per la lista dei comandi disponibili.\n")
 
@@ -290,18 +307,35 @@ class CliUI:
 
         # 2. Check if waiting for auth fallback choice
         if self._pending_auth_fallback:
-            if low in ("1", "notifica", "push"):
+            opts = getattr(self, "_fallback_options", {})
+            if low in opts:
+                self._auth_choice = opts[low]
+                self._auth_event.set()
+                print(f"✅ Scelta registrata: {self._auth_choice}")
+                return
+            if any(k in low for k in ["qr", "qrcode", "codice qr"]):
+                self._auth_choice = "qr"
+                self._auth_event.set()
+                print("📲 Passaggio alla modalità QR Code.")
+                return
+            elif low in ("notifica", "push"):
                 self._auth_choice = "notify"
                 self._auth_event.set()
                 print("🔄 Invio nuova notifica push richiesto.")
                 return
-            elif low in ("2", "otp", "codice"):
+            elif low in ("otp", "codice"):
                 self._auth_choice = "otp"
                 self._auth_event.set()
                 print("🔑 Passaggio alla modalità codice OTP.")
                 return
+            elif low in ("annulla", "cancel"):
+                self._auth_choice = "cancel"
+                self._auth_event.set()
+                print("❌ Autenticazione annullata.")
+                return
             else:
-                print("[!] Scelta non valida: digita 1 (notifica push) o 2 (codice OTP).")
+                valid_nums = "/".join(opts.keys()) if opts else "1/2"
+                print(f"[!] Scelta non valida: digita {valid_nums} o il nome dell'azione.")
                 return
 
         # 3. Check if waiting for slot approval
@@ -315,14 +349,20 @@ class CliUI:
                     play_alert_sound("success")
                 print("✅ Proposta approvata! Procedo con la conferma sul portale...")
                 return
+            elif low in ("g", "giorno", "giornata", "day"):
+                if self.controller:
+                    self.controller.decide_request(req_id, False, extra={"azione": "deny_day"})
+                self._pending_approval = None
+                print("🚫 Proposta rifiutata. L'intera giornata è stata aggiunta alla blacklist del monitor.")
+                return
             elif low in ("n", "no", "rifiuta", "annulla"):
                 if self.controller:
-                    self.controller.decide_request(req_id, False)
+                    self.controller.decide_request(req_id, False, extra={"azione": "deny"})
                 self._pending_approval = None
                 print("❌ Proposta rifiutata. Aggiunta alla blacklist del monitor.")
                 return
-            # If not s/n, fall through to command processing, but remind user
-            print("[!] Nota: c'è una proposta in sospeso. Digita 's' per approvare o 'n' per rifiutare.")
+            # If not s/n/g, fall through to command processing, but remind user
+            print("[!] Nota: c'è una proposta in sospeso. Digita 's' per approvare, 'n' per rifiutare o 'g' per bloccare la giornata.")
 
         # 4. Check if waiting for post-booking choice
         if self._pending_postbook:
@@ -335,6 +375,20 @@ class CliUI:
                 return
             elif low in ("2", "continua", "anticipa", "c"):
                 if self.controller:
+                    pren = self.controller.store.get_prenotazione(mid)
+                    d_ora = pren.get("data_ora", "")
+                    if d_ora:
+                        from services.deadline import check_reschedule_deadline, get_reschedule_min_working_days
+                        min_days = get_reschedule_min_working_days()
+                        is_too_late, app_dt, dl_dt, dl_msg = check_reschedule_deadline(d_ora, min_working_days=min_days)
+                        if is_too_late:
+                            print(f"\n⚠️ Impossibile convertire in anticipo:")
+                            print(f"   {dl_msg}")
+                            print(f"   Mancano meno di {min_days} giorni lavorativi all'appuntamento.")
+                            print(f"   La riprogrammazione comporterebbe l'addebito della penale (malus ticket).\n")
+                            self.controller.rimuovi_monitor(mid)
+                            self._pending_postbook = None
+                            return
                     self.controller.converti_in_reschedule(mid)
                 self._pending_postbook = None
                 print(f"🔄 Monitoraggio convertito in ricerca anticipi per {mid}.")
@@ -369,6 +423,10 @@ class CliUI:
             self._cmd_monitora()
         elif cmd in ("blacklist", "b"):
             self._cmd_blacklist(arg)
+        elif cmd in ("version", "versione", "update", "aggiornamenti", "v"):
+            self._cmd_version()
+        elif cmd == "bug":
+            self._cmd_bug()
         elif cmd in ("clear", "cls"):
             os.system("cls" if sys.platform == "win32" else "clear")
         elif cmd in ("quit", "exit", "q"):
@@ -395,8 +453,28 @@ class CliUI:
         print("  pause              - Mette in pausa il polling automatico")
         print("  resume             - Riattiva il polling automatico")
         print("  blacklist, b       - Visualizza o svuota le disponibilità rifiutate")
+        print("  version, v         - Visualizza versione e verifica aggiornamenti su GitHub")
+        print("  bug                - Segnala un problema o malfunzionamento")
         print("  clear, cls         - Pulisce lo schermo del terminale")
         print("  quit, exit, q      - Chiude il programma")
+        print("=" * 66 + "\n")
+
+    def _cmd_version(self) -> None:
+        from services.updater import check_for_updates, format_cli_welcome
+        cfg = getattr(self.controller, "cfg", None) if hasattr(self, "controller") else None
+        print("\nVerifica aggiornamenti su GitHub in corso...")
+        info = check_for_updates(force=True, cfg=cfg)
+        print(format_cli_welcome(info) + "\n")
+
+    def _cmd_bug(self) -> None:
+        from services.updater import format_issue_guide
+        text, buttons = format_issue_guide()
+        clean = strip_html(text)
+        print("\n" + "=" * 66)
+        print(clean)
+        for row in buttons:
+            for lbl, url in row:
+                print(f"  • {lbl}: {url}")
         print("=" * 66 + "\n")
 
     def _cmd_status(self) -> None:
@@ -556,6 +634,16 @@ class CliUI:
         data_ora = target_app.get("data_ora", "")
         codice = target_app.get("codice", "")
 
+        from services.deadline import check_reschedule_deadline, get_reschedule_min_working_days
+        min_days = get_reschedule_min_working_days()
+        is_too_late, app_dt, dl_dt, dl_msg = check_reschedule_deadline(data_ora, min_working_days=min_days)
+        if is_too_late:
+            print(f"\n⚠️ Impossibile avviare il monitor di anticipo:")
+            print(f"   {dl_msg}")
+            print(f"   Mancano meno di {min_days} giorni lavorativi all'appuntamento.")
+            print(f"   La riprogrammazione comporterebbe l'addebito della penale (malus ticket).\n")
+            return
+
         criteri = self._ask_criteri(default_data_a_hint=f"prima del {data_ora or 'limite attuale'}")
 
         mid = self.controller.aggiungi_monitor(
@@ -599,10 +687,31 @@ class CliUI:
         data_a_inp = input(f"Data 'Entro il' (DD/MM/YYYY o invio per {default_data_a_hint}): ").strip()
         data_a = data_a_inp or default_data_a
 
+        # Time slot preference
+        print("\nFasce orarie disponibili:")
+        print("  [1] Qualsiasi orario / Salta (default)")
+        print("  [2] Solo Mattina (07:00 - 13:00)")
+        print("  [3] Solo Pomeriggio (13:00 - 19:00)")
+        print("  [4] Tardo Pomeriggio / Sera (17:00 - 23:59)")
+        print("  [5] Pausa Pranzo (12:00 - 15:00)")
+        print("  [6] Personalizzata (es. 09:00-12:00)")
+        fascia_scelta = input("Fascia oraria preferita [1-6 o invio per saltare/qualsiasi]: ").strip()
+        fascia_map = {
+            "2": "mattina",
+            "3": "pomeriggio",
+            "4": "sera",
+            "5": "pranzo",
+        }
+        if fascia_scelta == "6":
+            fascia = input("Inserisci fascia personalizzata (es. 09:00-12:00): ").strip()
+        else:
+            fascia = fascia_map.get(fascia_scelta, "")
+
         return {
             "province": scelte_prov,
             "data_dal": data_dal,
             "data_a": data_a,
+            "fascia": fascia,
         }
 
     def _cmd_monitora(self) -> None:
@@ -694,7 +803,10 @@ class CliUI:
                 has_entries = True
                 print(f"  • Monitor [{mid}] ({len(bl)} voci):")
                 for e in bl:
-                    slot_desc = e.get("descrizione") or e.get("slot") or e.get("entry_id")
+                    if e.get("block_day"):
+                        slot_desc = f"🗓 {e.get('date_str')} [INTERA GIORNATA BLOCCATA]"
+                    else:
+                        slot_desc = e.get("descrizione") or e.get("slot") or f"{e.get('date_str')} ore {e.get('time_str')}"
                     print(f"      - {slot_desc}")
         if not has_entries:
             print("  (Nessuna disponibilità attualmente in blacklist).")

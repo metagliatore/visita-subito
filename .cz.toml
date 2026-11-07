@@ -5,3 +5,7 @@ version_scheme = "semver"
 version_provider = "scm"
 update_changelog_on_bump = true
 major_version_zero = true
+version_files = [
+    "core/__init__.py:__version__",
+    "services/updater.py:APP_VERSION",
+]

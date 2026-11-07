@@ -1,0 +1,18 @@
+name: 💡 Proposta di Funzionalità
+description: Proponi una nuova idea, un miglioramento o un nuovo provider per VisitaSubito
+title: "[FEATURE]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: feature
+    attributes:
+      label: Descrizione della funzionalità proposta
+      description: Spiega quale nuova funzione o miglioramento vorresti vedere in VisitaSubito.
+      placeholder: Ad esempio, supporto a un nuovo provider SPID, integrazione con un altro calendario, ecc.
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivazione e utilità
+      description: Perché questa funzionalità sarebbe utile e quale problema risolve?

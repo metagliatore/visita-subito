@@ -93,6 +93,69 @@ class Slot:
         return base if not extra else f"{base}|{extra}"
 
 
+FASCE_ORARIE = {
+    "mattina": ("07:00", "13:00"),
+    "pomeriggio": ("13:00", "19:00"),
+    "sera": ("17:00", "23:59"),
+    "tardo_pomeriggio": ("17:00", "23:59"),
+    "pranzo": ("12:00", "15:00"),
+    "pausa_pranzo": ("12:00", "15:00"),
+}
+
+FASCE_LABELS = {
+    "mattina": "Solo Mattina (07:00 - 13:00)",
+    "pomeriggio": "Solo Pomeriggio (13:00 - 19:00)",
+    "sera": "Tardo Pomeriggio / Sera (17:00 - 23:59)",
+    "tardo_pomeriggio": "Tardo Pomeriggio / Sera (17:00 - 23:59)",
+    "pranzo": "Pausa Pranzo (12:00 - 15:00)",
+    "pausa_pranzo": "Pausa Pranzo (12:00 - 15:00)",
+    "qualsiasi": "Qualsiasi orario",
+}
+
+
+def _slot_in_fascia(time_str: str, fascia_item: str) -> bool:
+    """Check if time_str ('HH:MM') falls into the given time slot."""
+    norm_t = _norm_time(time_str) or str(time_str).strip()
+    f_clean = str(fascia_item).strip().lower()
+    if not f_clean or f_clean in ("qualsiasi", "all", "tutte", "none", "*"):
+        return True
+    if f_clean in FASCE_ORARIE:
+        t_start, t_end = FASCE_ORARIE[f_clean]
+        return t_start <= norm_t <= t_end
+    if "-" in f_clean:
+        parts = f_clean.split("-", 1)
+        start_t = _norm_time(parts[0])
+        end_t = _norm_time(parts[1])
+        if start_t and end_t:
+            return start_t <= norm_t <= end_t
+        if start_t:
+            return norm_t >= start_t
+        if end_t:
+            return norm_t <= end_t
+    return True
+
+
+def descrivi_fascia(fascia: str | list | None) -> str:
+    """Return user-friendly label for configured time slot(s)."""
+    if not fascia:
+        return "Qualsiasi orario"
+    if isinstance(fascia, str) and "," in fascia:
+        fascia = [x.strip() for x in fascia.split(",") if x.strip()]
+    if isinstance(fascia, (list, tuple, set)):
+        items = [descrivi_fascia(f) for f in fascia if f and str(f).lower() not in ("qualsiasi", "all", "")]
+        return ", ".join(items) if items else "Qualsiasi orario"
+    f_clean = str(fascia).strip().lower()
+    if f_clean in FASCE_LABELS:
+        return FASCE_LABELS[f_clean]
+    if "-" in f_clean:
+        parts = f_clean.split("-", 1)
+        s = _norm_time(parts[0])
+        e = _norm_time(parts[1])
+        if s and e:
+            return f"Personalizzata ({s} - {e})"
+    return str(fascia)
+
+
 def match_slot(slot: Slot, criteri: dict) -> tuple[bool, str]:
     """Return (True, '') if slot satisfies criteria, else (False, reason).
 
@@ -104,7 +167,6 @@ def match_slot(slot: Slot, criteri: dict) -> tuple[bool, str]:
     escludi = [_norm_day(d) for d in (criteri.get("escludi_giorni") or [])]
     ora_min = _norm_time(criteri.get("ora_min"))
     ora_max = _norm_time(criteri.get("ora_max"))
-    fascia = (criteri.get("fascia") or "").lower()
 
     wd = slot.weekday  # 'MON'..'SUN'
     preferiti = [_norm_day(g) for g in giorni]
@@ -173,14 +235,43 @@ def match_slot(slot: Slot, criteri: dict) -> tuple[bool, str]:
         return False, f"giorno escluso ({wd})"
     if preferiti and wd not in preferiti:
         return False, f"giorno non preferito ({wd})"
+
+    # ---- excluded dates (e.g. blacklisted days) ----
+    escludi_date = criteri.get("escludi_date") or criteri.get("blacklist_dates") or []
+    if escludi_date:
+        esc_norm = [str(d).strip() for d in escludi_date if d]
+        if slot.date_str in esc_norm:
+            return False, f"giorno in blacklist ({slot.date_str})"
+    # ---- time slots (fasce orarie) ----
+    raw_fascia = criteri.get("fascia") or criteri.get("fasce_orarie")
+    if raw_fascia:
+        if isinstance(raw_fascia, str) and "," in raw_fascia:
+            items = [x.strip() for x in raw_fascia.split(",") if x.strip()]
+        elif isinstance(raw_fascia, (list, tuple, set)):
+            items = list(raw_fascia)
+        else:
+            items = [raw_fascia]
+        valid_items = [it for it in items if it and str(it).strip().lower() not in ("qualsiasi", "all", "tutte", "none", "*", "")]
+        if valid_items:
+            in_any = any(_slot_in_fascia(slot.time_str, it) for it in valid_items)
+            if not in_any:
+                desc = descrivi_fascia(valid_items if len(valid_items) > 1 else valid_items[0])
+                return False, f"orario fuori fascia ({slot.time_str} non in {desc})"
+
+    # ---- explicit min / max hours ----
     if ora_min and slot.time_str < ora_min:
         return False, f"troppo presto ({slot.time_str})"
     if ora_max and slot.time_str > ora_max:
         return False, f"troppo tardi ({slot.time_str})"
-    if fascia == "mattina" and not ("07:00" <= slot.time_str <= "13:00"):
-        return False, f"non in mattina ({slot.time_str})"
-    if fascia == "pomeriggio" and not ("13:00" < slot.time_str <= "23:59"):
-        return False, f"non in pomeriggio ({slot.time_str})"
+
+    # ---- commute distance / travel time filters (if configured) ----
+    if any(k in criteri for k in ("max_distance_km", "max_car_minutes", "max_transit_minutes")):
+        from services.commute import check_commute_filter, resolve_slot_commute
+        commute = resolve_slot_commute(slot, criteri)
+        comm_ok, comm_reason = check_commute_filter(commute, criteri)
+        if not comm_ok:
+            return False, comm_reason
+
     return True, ""
 
 

@@ -242,6 +242,14 @@ def test_auth_callback_notify_and_otp():
     assert bot._auth_choice == "otp"
     assert bot._auth_event.is_set()
 
+    # Prova scelta QR
+    bot._auth_event = threading.Event()
+    bot._auth_choice = None
+    up.callback_query.data = "auth:qr"
+    asyncio.run(bot._h_callback(up, MagicMock()))
+    assert bot._auth_choice == "qr"
+    assert bot._auth_event.is_set()
+
     # Prova Annulla
     bot._auth_event = threading.Event()
     bot._auth_choice = None
@@ -303,6 +311,33 @@ def test_echo_chat_text_choices_during_fallback():
     asyncio.run(bot._h_echo_chat(up, MagicMock()))
     assert bot._auth_choice == "notify"
     assert bot._auth_event.is_set()
+
+    # Prova testo 'qr'
+    bot._auth_event = threading.Event()
+    bot._auth_choice = None
+    up.message.text = "mostra qr code"
+    asyncio.run(bot._h_echo_chat(up, MagicMock()))
+    assert bot._auth_choice == "qr"
+    assert bot._auth_event.is_set()
+
+
+def test_ask_auth_fallback_custom_buttons():
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.token = "fake"
+    bot.chat_ids = ["12345"]
+    bot._received_otp = None
+
+    def fake_notify(testo, bottoni):
+        bot._auth_choice = "qr"
+        bot._auth_event.set()
+        return [("12345", 10)]
+
+    bot.notify_buttons = MagicMock(side_effect=fake_notify)
+
+    custom_btns = [[("📲 Invia QR Code", "auth:qr")]]
+    res = bot.ask_auth_fallback("Prompt CIE", buttons=custom_btns)
+    assert res == "qr"
+    bot.notify_buttons.assert_called_once_with("Prompt CIE", custom_btns)
 
 
 def test_login_in_corso_guards():
@@ -764,6 +799,29 @@ def test_telegram_send_photo_fallback_to_document(tmp_path):
         assert mock_app.bot.send_document.call_args[1]["caption"] == "fallback caption"
 
 
+def test_telegram_send_photo_with_buttons(tmp_path):
+    from services.telegram_bot import TelegramBot
+    test_file = tmp_path / "test.png"
+    test_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    bot = TelegramBot("dummy", "123")
+    with patch("telegram.ext.Application.builder") as mock_builder:
+        mock_app = MagicMock()
+        mock_builder.return_value.token.return_value.build.return_value = mock_app
+        mock_app.__aenter__.return_value = mock_app
+        mock_app.__aexit__.return_value = None
+        mock_app.bot.send_photo = AsyncMock()
+
+        buttons = [[("Apri in App", "https://ios.idserver.servizicie.interno.gov.it/idp/login/app?opId=1")]]
+        bot.send_photo(str(test_file), caption="QR caption", buttons=buttons)
+        mock_app.bot.send_photo.assert_awaited_once()
+        call_kw = mock_app.bot.send_photo.call_args[1]
+        assert call_kw["caption"] == "QR caption"
+        kb = call_kw["reply_markup"].inline_keyboard
+        assert kb[0][0].text == "Apri in App"
+        assert kb[0][0].url == "https://ios.idserver.servizicie.interno.gov.it/idp/login/app?opId=1"
+
+
 def test_h_appuntamenti_renders_calendar_buttons():
     from services.telegram_bot import TelegramBot
     bot = TelegramBot.__new__(TelegramBot)
@@ -886,3 +944,156 @@ def test_h_callback_app_ics_all_sends_all_documents(tmp_path):
 
         q.answer.assert_awaited()
         assert q.message.reply_document.await_count == 2
+
+
+def test_data_selezionata_range_a_prompts_fascia():
+    from datetime import date
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    bot.controller = MagicMock()
+    bot._wizard = {
+        12345: {
+            "step": "range_a",
+            "target": {"prestazione": "VISITA CARDIOLOGICA", "codice": "NRE123"},
+            "province": ["MILANO CITTA'"],
+            "data_dal": "01/11/2026",
+        }
+    }
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    q = up.callback_query
+    q.edit_message_text = AsyncMock()
+
+    asyncio.run(bot._data_selezionata(up, 12345, date(2026, 11, 30)))
+
+    assert bot._wizard[12345]["step"] == "fascia"
+    assert bot._wizard[12345]["data_a"] == "30/11/2026"
+    q.edit_message_text.assert_awaited_once()
+    args, kwargs = q.edit_message_text.call_args
+    assert "Preferenza fascia oraria" in args[0]
+    rm = kwargs.get("reply_markup")
+    assert rm is not None
+    cb_data = [btn[0].callback_data for btn in rm.inline_keyboard]
+    assert "mon:fascia:mattina" in cb_data
+    assert "mon:fascia:pomeriggio" in cb_data
+    assert "mon:fascia:sera" in cb_data
+    assert "mon:fascia:pranzo" in cb_data
+    assert "mon:fascia:qualsiasi" in cb_data
+    assert "mon:annulla" in cb_data
+
+
+def test_callback_mon_fascia_creates_monitor():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    mock_ctl.aggiungi_monitor.return_value = "reschedule-VISITA-CARD-1"
+    bot.controller = mock_ctl
+    bot._wizard = {
+        12345: {
+            "step": "fascia",
+            "tipo": "reschedule",
+            "target": {"prestazione": "VISITA CARDIOLOGICA", "codice": "NRE123", "data_ora": "20/12/2026 10:00"},
+            "province": ["MILANO CITTA'"],
+            "data_dal": "01/11/2026",
+            "data_a": "30/11/2026",
+        }
+    }
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    q = up.callback_query
+    q.data = "mon:fascia:pomeriggio"
+    q.edit_message_text = AsyncMock()
+
+    asyncio.run(bot._h_callback(up, MagicMock()))
+
+    mock_ctl.aggiungi_monitor.assert_called_once_with(
+        "reschedule",
+        "VISITA CARDIOLOGICA",
+        nre="NRE123",
+        criteri={
+            "province": ["MILANO CITTA'"],
+            "data_dal": "01/11/2026",
+            "data_a": "30/11/2026",
+            "fascia": "pomeriggio",
+        },
+        data_ricetta="",
+        data_attuale="20/12/2026 10:00",
+    )
+    q.edit_message_text.assert_awaited_once()
+    msg = q.edit_message_text.call_args[0][0]
+    assert "Monitor creato!" in msg
+    assert "Range: 01/11/2026 → 30/11/2026" in msg
+    assert "Solo Pomeriggio (13:00 - 19:00)" in msg
+    assert 12345 not in bot._wizard
+
+
+def test_callback_mon_fascia_qualsiasi_creates_monitor_empty_fascia():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    mock_ctl.aggiungi_monitor.return_value = "new-VISITA-CARD-1"
+    bot.controller = mock_ctl
+    bot._wizard = {
+        12345: {
+            "step": "fascia",
+            "tipo": "new",
+            "target": {"prestazioni": ["VISITA CARDIOLOGICA"], "codice": "NRE123"},
+            "province": ["MILANO CITTA'"],
+            "data_dal": "01/11/2026",
+            "data_a": "30/11/2026",
+        }
+    }
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    q = up.callback_query
+    q.data = "mon:fascia:qualsiasi"
+    q.edit_message_text = AsyncMock()
+
+    asyncio.run(bot._h_callback(up, MagicMock()))
+
+    mock_ctl.aggiungi_monitor.assert_called_once_with(
+        "new",
+        "VISITA CARDIOLOGICA",
+        nre="NRE123",
+        criteri={
+            "province": ["MILANO CITTA'"],
+            "data_dal": "01/11/2026",
+            "data_a": "30/11/2026",
+            "fascia": "",
+        },
+        data_ricetta="",
+        data_attuale="",
+    )
+    q.edit_message_text.assert_awaited_once()
+    msg = q.edit_message_text.call_args[0][0]
+    assert "Monitor creato!" in msg
+    assert "Fascia:" not in msg
+    assert 12345 not in bot._wizard
+
+
+def test_h_callback_decide_deny_day():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    bot.controller = mock_ctl
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    q = up.callback_query
+    q.data = "decide:deny_day:req_123"
+    q.edit_message_text = AsyncMock()
+
+    asyncio.run(bot._h_callback(up, MagicMock()))
+
+    mock_ctl.decide_request.assert_called_once_with("req_123", False, extra={"azione": "deny_day"})
+    q.edit_message_text.assert_awaited_once()
+    msg = q.edit_message_text.call_args[0][0]
+    assert "Giorno rifiutato" in msg
+    assert "intera giornata è stata aggiunta alla blacklist" in msg

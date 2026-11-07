@@ -32,6 +32,8 @@ HELP_TEXT = (
     "\n📋 <b>Informazioni</b>\n"
     "/ricette - elenca le ricette da prenotare\n"
     "/appuntamenti - elenca gli appuntamenti esistenti e genera eventi calendario (.ics)\n"
+    "/version - versione corrente e verifica aggiornamenti su GitHub\n"
+    "/bug - segnala un problema o malfunzionamento\n"
     "\n❓ /help - questo messaggio"
 )
 
@@ -103,7 +105,8 @@ class TelegramBot:
             log.warning("TG non configurato, notifica con pulsanti non inviata")
             return []
         kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
+            InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://", "cieid://"))
+            else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
         ] for row in buttons])
         sent = []
         app = Application.builder().token(self.token).build()
@@ -201,25 +204,35 @@ class TelegramBot:
             log.error("send_file TG fallita: %s", e)
 
     # ---------- sending images / screenshots ----------
-    async def _send_photo(self, path: str, caption: str = "") -> None:
+    async def _send_photo(self, path: str, caption: str = "", buttons: list | None = None) -> None:
         if not (self.token and self.chat_ids):
             log.warning("TG non configurato, foto non inviata: %s", path)
             return
+        kb = None
+        if buttons:
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://", "cieid://"))
+                else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
+            ] for row in buttons])
         app = Application.builder().token(self.token).build()
         async with app:
             for cid in self.chat_ids:
                 try:
                     with open(path, "rb") as f:
-                        await app.bot.send_photo(chat_id=cid, photo=f, caption=caption, parse_mode=ParseMode.HTML)
+                        await app.bot.send_photo(chat_id=cid, photo=f, caption=caption,
+                                                 parse_mode=ParseMode.HTML, reply_markup=kb)
                 except Exception as e:  # noqa: BLE001
                     log.warning("invio photo TG a %s fallito (%s), provo send_document", cid, e)
                     try:
                         with open(path, "rb") as f:
-                            await app.bot.send_document(chat_id=cid, document=f, filename=path.split("/")[-1], caption=caption, parse_mode=ParseMode.HTML)
+                            await app.bot.send_document(chat_id=cid, document=f,
+                                                        filename=path.split("/")[-1],
+                                                        caption=caption, parse_mode=ParseMode.HTML,
+                                                        reply_markup=kb)
                     except Exception as e2:  # noqa: BLE001
                         log.error("invio fallback file TG a %s fallito: %s", cid, e2)
 
-    def send_photo(self, path: str, caption: str = "") -> None:
+    def send_photo(self, path: str, caption: str = "", buttons: list | None = None) -> None:
         """Send an image (e.g. PNG screenshot) from a flow or poller."""
         try:
             loop = asyncio.get_running_loop()
@@ -227,26 +240,27 @@ class TelegramBot:
             loop = None
 
         if loop is not None and loop.is_running():
-            asyncio.create_task(self._send_photo(path, caption))
+            asyncio.create_task(self._send_photo(path, caption, buttons=buttons))
             return
 
         try:
-            asyncio.run(self._send_photo(path, caption))
+            asyncio.run(self._send_photo(path, caption, buttons=buttons))
         except RuntimeError:
             loop = asyncio.new_event_loop()
             try:
-                loop.run_until_complete(self._send_photo(path, caption))
+                loop.run_until_complete(self._send_photo(path, caption, buttons=buttons))
             finally:
                 loop.close()
         except Exception as e:  # noqa: BLE001
             log.error("send_photo TG fallita: %s", e)
 
-    # ---------- authentication interactions (push fallback / otp) ----------
-    def ask_auth_fallback(self, prompt: str = "", timeout_s: int = 120) -> str | None:
-        """Prompt user via Telegram inline buttons to resend push notification or enter OTP code.
+    # ---------- authentication interactions (push fallback / otp / qr) ----------
+    def ask_auth_fallback(self, prompt: str = "", timeout_s: int = 120, buttons: list | None = None) -> str | None:
+        """Prompt user via Telegram inline buttons to resend push notification, display QR or enter OTP.
 
         Returns:
           - 'notify': user chose 'Invia notifica'
+          - 'qr': user chose 'Invia QR Code'
           - 'otp': user chose 'Immetti codice OTP'
           - 'cancel' or None: cancelled or timed out
         """
@@ -266,7 +280,7 @@ class TelegramBot:
                  "⚠️ <b>Accesso SPID SielteID</b>\n"
                  "La notifica push non è stata approvata o non è arrivata sul telefono.\n\n"
                  "Come vuoi procedere?")
-        bottoni = [
+        bottoni = buttons or [
             [("📲 Invia notifica", "auth:notify"), ("🔢 Immetti codice OTP", "auth:otp")],
             [("❌ Annulla login", "auth:cancel")],
         ]
@@ -363,11 +377,55 @@ class TelegramBot:
             await update.message.reply_text("Bot non disponibile.")
             return
         self._risveglia_se_needed(update)
+        from services.updater import APP_NAME, APP_VERSION, GITHUB_URL
         await update.message.reply_text(
-            "👋 Benvenuto! Scegli su cosa vuoi lavorare:\n\n"
+            f"👋 <b>Benvenuto su {APP_NAME}!</b> (<code>v{APP_VERSION}</code>)\n"
+            f"🔗 <a href=\"{GITHUB_URL}\">Progetto su GitHub</a>\n\n"
+            "Scegli su cosa vuoi lavorare:\n"
             "• /ricette — su una RICETTA da prenotare (nuove disponibilità)\n"
             "• /appuntamenti — su un APPUNTAMENTO già preso (anticipa/posticipa)\n\n"
-            "Oppure /help per l'elenco completo.")
+            "Oppure usa /version per verificare gli aggiornamenti o /help per l'elenco completo.",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+    async def _h_version(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show current version and check GitHub for latest releases."""
+        if not self._autorizzato(update):
+            return
+        self._risveglia_se_needed(update)
+        from services.updater import check_for_updates, format_telegram_welcome
+        cfg = getattr(self.controller, "cfg", None) if hasattr(self, "controller") else None
+        info = check_for_updates(force=True, cfg=cfg)
+        testo, bottoni = format_telegram_welcome(info)
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://"))
+            else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
+        ] for row in bottoni])
+        await update.message.reply_text(
+            testo,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+    async def _h_bug(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Guide user through opening a bug report on GitHub with pre-filled guidelines."""
+        if not self._autorizzato(update):
+            return
+        self._risveglia_se_needed(update)
+        from services.updater import format_issue_guide
+        testo, bottoni = format_issue_guide()
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://"))
+            else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
+        ] for row in bottoni])
+        await update.message.reply_text(
+            testo,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
     # ---------- inline calendar ----------
     @staticmethod
@@ -468,15 +526,39 @@ class TelegramBot:
         elif step == "range_a":
             wiz["data_a"] = giorno.strftime("%d/%m/%Y")
             self._wizard[chat_id] = wiz
-            await self._crea_monitor_finale(update, chat_id, wiz)
+            await self._chiedi_fascia(update, chat_id, wiz)
+
+    async def _chiedi_fascia(self, update, chat_id, wiz):
+        """Ask user to select preferred time slot (fascia oraria)."""
+        wiz["step"] = "fascia"
+        self._wizard[chat_id] = wiz
+        kb = [
+            [InlineKeyboardButton("☀️ Solo Mattina (07:00 - 13:00)", callback_data="mon:fascia:mattina")],
+            [InlineKeyboardButton("🌤 Solo Pomeriggio (13:00 - 19:00)", callback_data="mon:fascia:pomeriggio")],
+            [InlineKeyboardButton("🌙 Tardo Pom. / Sera (17:00 - 23:59)", callback_data="mon:fascia:sera")],
+            [InlineKeyboardButton("🥪 Pausa Pranzo (12:00 - 15:00)", callback_data="mon:fascia:pranzo")],
+            [InlineKeyboardButton("⏰ Qualsiasi orario (Salta)", callback_data="mon:fascia:qualsiasi")],
+            [InlineKeyboardButton("❌ Annulla", callback_data="mon:annulla")],
+        ]
+        testo = (
+            "⏰ <b>Preferenza fascia oraria:</b>\n"
+            "Scegli la fascia oraria desiderata per le visite (oppure 'Qualsiasi orario' per accettare tutti gli orari):"
+        )
+        q = update.callback_query
+        try:
+            await q.edit_message_text(testo, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.HTML)
+        except Exception as e:  # noqa: BLE001
+            log.warning("chiedi_fascia: %s", e)
 
     async def _crea_monitor_finale(self, update, chat_id, wiz):
-        """Create monitor with date range and confirmation."""
+        """Create monitor with date range, time slot preference, and confirmation."""
+        q = update.callback_query
         target = wiz.get("target", {})
         tipo = wiz.get("tipo", "new")
         prov_list = wiz.get("province", [])
         data_dal = wiz.get("data_dal", "")
         data_a = wiz.get("data_a", "")
+        fascia = wiz.get("fascia", "")
         # Prescription targets have 'prestazioni' (list) and 'codice' (NRE);
         # appointments have 'prestazione' (string). Service name first, then other fields, then fallback.
         prestazioni = target.get("prestazioni") or []
@@ -489,34 +571,63 @@ class TelegramBot:
             # Avoid placeholder 'monitor': without service name (prescription) and
             # without NRE the flow would not know which card to open
             self._wizard.pop(chat_id, None)
-            await q.edit_message_text(
-                "⚠️ Non riesco a ricavare la prestazione da monitorare dall'elenco. "
-                "Riprova con /monitora e scegli la ricetta dall'elenco.")
+            if q:
+                await q.edit_message_text(
+                    "⚠️ Non riesco a ricavare la prestazione da monitorare dall'elenco. "
+                    "Riprova con /monitora e scegli la ricetta dall'elenco.")
             return
         was_paused = bool(self.controller and getattr(self.controller, "paused", False) is True)
         data_ricetta = target.get("data_ricetta") or ""
         data_attuale = target.get("data_ora") or ""
+        if tipo == "reschedule" and data_attuale:
+            from services.deadline import check_reschedule_deadline, get_reschedule_min_working_days
+            min_days = get_reschedule_min_working_days()
+            is_too_late, app_dt, dl_dt, dl_msg = check_reschedule_deadline(data_attuale, min_working_days=min_days)
+            if is_too_late:
+                self._wizard.pop(chat_id, None)
+                q = update.callback_query
+                dl_fmt = dl_dt.strftime('%d/%m/%Y alle %H:%M') if dl_dt else "scaduto"
+                await q.edit_message_text(
+                    f"⚠️ <b>Impossibile avviare il monitor di anticipo</b>\n\n"
+                    f"📌 <b>Appuntamento attuale</b>: {self._esc(data_attuale)}\n"
+                    f"⏳ <b>Termine ultimo utile</b>: {self._esc(dl_fmt)}\n\n"
+                    f"Mancano meno di {min_days} giorni lavorativi (esclusi sab, dom e festivi).\n"
+                    f"La modifica o disdetta comporterebbe la penale (malus ticket).",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+        criteri = {
+            "province": prov_list,
+            "data_dal": data_dal,
+            "data_a": data_a,
+            "fascia": fascia,
+        }
         mid = self.controller.aggiungi_monitor(
             tipo, desc, nre=nre,
-            criteri={"province": prov_list, "data_dal": data_dal, "data_a": data_a},
+            criteri=criteri,
             data_ricetta=data_ricetta,
             data_attuale=data_attuale)
         self._wizard.pop(chat_id, None)
-        q = update.callback_query
         if mid:
             prov_txt = ", ".join(prov_list) if prov_list else "default"
             nre_txt = f"\n🔖 NRE: {self._esc(nre)}" if nre else ""
+            fascia_txt = ""
+            if fascia:
+                from services.matcher import descrivi_fascia
+                fascia_txt = f"\n⏰ Fascia: {self._esc(descrivi_fascia(fascia))}"
             txt = (
                 f"✅ Monitor creato!\n🎯 {self._esc(desc)}{nre_txt}\n🏙 {self._esc(prov_txt)}\n"
-                f"📅 Range: {self._esc(data_dal)} → {self._esc(data_a)}\n"
+                f"📅 Range: {self._esc(data_dal)} → {self._esc(data_a)}{fascia_txt}\n"
                 f"🆔 {self._esc(mid)}\n\n"
                 f"Ti notificherò solo se trovo disponibilità nel range."
             )
             if was_paused:
                 txt += "\n\n▶️ La pausa del monitoraggio è stata resettata: la ricerca automatica è ora attiva."
-            await q.edit_message_text(txt)
+            if q:
+                await q.edit_message_text(txt)
         else:
-            await q.edit_message_text("Errore creazione monitor.")
+            if q:
+                await q.edit_message_text("Errore creazione monitor.")
 
     async def _h_monitora(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
@@ -558,6 +669,13 @@ class TelegramBot:
                         self._auth_event.set()
                     await q.edit_message_text(
                         "🔢 <b>Scelto: Immetti codice OTP</b>\nPrepara il codice dell'app MySielteID...",
+                        parse_mode=ParseMode.HTML)
+                elif sub == "qr":
+                    if self._auth_event is not None:
+                        self._auth_choice = "qr"
+                        self._auth_event.set()
+                    await q.edit_message_text(
+                        "📲 <b>Scelto: Invia QR Code</b>\nRecupero del QR Code in corso, te lo invio subito qui in chat...",
                         parse_mode=ParseMode.HTML)
                 elif sub == "cancel":
                     if self._auth_event is not None:
@@ -602,6 +720,7 @@ class TelegramBot:
                     await q.edit_message_text(
                         {"approve": "✅ Approvato: procedo con la prenotazione.",
                          "deny": "❌ Richiesta rifiutata. La disponibilità è stata aggiunta alla blacklist (puoi gestirla con /blacklist).",
+                         "deny_day": "🚫 Giorno rifiutato. L'intera giornata è stata aggiunta alla blacklist (puoi gestirla con /blacklist).",
                          "anticipa": "↩️ Anticipo dell'appuntamento in corso...",
                          "posticipa": "↪️ Posticipo dell'appuntamento in corso...",
                          }.get(azione, "Azione registrata."))
@@ -627,8 +746,8 @@ class TelegramBot:
                 elif scelta == "continue":
                     ok = self.controller.converti_in_reschedule(mid)
                     if ok:
-                        pren = self.controller.store.get_prenotazione(mid)
-                        data_ora = pren.get("data_ora") or "la data prenotata"
+                        pren = self.controller.store.get_prenotazione(mid) if hasattr(self.controller, "store") else {}
+                        data_ora = (pren.get("data_ora") if isinstance(pren, dict) else "") or "la data prenotata"
                         await q.edit_message_text(
                             f"🔄 <b>Monitoraggio aggiornato: ricerca anticipo attiva!</b>\n\n"
                             f"📌 Appuntamento attuale: <b>{self._esc(data_ora)}</b>\n"
@@ -646,8 +765,8 @@ class TelegramBot:
                     return
                 ok = self.controller.converti_in_reschedule(mid)
                 if ok:
-                    pren = self.controller.store.get_prenotazione(mid)
-                    d_str = pren.get("data_ora") or ""
+                    pren = self.controller.store.get_prenotazione(mid) if hasattr(self.controller, "store") else {}
+                    d_str = pren.get("data_ora") if isinstance(pren, dict) else ""
                     data_info = f"\n📌 Appuntamento attuale: <b>{self._esc(d_str)}</b>" if d_str else ""
                     await q.edit_message_text(
                         f"🔄 <b>Ricerca anticipo attivata per {self._esc(mid)}!</b>{data_info}\n\n"
@@ -816,6 +935,12 @@ class TelegramBot:
                 self._wizard[chat_id] = {"step": "provincia", "target": target,
                                         "tipo": "new"}
                 await self._chiedi_provincia(update, ctx, chat_id)
+            elif data.startswith("mon:fascia:"):
+                fascia_val = data.split(":", 2)[2]
+                wiz = self._wizard.get(chat_id, {})
+                wiz["fascia"] = "" if fascia_val == "qualsiasi" else fascia_val
+                self._wizard[chat_id] = wiz
+                await self._crea_monitor_finale(update, chat_id, wiz)
             elif data == "mon:annulla":
                 self._wizard.pop(chat_id, None)
                 await q.edit_message_text("Monitoraggio annullato.")
@@ -973,10 +1098,14 @@ class TelegramBot:
         for i, e in enumerate(entries):
             d_str = e.get("date_str", "")
             t_str = e.get("time_str", "")
+            is_day = bool(e.get("block_day"))
             az = e.get("azienda", "")
             sede = e.get("sede", "")
             comune = e.get("comune", "")
-            riga = f"<b>{i + 1}) 🗓 {self._esc(d_str)} ore {self._esc(t_str)}</b>"
+            if is_day:
+                riga = f"<b>{i + 1}) 🗓 {self._esc(d_str)} 🚫 (INTERA GIORNATA BLOCCATA)</b>"
+            else:
+                riga = f"<b>{i + 1}) 🗓 {self._esc(d_str)} ore {self._esc(t_str)}</b>"
             if az:
                 riga += f"\n   🏥 {self._esc(az)}"
             luogo = []
@@ -1000,7 +1129,10 @@ class TelegramBot:
 
         kb = []
         for i, e in enumerate(entries):
-            d_label = f"{e.get('date_str', '')[-5:]} {e.get('time_str', '')}".strip()
+            if e.get("block_day"):
+                d_label = f"{e.get('date_str', '')} (giorno)"
+            else:
+                d_label = f"{e.get('date_str', '')[-5:]} {e.get('time_str', '')}".strip()
             kb.append([InlineKeyboardButton(
                 f"🗑 Elimina #{i + 1} ({d_label})",
                 callback_data=f"bl:del:{mid}:{e['id']}"
@@ -1374,10 +1506,15 @@ class TelegramBot:
             await update.message.reply_text(f"✅ Codice OTP ricevuto ({masked}). Procedo con l'autenticazione...")
             return
 
-        # 2. If waiting for fallback choice (notification vs OTP)
+        # 2. If waiting for fallback choice (notification vs OTP vs QR)
         if getattr(self, "_auth_event", None) is not None:
             low = text.lower()
-            if any(k in low for k in ["notifica", "invia notifica", "push", "1"]):
+            if any(k in low for k in ["qr", "qrcode", "codice qr", "foto"]):
+                self._auth_choice = "qr"
+                self._auth_event.set()
+                await update.message.reply_text("📲 Hai scelto: Mostra QR Code. Recupero l'immagine...")
+                return
+            elif any(k in low for k in ["notifica", "invia notifica", "push", "1"]):
                 self._auth_choice = "notify"
                 self._auth_event.set()
                 await update.message.reply_text("📲 Hai scelto: Invia notifica push.")
@@ -1521,6 +1658,36 @@ class TelegramBot:
         except Exception as e:  # noqa: BLE001
             await q.answer(f"Errore download: {e}")
 
+    async def _send_startup_welcome(self, application: Application) -> None:
+        """Send startup welcome notification with version and update status."""
+        from services.updater import (
+            get_cached_or_check_updates,
+            format_telegram_welcome,
+            is_tg_startup_notification_enabled,
+        )
+        cfg = getattr(self.controller, "cfg", None) if hasattr(self, "controller") else None
+        if is_tg_startup_notification_enabled(cfg) and self.token and self.chat_ids:
+            try:
+                info = get_cached_or_check_updates(cfg=cfg)
+                text, buttons = format_telegram_welcome(info)
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://"))
+                    else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
+                ] for row in buttons])
+                for cid in self.chat_ids:
+                    try:
+                        await application.bot.send_message(
+                            chat_id=cid,
+                            text=text,
+                            reply_markup=kb,
+                            parse_mode=ParseMode.HTML,
+                            disable_web_page_preview=True,
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("Invio messaggio di benvenuto a %s non riuscito: %s", cid, e)
+            except Exception as e:  # noqa: BLE001
+                log.warning("Errore invio messaggio di benvenuto Telegram all'avvio: %s", e)
+
     # ---------- run ----------
     def run(self) -> None:
         """Start bot polling (blocking; runs in a separate process/thread)."""
@@ -1539,6 +1706,7 @@ class TelegramBot:
                 BotCommand("ricette", "Elenco delle ricette dematerializzate"),
                 BotCommand("appuntamenti", "Elenco degli appuntamenti già presi"),
                 BotCommand("stop", "Interrompi un monitor attivo"),
+                BotCommand("version", "Versione e verifica aggiornamenti"),
                 BotCommand("help", "Guida ai comandi"),
             ]
             try:
@@ -1546,6 +1714,8 @@ class TelegramBot:
                 log.info("Comandi del bot registrati automaticamente su Telegram")
             except Exception as e:  # noqa: BLE001
                 log.warning("Impossibile registrare i comandi su Telegram: %s", e)
+
+            await self._send_startup_welcome(application)
 
         async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
             import telegram.error
@@ -1567,6 +1737,8 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("monitora", self._h_monitora))
         self.app.add_handler(CommandHandler("blacklist", self._h_blacklist))
         self.app.add_handler(CommandHandler("stop", self._h_stop))
+        self.app.add_handler(CommandHandler(["version", "versione", "aggiornamenti", "update"], self._h_version))
+        self.app.add_handler(CommandHandler("bug", self._h_bug))
         self.app.add_handler(CommandHandler("help", self._h_help))
         # Inline buttons (wizard /monitora and replies)
         self.app.add_handler(CallbackQueryHandler(self._h_callback))

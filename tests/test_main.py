@@ -20,6 +20,20 @@ def test_main_missing_env_non_tty(tmp_path, monkeypatch):
     monkeypatch.setattr("core.wizard.get_base_dir", lambda: tmp_path)
     monkeypatch.setattr(main, "get_base_dir", lambda: tmp_path)
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    for k in (
+        "TG_TOKEN",
+        "TG_CHAT_ID",
+        "CONTROL_INTERFACE",
+        "AUTH_METHOD",
+        "SPID_USERNAME",
+        "SIELTE_USERNAME",
+        "CIE_USERNAME",
+        "CIE_MODE",
+        "SPID_PROVIDER",
+        "CONTAINER",
+        "DOCKER",
+    ):
+        monkeypatch.delenv(k, raising=False)
     ret = main.main([])
     assert ret == 1
 
@@ -55,6 +69,7 @@ def test_main_runs_cli_mode(tmp_path, monkeypatch):
     env_file.write_text("CONTROL_INTERFACE=cli\nSOUND_ALERT=true\n", encoding="utf-8")
     monkeypatch.setattr(main, "get_base_dir", lambda: tmp_path)
     monkeypatch.setenv("CONTROL_INTERFACE", "cli")
+    monkeypatch.setenv("SOUND_ALERT", "true")
     monkeypatch.delenv("TG_TOKEN", raising=False)
     monkeypatch.delenv("TG_CHAT_ID", raising=False)
 
