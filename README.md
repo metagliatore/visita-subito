@@ -30,7 +30,7 @@
 > [!IMPORTANT]
 > **Compatibilità e limitazioni attuali**:
 > - **Portale regionale**: al momento questo progetto supporta **esclusivamente il portale del Fascicolo Sanitario di Regione Lombardia** (`https://www.fascicolosanitario.regione.lombardia.it`).
-> - **Autenticazione**: sono supportati l'accesso tramite **SPID** (attualmente testato con SielteID via notifica push o OTP) e l'accesso tramite **CIE (Carta d'Identità Elettronica)** (Livello 2 con credenziali/app CieID o scansione diretta del QR Code inviato su Telegram). Gli altri provider SPID non sono al momento implementati nel flusso di login automatico.
+> - **Autenticazione**: sono supportati l'accesso tramite **SPID** (testato e ottimizzato per **SielteID** e **PosteID / Poste Italiane** con notifica push, SMS OTP o scansione QR Code inviato su Telegram) e l'accesso tramite **CIE (Carta d'Identità Elettronica)** (Livello 2 con credenziali/app CieID o scansione diretta del QR Code inviato su Telegram). Gli altri provider SPID sono supportati a livello standard con credenziali e secondo fattore.
 
 ---
 
@@ -44,7 +44,7 @@
 - **Generazione Calendario (.ics) con cancellazione automatica**: esportazione automatica di file calendario RFC 5545 per ogni prenotazione o anticipo confermato. In caso di spostamento, il file include la revoca del vecchio appuntamento (`STATUS:CANCELLED`, `SEQUENCE:1`) consentendo ai calendari (Apple Calendar, Outlook, Google Calendar) di aggiornare o rimuovere automaticamente l'evento precedente.
 - **Calcolo Distanza e Tempi di Percorso da Casa (Auto e Trasporto Pubblico)**: stima immediata della distanza chilometrica e dei tempi di percorrenza dalla tua abitazione all'ospedale o ambulatorio sia in auto (nelle ore di punta) sia con il trasporto pubblico (metro, treno suburbano/FS, navette e percorsi pedonali). Se non imposti le coordinate di casa in `.env`, la funzionalità rimane disattivata senza mostrare righe vuote. Architettura già predisposta per futuri filtri di distanza massima.
 - **Wizard interattivo su Telegram**: creazione guidata dei monitor direttamente dalla chat con selezione di ricetta/appuntamento, scelta multi-provincia e calendario inline per l'intervallo date.
-- **Gestione sessione SPID / CIE**: keep-alive automatico della sessione e rinnovo intelligente tramite SielteID o CIE (Livello 2 / QR Code) con supporto interattivo su Telegram.
+- **Gestione sessione SPID / CIE**: keep-alive automatico della sessione e rinnovo intelligente tramite SielteID, PosteID o CIE (Livello 2 / QR Code) con supporto interattivo su Telegram.
 - **Strategie di ricerca multi-provincia**: modalità `first_match` (consigliata/rapida, blocca la prima data utile senza cambiare provincia riducendo le race condition sul portale) oppure `best_match` (globale, confronta tutte le province alla ricerca della data migliore).
 - **Diagnostica automatica e screenshot Telegram**: salvataggio automatico di screenshot PNG e dump HTML in caso di errore o timeout durante la prenotazione, con invio immediato dell'immagine direttamente nella chat Telegram.
 - **Benvenuto all'avvio e Controllo Aggiornamenti GitHub**: all'avvio dell'applicazione (tramite log, terminale CLI o messaggio di benvenuto Telegram) viene mostrato un banner riepilogativo con il link al repository GitHub, la versione corrente e la verifica immediata di nuove release pubblicate con pulsante per il download diretto o consultazione delle note di rilascio.
@@ -73,7 +73,7 @@ flowchart TD
 
     subgraph FLOWS["🧭 Motore Flussi (Selenium + Headless Chrome)"]
         AUTH_STEP{"Sessione autenticata?"}
-        LOGIN["Login SPID/CIE (SielteID push/OTP o CIE L2/QR)"]
+        LOGIN["Login SPID/CIE (SielteID/PosteID push/SMS/QR o CIE L2/QR)"]
         FLOW_TYPE{"Tipo Monitor"}
         FLOW_A["Flusso A: Nuova Ricetta (NRE)"]
         FLOW_B["Flusso B: Spostamento / Anticipo Appuntamento"]
@@ -201,11 +201,18 @@ TG_CHAT_ID_SECONDARY=
 # Metodo di autenticazione: spid oppure cie
 AUTH_METHOD=spid
 
-# --- Se AUTH_METHOD=spid (SielteID) ---
+# --- Se AUTH_METHOD=spid ---
+# SPID SielteID
 SPID_PROVIDER=sielte
 SPID_USERNAME=il_tuo_username
 SPID_PASSWORD=la_tua_password
 SPID_OTP_MODE=notifica
+
+# Oppure SPID PosteID (Poste Italiane)
+# SPID_PROVIDER=poste
+# POSTE_USERNAME=il_tuo_username
+# POSTE_PASSWORD=la_tua_password
+# POSTE_MODE=app          # "app" (notifica push), "sms" (SMS OTP) o "qr" (QR Code)
 
 # --- Se AUTH_METHOD=cie (Carta d'Identità Elettronica) ---
 # CIE_MODE=app            # app (credenziali + push con fallback QR su Telegram) oppure qr (QR diretto)
@@ -246,6 +253,7 @@ Alla prima esecuzione:
 1. Il container si avvia e naviga automaticamente verso il portale di autenticazione.
 2. In base alla modalità scelta in `AUTH_METHOD`:
    - **SPID (SielteID)**: riceverai un messaggio su Telegram (`📲 Sto per inviare la notifica SielteID...`). Apri l'app **SielteID** sul tuo smartphone e approva la richiesta push entro 3 minuti.
+   - **SPID (PosteID)**: supporta l'approvazione push su app **PosteID**, l'inserimento interattivo del codice **SMS OTP**, oppure la ricezione istantanea del **QR Code** su Telegram da inquadrare con la fotocamera dell'app PosteID.
    - **CIE**: il bot supporta l'accesso Livello 2 (credenziali + notifica su app CieID con fallback interattivo su Telegram che recapita il **QR Code** direttamente in chat da inquadrare con l'app CieID, oppure modalità diretta `CIE_MODE=qr`).
 3. I cookie di sessione verranno salvati automaticamente nel volume persistente `./data/cookies/cookies.pkl`. Da questo momento in poi il monitor rimarrà attivo autonomamente.
 

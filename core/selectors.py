@@ -171,16 +171,66 @@ LOGIN_CIE = {
 LOGIN_IDP_POSTEID = {
     "url_matcher": "posteid.poste.it",
     "form": [("css", "form[action*='xloginbasic']"), ("css", "form[name='login']")],
-    "username": [("id", "username"), ("name", "username")],
-    "password": [("id", "password"), ("name", "password")],
-    "btn_avanti": [("css", "form[action*='xloginbasic'] button[type='submit']"), ("css", "button[type='submit']")],
-    "form_qr": [("css", "form[action*='xqrlogindis']")],
-    "otp": [("id", "otp"), ("name", "otp")],
-    "btn_otp": [("css", "button[type=submit], input[type=submit]")],
+    "btn_credenziali": [
+        ("xpath", "//a[contains(., 'credenziali') or contains(., 'Nome utente') or contains(., 'password') or contains(., 'Accedi con credenziali')]"),
+        ("xpath", "//button[contains(., 'credenziali') or contains(., 'Nome utente') or contains(., 'password') or contains(., 'Accedi con credenziali')]"),
+        ("css", "a[href*='password'], a[href*='credenziali'], #tab-credenziali, .tab-credenziali, #btn-credenziali"),
+    ],
+    "btn_mostra_qr": [
+        ("xpath", "//a[contains(., 'QR') or contains(., 'qr') or contains(., 'Inquadra') or contains(., 'Accedi con QR Code')]"),
+        ("xpath", "//button[contains(., 'QR') or contains(., 'qr') or contains(., 'Inquadra') or contains(., 'Accedi con QR Code')]"),
+        ("css", "a[href*='qr'], button[id*='qr'], #tab-qr, .tab-qr, #btn-qrcode, .btn-qrcode"),
+    ],
+    "username": [
+        ("id", "username"),
+        ("name", "username"),
+        ("css", "input[name*='user'], input[id*='user'], input[autocomplete='username']"),
+        ("xpath", "//input[contains(@placeholder, 'utente') or contains(@placeholder, 'Utente') or contains(@placeholder, 'email') or contains(@placeholder, 'Email')]"),
+    ],
+    "password": [
+        ("id", "password"),
+        ("name", "password"),
+        ("css", "input[type='password']"),
+    ],
+    "btn_avanti": [
+        ("css", "form[action*='xloginbasic'] button[type='submit']"),
+        ("xpath", "//button[contains(., 'Accedi') or contains(., 'Prosegui') or @type='submit']"),
+        ("css", "button[type='submit'], input[type='submit']"),
+    ],
+    "btn_richiedi_sms_otp": [
+        ("xpath", "//a[contains(., 'SMS') or contains(., 'sms') or contains(., 'codice SMS') or contains(., 'Non hai ricevuto') or contains(., 'Ricevi SMS')]"),
+        ("xpath", "//button[contains(., 'SMS') or contains(., 'sms') or contains(., 'codice SMS') or contains(., 'Ricevi SMS')]"),
+        ("css", "a[href*='sms'], button[id*='sms'], a[id*='sms'], .richiedi-sms"),
+    ],
+    "otp": [
+        ("id", "otp"),
+        ("name", "otp"),
+        ("css", "input[name*='otp'], input[id*='otp'], input[name*='code'], input[id*='code']"),
+        ("css", "input[autocomplete='one-time-code']"),
+        ("xpath", "//input[contains(@placeholder, 'OTP') or contains(@placeholder, 'codice') or contains(@placeholder, 'Codice')]"),
+    ],
+    "btn_otp": [
+        ("css", "button[type='submit'], input[type='submit']"),
+        ("xpath", "//button[contains(., 'Conferma') or contains(., 'Verifica') or contains(., 'Invia') or contains(., 'Procedi')]"),
+    ],
+    "qr_code": [
+        ("css", "img[src*='qr'], img[src*='QR'], #qrcode img, .qrcode img, img[alt*='QR'], img[alt*='qr']"),
+        ("css", "canvas#qrcode, canvas.qrcode, #qrCanvas, .qrCanvas, canvas"),
+        ("css", "#qrCodeContainer img, #qrWrapper img, #qr-code"),
+    ],
+    "btn_rinvia_push": [
+        ("xpath", "//a[contains(., 'Invia di nuovo') or contains(., 'Rinvia notifica') or contains(., 'Invia nuova notifica')]"),
+        ("xpath", "//button[contains(., 'Invia di nuovo') or contains(., 'Rinvia notifica') or contains(., 'Invia nuova notifica')]"),
+        ("css", "a[href*='rinvia'], button[id*='rinvia'], .rinvia-notifica"),
+    ],
+    "msg_push_inviata": [
+        ("xpath", "//*[contains(., 'notifica') and (contains(., 'app') or contains(., 'PosteID') or contains(., 'inviata'))]"),
+        ("css", ".notifica-inviata, .push-sent, #push-notification-msg, .alert-info"),
+    ],
     "consenso": [
-        ("css", "button[name='confirm']"),
-        ("css", "input[value*='Autorizza']"),
-        ("xpath", "//button[contains(., 'Autorizza') or contains(., 'Conferma') or contains(., 'Prosegui')]"),
+        ("css", "button[name='confirm'], button[name='autorizza'], input[value*='Autorizza'], input[value*='Conferma']"),
+        ("xpath", "//button[contains(., 'Autorizza') or contains(., 'Conferma') or contains(., 'Prosegui') or contains(., 'Acconsento')]"),
+        ("xpath", "//input[@type='submit' and (contains(@value, 'Autorizza') or contains(@value, 'Conferma'))]"),
     ],
 }
 
