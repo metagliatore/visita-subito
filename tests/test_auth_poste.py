@@ -8,6 +8,15 @@ from core import selectors
 from core.session import SessionManager
 
 
+@pytest.fixture(autouse=True)
+def virtual_clock(monkeypatch):
+    """Ensure all tests use deterministic, bounded virtual time so loops never hang or bloat memory."""
+    clock = [1000.0]
+    monkeypatch.setattr("time.time", lambda: clock[0])
+    monkeypatch.setattr("time.sleep", lambda s: clock.__setitem__(0, clock[0] + s))
+    return clock
+
+
 def test_auth_config_poste_defaults():
     cfg = AuthConfig(method="spid", spid_provider="poste")
     assert cfg.method == "spid"
@@ -92,12 +101,10 @@ def test_relogin_poste_already_authenticated(tmp_path, monkeypatch):
 
     sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
     monkeypatch.setattr(sm, "is_autenticato", lambda d: True)
-    monkeypatch.setattr("time.sleep", lambda s: None)
 
     driver = sm.relogin_poste(username="u", password="p", wait_otp_sec=5)
     assert driver == mock_driver
     assert sm.session_valid is True
-    # Should not interact with login form
     assert not mock_driver.find_elements.called
 
 
@@ -111,7 +118,7 @@ def test_relogin_poste_push_success(tmp_path, monkeypatch):
     sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
     auth_state = [False, False, True]
     monkeypatch.setattr(sm, "is_autenticato", lambda d: auth_state.pop(0) if auth_state else True)
-    monkeypatch.setattr("time.sleep", lambda s: None)
+    monkeypatch.setattr(sm, "_find_element", lambda d, sel: None)
 
     filled_fields = {}
     clicked_buttons = []
@@ -142,7 +149,7 @@ def test_relogin_poste_sms_mode(tmp_path, monkeypatch):
     mock_driver.current_url = "https://posteid.poste.it/jod-fcc/custom/login.jsp"
 
     sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
-    monkeypatch.setattr("time.sleep", lambda s: None)
+    monkeypatch.setattr(sm, "_find_element", lambda d, sel: None)
 
     auth_state = [False, False, False, True]
     monkeypatch.setattr(sm, "is_autenticato", lambda d: auth_state.pop(0) if auth_state else True)
@@ -184,7 +191,6 @@ def test_relogin_poste_direct_qr_mode(tmp_path, monkeypatch):
     mock_driver.current_url = "https://posteid.poste.it/jod-fcc/custom/login.jsp"
 
     sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
-    monkeypatch.setattr("time.sleep", lambda s: None)
 
     auth_state = [False, False, True]
     monkeypatch.setattr(sm, "is_autenticato", lambda d: auth_state.pop(0) if auth_state else True)
@@ -225,10 +231,6 @@ def test_relogin_poste_push_fallback_to_sms(tmp_path, monkeypatch):
 
     sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
 
-    clock = [1000.0]
-    monkeypatch.setattr("time.time", lambda: clock[0])
-    monkeypatch.setattr("time.sleep", lambda s: clock.__setitem__(0, clock[0] + s))
-
     filled_fields = {}
     monkeypatch.setattr(sm, "_find_and_fill", lambda d, sel, val: filled_fields.__setitem__(sel[0][1], val) or True)
     monkeypatch.setattr(sm, "_find_and_click", lambda d, sel: True)
@@ -259,7 +261,7 @@ def test_relogin_poste_push_fallback_to_sms(tmp_path, monkeypatch):
     assert any(c.args and c.args[0] == "ask_action" for c in auth_cb.call_args_list)
 
 
-def test_relogin_poste_push_fallback_to_qr(tmp_path, monkeypatch):
+def test_relogin_poste_push_fallback_to_qr(tmp_path, monkeypatch, virtual_clock):
     mock_browser = MagicMock()
     mock_driver = MagicMock()
     mock_driver.get_cookies.return_value = []
@@ -268,23 +270,17 @@ def test_relogin_poste_push_fallback_to_qr(tmp_path, monkeypatch):
 
     sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
 
-    clock = [1000.0]
-    monkeypatch.setattr("time.time", lambda: clock[0])
-    monkeypatch.setattr("time.sleep", lambda s: clock.__setitem__(0, clock[0] + s))
-
     mock_qr_el = MagicMock()
     qr_sent_flag = [False]
 
     def mock_find_element(d, sel):
-        # QR element visible after fallback activates (> 1035s)
-        if clock[0] > 1035 and sel == selectors.LOGIN_IDP_POSTEID["qr_code"]:
+        if virtual_clock[0] > 1035 and sel == selectors.LOGIN_IDP_POSTEID["qr_code"]:
             return mock_qr_el
         return None
 
     monkeypatch.setattr(sm, "_find_element", mock_find_element)
     monkeypatch.setattr(sm, "_find_and_fill", lambda d, sel, val: True)
     monkeypatch.setattr(sm, "_find_and_click", lambda d, sel: True)
-    # Becomes authenticated only after QR code is sent via Telegram
     monkeypatch.setattr(sm, "is_autenticato", lambda d: qr_sent_flag[0])
 
     def fake_auth_cb(action, **kwargs):
@@ -318,10 +314,6 @@ def test_relogin_poste_fallback_cancel(tmp_path, monkeypatch):
 
     sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
 
-    clock = [1000.0]
-    monkeypatch.setattr("time.time", lambda: clock[0])
-    monkeypatch.setattr("time.sleep", lambda s: clock.__setitem__(0, clock[0] + s))
-
     monkeypatch.setattr(sm, "is_autenticato", lambda d: False)
     monkeypatch.setattr(sm, "_find_element", lambda d, sel: None)
     monkeypatch.setattr(sm, "_find_and_fill", lambda d, sel, val: True)
@@ -346,7 +338,6 @@ def test_relogin_poste_timeout_error(tmp_path, monkeypatch):
     mock_driver.current_url = "https://posteid.poste.it/jod-fcc/custom/login.jsp"
 
     sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
-    monkeypatch.setattr("time.sleep", lambda s: None)
     monkeypatch.setattr(sm, "is_autenticato", lambda d: False)
     monkeypatch.setattr(sm, "_find_element", lambda d, sel: None)
     monkeypatch.setattr(sm, "_find_and_fill", lambda d, sel, val: True)
@@ -364,7 +355,6 @@ def test_relogin_poste_credentials_tab_switch(tmp_path, monkeypatch):
     mock_driver.current_url = "https://posteid.poste.it/jod-fcc/custom/login.jsp"
 
     sm = SessionManager(browser=mock_browser, cookie_dir=tmp_path)
-    monkeypatch.setattr("time.sleep", lambda s: None)
 
     auth_state = [False, False, True]
     monkeypatch.setattr(sm, "is_autenticato", lambda d: auth_state.pop(0) if auth_state else True)
@@ -388,7 +378,6 @@ def test_relogin_poste_credentials_tab_switch(tmp_path, monkeypatch):
 
     driver = sm.relogin_poste(username="u", password="p", mode="app", wait_otp_sec=30)
     assert driver == mock_driver
-    # Verified that btn_credenziali was clicked when username wasn't visible initially
     assert any(sel == selectors.LOGIN_IDP_POSTEID["btn_credenziali"] for sel in clicked)
 
 
@@ -414,7 +403,6 @@ def test_relogin_spid_delegates_to_relogin_poste(tmp_path, monkeypatch):
 
 def test_cattura_qr_poste_data_uri_and_fallbacks(tmp_path, monkeypatch):
     sm = SessionManager(browser=MagicMock(), cookie_dir=tmp_path)
-    monkeypatch.setattr("time.sleep", lambda s: None)
 
     mock_driver = MagicMock()
     mock_qr_el = MagicMock()
@@ -441,7 +429,6 @@ def test_cattura_qr_poste_data_uri_and_fallbacks(tmp_path, monkeypatch):
 
 def test_chiedi_e_inserisci_otp_poste_fallbacks(tmp_path, monkeypatch):
     sm = SessionManager(browser=MagicMock(), cookie_dir=tmp_path)
-    monkeypatch.setattr("time.sleep", lambda s: None)
     mock_driver = MagicMock()
 
     # Case 1: spaces and dashes cleaned
