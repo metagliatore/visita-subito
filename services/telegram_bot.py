@@ -38,6 +38,7 @@ HELP_TEXT = (
     "/appuntamenti - elenca gli appuntamenti esistenti e genera eventi calendario (.ics)\n"
     "/version - versione corrente e verifica aggiornamenti su GitHub\n"
     "/bug - segnala un problema o malfunzionamento\n"
+    "/dona - supporta il progetto offrendo un caffè allo sviluppatore ☕\n"
     "\n❓ /help - questo messaggio"
 )
 
@@ -494,6 +495,35 @@ class TelegramBot:
         self._risveglia_se_needed(update)
         from services.updater import format_issue_guide
         testo, bottoni = format_issue_guide()
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://"))
+            else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
+        ] for row in bottoni])
+        await update.message.reply_text(
+            testo,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+    async def _h_dona(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show donation and support information with interactive tier buttons."""
+        if not self._autorizzato(update):
+            return
+        self._risveglia_se_needed(update)
+        from services.donation import get_donation_config, build_donation_message, build_donation_buttons
+        settings = getattr(self.controller, "settings", {}) if hasattr(self, "controller") else {}
+        cfg = get_donation_config(settings)
+        if not cfg["enabled"]:
+            await update.message.reply_text(
+                "ℹ️ <b>Nessun link di donazione o supporto configurato.</b>\n\n"
+                "VisitaSubito è un progetto 100% open source e gratuito. Per abilitare le donazioni, "
+                "configura la variabile <code>DONATION_URL</code> nel file <code>.env</code>.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        testo = build_donation_message()
+        bottoni = build_donation_buttons(cfg)
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://"))
             else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
@@ -1953,6 +1983,7 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("stop", self._h_stop))
         self.app.add_handler(CommandHandler(["version", "versione", "aggiornamenti", "update"], self._h_version))
         self.app.add_handler(CommandHandler("bug", self._h_bug))
+        self.app.add_handler(CommandHandler(["dona", "donazione", "caffe", "coffee", "supporto"], self._h_dona))
         self.app.add_handler(CommandHandler("help", self._h_help))
         # Inline buttons (wizard /monitora and replies)
         self.app.add_handler(CallbackQueryHandler(self._h_callback))
