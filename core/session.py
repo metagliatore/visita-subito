@@ -659,6 +659,332 @@ class SessionManager:
         log.info("QR Code CIE inviato con successo.")
         return True
 
+    # ---------------- PosteID SPID login ----------------
+    def _chiedi_e_inserisci_otp_poste(self, driver: webdriver.Chrome, auth_callback=None) -> bool:
+        """Ask user for PosteID SMS OTP code, fill it into the form, and await verification."""
+        prompt_txt = "🔢 Inserisci il codice OTP ricevuto via SMS da Poste Italiane:"
+        code = None
+        if auth_callback:
+            try:
+                code = auth_callback("ask_otp", prompt=prompt_txt)
+            except Exception as e:
+                log.warning("auth_callback ask_otp PosteID: %s", e)
+        if not code and self.on_otp_prompt:
+            try:
+                code = self.on_otp_prompt(prompt_txt)
+            except Exception as e:
+                log.warning("on_otp_prompt PosteID: %s", e)
+
+        # Console fallback if on TTY
+        if not code:
+            import sys
+            if sys.stdin.isatty():
+                try:
+                    print(f"\n[PosteID SMS OTP] {prompt_txt} ", end="", flush=True)
+                    code = sys.stdin.readline().strip()
+                except Exception:
+                    pass
+
+        if not code:
+            log.warning("Nessun codice OTP PosteID fornito.")
+            return False
+
+        clean_code = str(code).replace(" ", "").replace("-", "").strip()
+        log.info("Inserimento codice OTP PosteID nel browser...")
+        if self.on_notify:
+            self.on_notify("⏳ Inserisco il codice OTP PosteID nel portale...")
+
+        from core import selectors
+        poste_sel = selectors.LOGIN_IDP_POSTEID
+        self._find_and_fill(driver, poste_sel["otp"], clean_code)
+        time.sleep(1)
+        self._find_and_click(driver, poste_sel["btn_otp"])
+
+        for _ in range(3):
+            time.sleep(2)
+            self._find_and_click(driver, poste_sel["consenso"])
+            if self.is_autenticato(driver):
+                return True
+
+        if not self.is_autenticato(driver):
+            if self.on_notify:
+                self.on_notify("❌ Codice OTP PosteID non valido o autenticazione non riuscita.")
+            return False
+
+        return True
+
+    def _cattura_e_invia_qr_poste(self, driver: webdriver.Chrome, auth_callback=None) -> bool:
+        """Capture PosteID QR code screenshot and send it via Telegram."""
+        from pathlib import Path
+        from core import selectors
+
+        poste_sel = selectors.LOGIN_IDP_POSTEID
+        qr_path = "data/poste_qr.png"
+        Path(qr_path).parent.mkdir(parents=True, exist_ok=True)
+
+        qr_el = None
+        for _ in range(3):
+            qr_el = self._find_element(driver, poste_sel["qr_code"])
+            if qr_el:
+                break
+            # If QR is not immediately visible, try clicking btn_mostra_qr
+            self._find_and_click(driver, poste_sel["btn_mostra_qr"])
+            time.sleep(1.5)
+
+        saved = False
+
+        if qr_el:
+            # First try direct extraction if src is a base64 data-URI (sharp and reliable)
+            try:
+                src = qr_el.get_attribute("src") or ""
+                if "data:image/" in src and "base64," in src:
+                    import base64
+                    b64_data = src.split("base64,", 1)[1].strip()
+                    Path(qr_path).write_bytes(base64.b64decode(b64_data))
+                    saved = True
+                    log.info("Immagine QR Code PosteID estratta direttamente da data-URI in %s", qr_path)
+            except Exception as e:
+                log.debug("Estrazione diretta data-URI QR PosteID non riuscita (%s), procedo con screenshot", e)
+
+            if not saved:
+                try:
+                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", qr_el)
+                except Exception:
+                    pass
+                try:
+                    qr_el.screenshot(qr_path)
+                    saved = True
+                    log.info("Screenshot dell'elemento QR Code PosteID salvato in %s", qr_path)
+                except Exception as e:
+                    log.warning("Impossibile salvare screenshot dell'elemento QR PosteID: %s", e)
+
+        # If specific element could not be extracted, fallback to entire page screenshot
+        if not saved:
+            try:
+                driver.save_screenshot(qr_path)
+                saved = True
+                log.info("Screenshot completo pagina PosteID (fallback QR) salvato in %s", qr_path)
+            except Exception as e:
+                log.error("Errore salvataggio screenshot fallback PosteID: %s", e)
+
+        if not saved:
+            if self.on_notify:
+                self.on_notify("⚠️ Impossibile acquisire lo screenshot del QR Code PosteID.")
+            return False
+
+        caption = (
+            "📲 <b>Accesso SPID PosteID</b>\n\n"
+            "• Inquadra questo codice QR con l'app <b>PosteID</b> (opzione <i>Inquadra codice QR</i> o <i>Scansiona QR</i>).\n"
+            "• Autorizza l'accesso sul tuo smartphone confermando con codice PosteID o biometria (impronta/FaceID)."
+        )
+        inviato = False
+
+        if auth_callback:
+            try:
+                auth_callback("send_photo", path=qr_path, caption=caption)
+                inviato = True
+            except Exception as e:
+                log.warning("auth_callback send_photo PosteID fallito: %s, provo send_file", e)
+                try:
+                    auth_callback("send_file", path=qr_path, caption=caption)
+                    inviato = True
+                except Exception as e2:
+                    log.warning("auth_callback send_file PosteID fallito: %s", e2)
+
+        if not inviato and self.on_notify:
+            self.on_notify("📲 QR Code PosteID visualizzato: scansionalo con l'app PosteID sul tuo smartphone.")
+
+        log.info("QR Code PosteID inviato con successo.")
+        return True
+
+    def relogin_poste(self, username: str = "", password: str = "", mode: str = "app",
+                      wait_otp_sec: int = 180, auth_callback=None) -> webdriver.Chrome:
+        """SPID login with PosteID (Poste Italiane).
+        Supports:
+          - Level 2 Push notification (default, credentials + mobile app authorization)
+          - Level 2 SMS OTP fallback (credentials + SMS code prompt on Telegram/CLI)
+          - Level 2 QR Code mode (scanned from PosteID app without entering password)
+          - Interactive fallbacks on Telegram for push / SMS OTP / QR Code switching
+          - SAML attribute release consent screen approval
+        """
+        from selenium.webdriver.common.by import By
+        from core import selectors
+
+        driver = self.browser.start()
+        mode_str = (mode or "app").lower()
+        if mode_str in ("sms", "otp"):
+            mode_norm = "sms"
+            mode_lbl = "SMS OTP"
+        elif mode_str in ("qr", "qrcode"):
+            mode_norm = "qr"
+            mode_lbl = "QR Code (App PosteID)"
+        else:
+            mode_norm = "app"
+            mode_lbl = "App PosteID (Notifica push)"
+
+        if self.on_notify:
+            self.on_notify(f"🔑 Avvio accesso SPID PosteID ({mode_lbl})...")
+
+        driver.get(selectors.LOGIN_SPID["url_accedi"])
+        time.sleep(3)
+        if self.is_autenticato(driver):
+            self.save(driver)
+            self.session_valid = True
+            return driver
+
+        # Open SPID menu and select Poste Italiane
+        try:
+            driver.execute_script("var a=document.querySelector('[spid-idp-button], a.button-spid, .pulsante-spid');if(a)a.click();")
+            time.sleep(1)
+            boxes = driver.find_elements(By.CSS_SELECTOR, "a.home-box-fornitore")
+            target = None
+            for b in boxes:
+                if "poste" in (b.text or "").lower():
+                    target = b
+                    break
+            if target is None:
+                idx = selectors.LOGIN_SPID["idp"].get("Poste", 6)
+                if idx is not None and idx < len(boxes):
+                    target = boxes[idx]
+            if target:
+                driver.execute_script("arguments[0].click();", target)
+        except Exception as e:
+            log.warning("Selezione provider PosteID: %s", e)
+
+        time.sleep(4)
+
+        poste_sel = selectors.LOGIN_IDP_POSTEID
+
+        # Wait until landed on PosteID or authenticated
+        for _ in range(5):
+            if self.is_autenticato(driver):
+                self.save(driver)
+                self.session_valid = True
+                return driver
+            if poste_sel.get("url_matcher", "posteid.poste.it") in (driver.current_url or ""):
+                break
+            time.sleep(1.5)
+
+        qr_sent = False
+
+        # Direct QR mode or no credentials configured
+        if mode_norm == "qr" or (not username and not password):
+            log.info("Accesso PosteID in modalità QR Code")
+            if not self._find_element(driver, poste_sel["qr_code"]):
+                self._find_and_click(driver, poste_sel["btn_mostra_qr"])
+                time.sleep(2)
+            self._cattura_e_invia_qr_poste(driver, auth_callback)
+            qr_sent = True
+        elif username and password:
+            # If QR tab is currently active, switch to credentials tab
+            if not self._find_element(driver, poste_sel["username"]):
+                log.info("Campi credenziali PosteID non visibili subito: provo selettore 'btn_credenziali'")
+                self._find_and_click(driver, poste_sel["btn_credenziali"])
+                time.sleep(2)
+
+            filled_u = self._find_and_fill(driver, poste_sel["username"], username)
+            filled_p = self._find_and_fill(driver, poste_sel["password"], password)
+            if filled_u and filled_p:
+                time.sleep(1)
+                self._find_and_click(driver, poste_sel["btn_avanti"])
+                time.sleep(2)
+
+                if mode_norm == "sms":
+                    log.info("Modalità SMS configurata: richiedo invio codice OTP via SMS")
+                    self._find_and_click(driver, poste_sel["btn_richiedi_sms_otp"])
+                    time.sleep(2)
+                    self._chiedi_e_inserisci_otp_poste(driver, auth_callback)
+                else:
+                    if self.on_notify:
+                        self.on_notify("📲 Credenziali PosteID inviate: autorizza la notifica push nell'app PosteID.")
+            else:
+                log.warning("Campi credenziali PosteID non trovati.")
+                if self.on_notify:
+                    self.on_notify("⚠️ Impossibile compilare automaticamente le credenziali PosteID.")
+
+        # Polling & authorization loop
+        t0 = time.time()
+        deadline = t0 + wait_otp_sec
+        abs_deadline = t0 + 600
+        last_fallback_prompt = 0
+
+        while time.time() < deadline and time.time() < abs_deadline:
+            # Try clicking consent screen if present
+            self._find_and_click(driver, poste_sel["consenso"])
+            if self.is_autenticato(driver):
+                self.save(driver)
+                self.session_valid = True
+                return driver
+
+            # If QR code appeared on screen and not sent yet
+            if not qr_sent and mode_norm != "sms":
+                if self._find_element(driver, poste_sel["qr_code"]):
+                    log.info("Rilevato QR code PosteID a schermo: lo invio su Telegram")
+                    self._cattura_e_invia_qr_poste(driver, auth_callback)
+                    qr_sent = True
+
+            # If OTP input field appears
+            if self._find_element(driver, poste_sel["otp"]):
+                log.info("Rilevato campo OTP PosteID sul portale")
+                deadline = max(deadline, min(abs_deadline, time.time() + 130))
+                successo = self._chiedi_e_inserisci_otp_poste(driver, auth_callback)
+                if successo and self.is_autenticato(driver):
+                    self.save(driver)
+                    self.session_valid = True
+                    return driver
+
+            # Interactive fallback if push notification is not approved within 30s
+            if (auth_callback and mode_norm == "app" and
+                    (time.time() - t0 > 30) and (time.time() - last_fallback_prompt > 60)):
+                last_fallback_prompt = time.time()
+                log.info("Notifica PosteID non ancora approvata: propongo fallback interattivo Telegram")
+                prompt_msg = (
+                    "⚠️ <b>Accesso SPID PosteID (Livello 2)</b>\n"
+                    "La notifica push nell'app PosteID non è stata ancora approvata o non è arrivata.\n\n"
+                    "Come vuoi procedere?"
+                )
+                poste_buttons = [
+                    [("📲 Invia di nuovo notifica", "auth:notify"), ("💬 Ricevi SMS con codice OTP", "auth:otp")],
+                    [("📸 Invia QR Code", "auth:qr"), ("❌ Annulla login", "auth:cancel")],
+                ]
+                scelta = None
+                try:
+                    scelta = auth_callback("ask_action", prompt=prompt_msg, buttons=poste_buttons)
+                except Exception as e:
+                    log.warning("auth_callback ask_action PosteID: %s", e)
+
+                if scelta == "notify":
+                    log.info("Scelta fallback PosteID: reinvio notifica")
+                    self._find_and_click(driver, poste_sel["btn_rinvia_push"])
+                    deadline = max(deadline, min(abs_deadline, time.time() + 65))
+                    if self.on_notify:
+                        self.on_notify("📲 Nuova notifica richiesta: controlla l'app PosteID!")
+                elif scelta == "otp":
+                    log.info("Scelta fallback PosteID: utente richiede codice SMS OTP")
+                    self._find_and_click(driver, poste_sel["btn_richiedi_sms_otp"])
+                    time.sleep(2)
+                    deadline = max(deadline, min(abs_deadline, time.time() + 130))
+                    if self._chiedi_e_inserisci_otp_poste(driver, auth_callback) and self.is_autenticato(driver):
+                        self.save(driver)
+                        self.session_valid = True
+                        return driver
+                elif scelta == "qr":
+                    log.info("Scelta fallback PosteID: utente richiede invio QR Code")
+                    if self.on_notify:
+                        self.on_notify("📲 Recupero il QR Code dal portale PosteID...")
+                    self._find_and_click(driver, poste_sel["btn_mostra_qr"])
+                    time.sleep(2)
+                    self._cattura_e_invia_qr_poste(driver, auth_callback)
+                    qr_sent = True
+                    deadline = max(deadline, min(abs_deadline, time.time() + 180))
+                elif scelta == "cancel":
+                    log.info("Login PosteID annullato dall'utente.")
+                    raise RuntimeError("Login SPID PosteID annullato dall'utente.")
+
+            time.sleep(3)
+
+        raise TimeoutError("Timeout nell'attesa approvazione SPID PosteID (autorizza l'accesso dall'app o inserisci l'OTP).")
+
     # ---------------- multi-provider SPID login ----------------
     def relogin_spid(self, provider_key: str, username: str = "", password: str = "",
                       wait_otp_sec: int = 180, auth_callback=None) -> webdriver.Chrome:
@@ -668,6 +994,14 @@ class SessionManager:
         """
         from selenium.webdriver.common.by import By
         from core import selectors
+
+        if provider_key.lower() == "poste":
+            return self.relogin_poste(
+                username=username,
+                password=password,
+                wait_otp_sec=wait_otp_sec,
+                auth_callback=auth_callback,
+            )
 
         # Selection of provider-specific selectors
         prov_map = {
