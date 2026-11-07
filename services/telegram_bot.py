@@ -33,6 +33,7 @@ HELP_TEXT = (
     "/ricette - elenca le ricette da prenotare\n"
     "/appuntamenti - elenca gli appuntamenti esistenti e genera eventi calendario (.ics)\n"
     "/version - versione corrente e verifica aggiornamenti su GitHub\n"
+    "/bug - guida e link per aprire una segnalazione di errore su GitHub 🐛\n"
     "\n❓ /help - questo messaggio"
 )
 
@@ -397,6 +398,24 @@ class TelegramBot:
         cfg = getattr(self.controller, "cfg", None) if hasattr(self, "controller") else None
         info = check_for_updates(force=True, cfg=cfg)
         testo, bottoni = format_telegram_welcome(info)
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://"))
+            else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
+        ] for row in bottoni])
+        await update.message.reply_text(
+            testo,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+    async def _h_bug(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Guide user through opening a bug report on GitHub with pre-filled guidelines."""
+        if not self._autorizzato(update):
+            return
+        self._risveglia_se_needed(update)
+        from services.updater import format_issue_guide
+        testo, bottoni = format_issue_guide()
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://"))
             else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
@@ -1719,6 +1738,7 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("blacklist", self._h_blacklist))
         self.app.add_handler(CommandHandler("stop", self._h_stop))
         self.app.add_handler(CommandHandler(["version", "versione", "aggiornamenti", "update"], self._h_version))
+        self.app.add_handler(CommandHandler(["bug", "segnala", "issue", "errore", "problema"], self._h_bug))
         self.app.add_handler(CommandHandler("help", self._h_help))
         # Inline buttons (wizard /monitora and replies)
         self.app.add_handler(CallbackQueryHandler(self._h_callback))

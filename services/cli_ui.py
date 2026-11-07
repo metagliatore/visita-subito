@@ -425,6 +425,8 @@ class CliUI:
             self._cmd_blacklist(arg)
         elif cmd in ("version", "versione", "update", "aggiornamenti", "v"):
             self._cmd_version()
+        elif cmd in ("bug", "segnala", "issue", "problema"):
+            self._cmd_bug()
         elif cmd in ("clear", "cls"):
             os.system("cls" if sys.platform == "win32" else "clear")
         elif cmd in ("quit", "exit", "q"):
@@ -452,6 +454,7 @@ class CliUI:
         print("  resume             - Riattiva il polling automatico")
         print("  blacklist, b       - Visualizza o svuota le disponibilità rifiutate")
         print("  version, v         - Visualizza versione e verifica aggiornamenti su GitHub")
+        print("  bug, issue         - Guida e link per segnalare un bug/errore su GitHub")
         print("  clear, cls         - Pulisce lo schermo del terminale")
         print("  quit, exit, q      - Chiude il programma")
         print("=" * 66 + "\n")
@@ -462,6 +465,17 @@ class CliUI:
         print("\nVerifica aggiornamenti su GitHub in corso...")
         info = check_for_updates(force=True, cfg=cfg)
         print(format_cli_welcome(info) + "\n")
+
+    def _cmd_bug(self) -> None:
+        from services.updater import format_issue_guide
+        text, buttons = format_issue_guide()
+        clean = strip_html(text)
+        print("\n" + "=" * 66)
+        print(clean)
+        for row in buttons:
+            for lbl, url in row:
+                print(f"  • {lbl}: {url}")
+        print("=" * 66 + "\n")
 
     def _cmd_status(self) -> None:
         if not self.controller:

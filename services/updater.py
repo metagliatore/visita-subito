@@ -30,6 +30,8 @@ GITHUB_URL = f"https://github.com/{GITHUB_REPO}"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 GITHUB_LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_TAGS_API = f"https://api.github.com/repos/{GITHUB_REPO}/tags"
+GITHUB_ISSUES_URL = f"https://github.com/{GITHUB_REPO}/issues"
+GITHUB_NEW_ISSUE_URL = f"https://github.com/{GITHUB_REPO}/issues/new"
 
 # Singleton cache for startup check
 _cached_update_info: UpdateInfo | None = None
@@ -298,6 +300,33 @@ def format_telegram_welcome(info: UpdateInfo) -> tuple[str, list[list[tuple[str,
         lines.append(f"✅ <i>Stai utilizzando l'ultima versione disponibile ({info.current_version}).</i>")
 
     buttons.append([("⭐ Progetto su GitHub", GITHUB_URL)])
+    return "\n".join(lines), buttons
+
+
+def format_issue_guide(version: str | None = None) -> tuple[str, list[list[tuple[str, str]]]]:
+    """Format guidance message and interactive buttons for reporting a bug on GitHub."""
+    v = version or APP_VERSION
+    lines = [
+        "🐛 <b>Segnalazione Bug o Malfunzionamento</b>",
+        "",
+        "Hai riscontrato un errore, un blocco o un comportamento anomalo?",
+        "Puoi aprire una segnalazione ufficiale su GitHub per aiutarci ad analizzarlo e risolverlo!",
+        "",
+        "📋 <b>Informazioni utili da includere:</b>",
+        f"• <b>Versione VisitaSubito:</b> <code>v{v}</code>",
+        "• <b>Ambiente:</b> Docker, Portainer, Linux, Windows o macOS",
+        "• <b>Metodo di autenticazione:</b> SPID (Sielte / Poste) o CIE (App / QR)",
+        "• <b>Descrizione:</b> cosa stavi facendo e cosa è successo",
+        "• <b>Log o errore:</b> copia le righe dal terminale o allega lo screenshot inviato dal bot",
+        "",
+        "🔒 <b>AVVISO DI SICUREZZA IMPORTANTE:</b>",
+        "<i>NON pubblicare MAI credenziali SPID, password, token Telegram o dati sanitari personali "
+        "(come NRE ricette o Codice Fiscale). Oscura sempre queste informazioni prima di inviare log o schermate!</i>",
+    ]
+    buttons = [
+        [("🐛 Apri nuova Issue su GitHub", GITHUB_NEW_ISSUE_URL)],
+        [("📋 Consulta Issue esistenti", GITHUB_ISSUES_URL), ("🌐 Repository GitHub", GITHUB_URL)],
+    ]
     return "\n".join(lines), buttons
 
 
