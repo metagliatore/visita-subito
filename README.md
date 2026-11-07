@@ -3,6 +3,12 @@
 </p>
 
 <p align="center">
+  <a href="docs/assets/visitasubito_showcase_1080p.mp4">
+    <img src="docs/assets/demo_showcase.gif" alt="VisitaSubito Demo in Azione" width="100%">
+  </a>
+</p>
+
+<p align="center">
   <b>Monitoraggio e Anticipo Appuntamenti Fascicolo Sanitario (Regione Lombardia)</b><br>
   <i>Fa la guardia 24/7 alle disdette sul portale regionale e anticipa le tue visite mediche di mesi con un semplice tap.</i>
 </p>
@@ -20,25 +26,11 @@
 > Sul portale sanitario regionale i posti si liberano continuamente per disdette o nuove aperture di agende, ma spariscono nel giro di pochissimi minuti. Passare le giornate ad aggiornare manualmente la pagina sperando in una disdetta è estenuante e inefficiente.
 >
 > Questo bot **fa la guardia 24/7 al posto tuo**: monitora ininterrottamente le disponibilità sul portale regionale, intercetta le cancellazioni all'istante e ti invia una notifica interattiva su **Telegram** (o con avviso sonoro via console). Con un semplice tap su **"Approva"**, il bot blocca e prenota subito il nuovo appuntamento, anticipando la tua visita medica di settimane o addirittura mesi.
->
-> 🎬 **[Guarda il Video Demo 16:9 HD in Azione](docs/assets/visitasubito_showcase_1080p.mp4)**: anticipo reale di **310 giorni** (da settembre 2027 a novembre 2026), calcolo percorso casa-ospedale e sincronizzazione Google Calendar.
 
 > [!IMPORTANT]
 > **Compatibilità e limitazioni attuali**:
 > - **Portale regionale**: al momento questo progetto supporta **esclusivamente il portale del Fascicolo Sanitario di Regione Lombardia** (`https://www.fascicolosanitario.regione.lombardia.it`).
 > - **Autenticazione**: sono supportati l'accesso tramite **SPID** (attualmente testato con SielteID via notifica push o OTP) e l'accesso tramite **CIE (Carta d'Identità Elettronica)** (Livello 2 con credenziali/app CieID o scansione diretta del QR Code inviato su Telegram). Gli altri provider SPID non sono al momento implementati nel flusso di login automatico.
-
----
-
-## 🎬 Demo in Azione
-
-Guarda come **VisitaSubito** intercetta una cancellazione in tempo reale, calcola i tempi di percorrenza da casa, verifica la disponibilità in agenda ed effettua l'anticipo immediato con un tocco su Telegram:
-
-<p align="center">
-  <video src="docs/assets/visitasubito_showcase_1080p.mp4" controls width="100%" poster="docs/assets/banner_header.png"></video>
-</p>
-
-> 📥 *Se il tuo browser o client non riproduce il video inline, puoi [visualizzare o scaricare direttamente il video HD (1.6 MB)](docs/assets/visitasubito_showcase_1080p.mp4).*
 
 ---
 
