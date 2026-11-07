@@ -20,6 +20,13 @@ def test_format_issue_guide():
     assert buttons[1][0][1] == GITHUB_ISSUES_URL
 
 
+def test_format_issue_guide_default_version():
+    from services.updater import APP_VERSION
+    text, buttons = format_issue_guide()
+    assert f"v{APP_VERSION}" in text
+    assert "metagliatore/visita-subito/issues" in buttons[0][0][1]
+
+
 def test_issue_templates_exist_and_valid():
     bug_yml = Path(".github/ISSUE_TEMPLATE/bug_report.yml")
     feature_yml = Path(".github/ISSUE_TEMPLATE/feature_request.yml")
@@ -62,3 +69,40 @@ def test_cli_ui_cmd_bug(capsys):
     captured = capsys.readouterr()
     assert "Segnala un Errore" in captured.out
     assert GITHUB_NEW_ISSUE_URL in captured.out
+
+
+@pytest.mark.asyncio
+async def test_telegram_h_bug_unauthorized():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot(token="fake:token", chat_id="12345")
+    mock_update = MagicMock()
+    mock_update.effective_user.id = 99999  # unauthorized user
+    mock_update.effective_chat.id = 99999
+    mock_update.message.reply_text = AsyncMock()
+
+    await bot._h_bug(mock_update, MagicMock())
+    mock_update.message.reply_text.assert_not_called()
+
+
+def test_telegram_help_contains_bug():
+    from services.telegram_bot import HELP_TEXT
+    assert "/bug" in HELP_TEXT
+    assert "malfunzionamento" in HELP_TEXT
+
+
+def test_cli_ui_help_contains_bug(capsys):
+    from services.cli_ui import CliUI
+    cli = CliUI(sound_alert=False)
+    cli._cmd_help()
+    captured = capsys.readouterr()
+    assert "bug" in captured.out
+    assert "malfunzionamento" in captured.out
+
+
+def test_cli_ui_dispatch_bug():
+    from services.cli_ui import CliUI
+    cli = CliUI(sound_alert=False)
+    cli._cmd_bug = MagicMock()
+    cli._dispatch_input("bug")
+    cli._cmd_bug.assert_called_once()
+
