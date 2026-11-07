@@ -425,7 +425,7 @@ class CliUI:
             self._cmd_blacklist(arg)
         elif cmd in ("version", "versione", "update", "aggiornamenti", "v"):
             self._cmd_version()
-        elif cmd in ("bug", "segnala", "issue", "problema"):
+        elif cmd == "bug":
             self._cmd_bug()
         elif cmd in ("clear", "cls"):
             os.system("cls" if sys.platform == "win32" else "clear")
@@ -454,7 +454,7 @@ class CliUI:
         print("  resume             - Riattiva il polling automatico")
         print("  blacklist, b       - Visualizza o svuota le disponibilità rifiutate")
         print("  version, v         - Visualizza versione e verifica aggiornamenti su GitHub")
-        print("  bug, issue         - Guida e link per segnalare un bug/errore su GitHub")
+        print("  bug                - Segnala un problema o malfunzionamento")
         print("  clear, cls         - Pulisce lo schermo del terminale")
         print("  quit, exit, q      - Chiude il programma")
         print("=" * 66 + "\n")

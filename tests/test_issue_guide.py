@@ -12,9 +12,8 @@ from services.updater import format_issue_guide, GITHUB_NEW_ISSUE_URL, GITHUB_IS
 
 def test_format_issue_guide():
     text, buttons = format_issue_guide(version="1.2.3")
-    assert "Segnalazione Bug o Malfunzionamento" in text
+    assert "Segnala un Errore" in text
     assert "v1.2.3" in text
-    assert "NON pubblicare MAI credenziali SPID" in text
     assert "Codice Fiscale" in text
     assert len(buttons) >= 2
     assert buttons[0][0][1] == GITHUB_NEW_ISSUE_URL
@@ -51,7 +50,7 @@ async def test_telegram_h_bug():
     await bot._h_bug(mock_update, MagicMock())
     mock_update.message.reply_text.assert_awaited_once()
     args, kwargs = mock_update.message.reply_text.call_args
-    assert "Segnalazione Bug" in args[0]
+    assert "Segnala un Errore" in args[0]
     assert "reply_markup" in kwargs
 
 
@@ -61,5 +60,5 @@ def test_cli_ui_cmd_bug(capsys):
     cli.controller = MagicMock()
     cli._cmd_bug()
     captured = capsys.readouterr()
-    assert "Segnalazione Bug" in captured.out
+    assert "Segnala un Errore" in captured.out
     assert GITHUB_NEW_ISSUE_URL in captured.out

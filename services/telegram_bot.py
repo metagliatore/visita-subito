@@ -33,7 +33,7 @@ HELP_TEXT = (
     "/ricette - elenca le ricette da prenotare\n"
     "/appuntamenti - elenca gli appuntamenti esistenti e genera eventi calendario (.ics)\n"
     "/version - versione corrente e verifica aggiornamenti su GitHub\n"
-    "/bug - guida e link per aprire una segnalazione di errore su GitHub 🐛\n"
+    "/bug - segnala un problema o malfunzionamento\n"
     "\n❓ /help - questo messaggio"
 )
 
@@ -1738,7 +1738,7 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("blacklist", self._h_blacklist))
         self.app.add_handler(CommandHandler("stop", self._h_stop))
         self.app.add_handler(CommandHandler(["version", "versione", "aggiornamenti", "update"], self._h_version))
-        self.app.add_handler(CommandHandler(["bug", "segnala", "issue", "errore", "problema"], self._h_bug))
+        self.app.add_handler(CommandHandler("bug", self._h_bug))
         self.app.add_handler(CommandHandler("help", self._h_help))
         # Inline buttons (wizard /monitora and replies)
         self.app.add_handler(CallbackQueryHandler(self._h_callback))

@@ -307,25 +307,23 @@ def format_issue_guide(version: str | None = None) -> tuple[str, list[list[tuple
     """Format guidance message and interactive buttons for reporting a bug on GitHub."""
     v = version or APP_VERSION
     lines = [
-        "🐛 <b>Segnalazione Bug o Malfunzionamento</b>",
+        "🐛 <b>Segnala un Errore (Bug)</b>",
         "",
-        "Hai riscontrato un errore, un blocco o un comportamento anomalo?",
-        "Puoi aprire una segnalazione ufficiale su GitHub per aiutarci ad analizzarlo e risolverlo!",
+        "Hai riscontrato un problema o un comportamento anomalo?",
+        "Puoi aprire una segnalazione su GitHub per aiutarci a risolverlo:",
         "",
-        "📋 <b>Informazioni utili da includere:</b>",
-        f"• <b>Versione VisitaSubito:</b> <code>v{v}</code>",
-        "• <b>Ambiente:</b> Docker, Portainer, Linux, Windows o macOS",
-        "• <b>Metodo di autenticazione:</b> SPID (Sielte / Poste) o CIE (App / QR)",
-        "• <b>Descrizione:</b> cosa stavi facendo e cosa è successo",
-        "• <b>Log o errore:</b> copia le righe dal terminale o allega lo screenshot inviato dal bot",
+        "📋 <b>Cosa indicare nella segnalazione:</b>",
+        f"• <b>Versione:</b> <code>v{v}</code>",
+        "• <b>Ambiente:</b> Docker, Linux, Windows o macOS",
+        "• <b>Accesso:</b> SPID (Poste / Sielte) o CIE",
+        "• <b>Descrizione:</b> cosa stavi facendo e le eventuali righe di errore/log",
         "",
-        "🔒 <b>AVVISO DI SICUREZZA IMPORTANTE:</b>",
-        "<i>NON pubblicare MAI credenziali SPID, password, token Telegram o dati sanitari personali "
-        "(come NRE ricette o Codice Fiscale). Oscura sempre queste informazioni prima di inviare log o schermate!</i>",
+        "🔒 <b>Attenzione alla privacy:</b>",
+        "<i>Non condividere mai dati sensibili come Codice Fiscale, password, credenziali SPID o token Telegram.</i>",
     ]
     buttons = [
-        [("🐛 Apri nuova Issue su GitHub", GITHUB_NEW_ISSUE_URL)],
-        [("📋 Consulta Issue esistenti", GITHUB_ISSUES_URL), ("🌐 Repository GitHub", GITHUB_URL)],
+        [("🐛 Apri segnalazione su GitHub", GITHUB_NEW_ISSUE_URL)],
+        [("📋 Consulta problemi noti", GITHUB_ISSUES_URL)],
     ]
     return "\n".join(lines), buttons
 
