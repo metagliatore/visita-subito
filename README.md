@@ -1,4 +1,20 @@
-# 🏥 Monitor Appuntamenti Fascicolo Sanitario (Regione Lombardia)
+<p align="center">
+  <img src="docs/assets/banner_header.png" alt="VisitaSubito Banner" width="100%">
+</p>
+
+<p align="center">
+  <b>Monitoraggio e Anticipo Appuntamenti Fascicolo Sanitario (Regione Lombardia)</b><br>
+  <i>Fa la guardia 24/7 alle disdette sul portale regionale e anticipa le tue visite mediche di mesi con un semplice tap.</i>
+</p>
+
+<p align="center">
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue?logo=python" alt="Python Version"></a>
+  <a href="https://docs.pytest.org/"><img src="https://img.shields.io/badge/tests-400%20passed-success?logo=pytest" alt="Tests"></a>
+  <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/docker-ready-2496ED?logo=docker" alt="Docker"></a>
+  <a href="https://telegram.org/"><img src="https://img.shields.io/badge/telegram-bot-2CA5E0?logo=telegram" alt="Telegram"></a>
+  <a href="https://www.fascicolosanitario.regione.lombardia.it"><img src="https://img.shields.io/badge/regione-lombardia-00875A" alt="Lombardia"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-orange" alt="License"></a>
+</p>
 
 > 💡 **Ti hanno fissato una visita o un esame tra 12 o 18 mesi?**  
 > Sul portale sanitario regionale i posti si liberano continuamente per disdette o nuove aperture di agende, ma spariscono nel giro di pochissimi minuti. Passare le giornate ad aggiornare manualmente la pagina sperando in una disdetta è estenuante e inefficiente.
