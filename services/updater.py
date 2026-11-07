@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 APP_NAME = "Visita-Subito"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 APP_DESCRIPTION = "Il tuo assistente personale per monitorare e anticipare visite ed esami sanitari in Lombardia"
 GITHUB_REPO = "metagliatore/visita-subito"
 GITHUB_URL = f"https://github.com/{GITHUB_REPO}"
