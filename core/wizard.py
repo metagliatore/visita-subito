@@ -209,7 +209,7 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
     elif scelta_auth == "spid_other":
         values["AUTH_METHOD"] = "spid"
         prov_opts = [
-            ("Poste Italiane (PosteID)", "poste"),
+            ("Poste Italiane (PosteID) [Sperimentale]", "poste"),
             ("Aruba ID", "aruba"),
             ("InfoCert ID", "infocert"),
             ("Lepida ID", "lepida"),
@@ -222,6 +222,7 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
         ]
         values["SPID_PROVIDER"] = prompt_choice("Seleziona il tuo gestore SPID:", prov_opts, default=1)
         if values["SPID_PROVIDER"] == "poste":
+            print("\n⚠️  NOTA: L'integrazione con SPID PosteID è attualmente in fase sperimentale.")
             mode_opts = [
                 ("Notifica push sull'app PosteID (Consigliata: credenziali + approvazione in-app)", "app"),
                 ("Codice OTP via SMS (Credenziali + inserimento codice SMS)", "sms"),

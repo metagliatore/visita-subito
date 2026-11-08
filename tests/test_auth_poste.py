@@ -23,6 +23,7 @@ def test_auth_config_poste_defaults():
     assert cfg.spid_provider == "poste"
     desc = cfg.describe()
     assert "PosteID" in desc
+    assert "Sperimentale" in desc
     assert "App notifica" in desc
     assert "semi-automatico" in desc
 
@@ -40,6 +41,7 @@ def test_auth_config_poste_env_overrides(monkeypatch):
     assert cfg.spid_otp_mode == "sms"
     desc = cfg.describe()
     assert "PosteID" in desc
+    assert "Sperimentale" in desc
     assert "SMS OTP" in desc
     assert "automatico" in desc
 
@@ -56,6 +58,7 @@ def test_auth_config_poste_qr_mode(monkeypatch):
     assert cfg.spid_otp_mode == "qr"
     desc = cfg.describe()
     assert "PosteID" in desc
+    assert "Sperimentale" in desc
     assert "QR Code" in desc
 
 
@@ -450,3 +453,169 @@ def test_chiedi_e_inserisci_otp_poste_fallbacks(tmp_path, monkeypatch):
     sm.on_otp_prompt = None
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     assert sm._chiedi_e_inserisci_otp_poste(mock_driver, auth_callback=None) is False
+
+
+def test_relogin_poste_fallback_notify_resend(tmp_path, monkeypatch):
+    sm = SessionManager(browser=MagicMock(), cookie_dir=tmp_path)
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_driver.current_url = "https://posteid.poste.it/jod-fod/app/login"
+    sm.browser.start.return_value = mock_driver
+
+    notified = []
+    sm.on_notify = lambda msg: notified.append(msg)
+
+    auth_cb = MagicMock(return_value="notify")
+
+    # is_autenticato becomes True only after fallback prompt triggers
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: auth_cb.called)
+    monkeypatch.setattr(
+        sm,
+        "_find_element",
+        lambda d, sel: True if sel == selectors.LOGIN_IDP_POSTEID["username"] else None,
+    )
+
+    clicked = []
+    monkeypatch.setattr(sm, "_find_and_click", lambda d, sel: clicked.append(sel) or True)
+    monkeypatch.setattr(sm, "_find_and_fill", lambda d, sel, val: True)
+
+    drv = sm.relogin_poste(
+        username="mario.rossi",
+        password="pwd",
+        mode="app",
+        wait_otp_sec=120,
+        auth_callback=auth_cb,
+    )
+    assert drv == mock_driver
+    assert any("Nuova notifica richiesta" in m for m in notified)
+    assert selectors.LOGIN_IDP_POSTEID["btn_rinvia_push"] in clicked
+
+
+def test_relogin_poste_credentials_not_found_notifies(tmp_path, monkeypatch):
+    sm = SessionManager(browser=MagicMock(), cookie_dir=tmp_path)
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_driver.current_url = "https://posteid.poste.it/jod-fod/app/login"
+    sm.browser.start.return_value = mock_driver
+
+    notified = []
+    sm.on_notify = lambda msg: notified.append(msg)
+
+    # _find_and_fill returns False (credentials fields not found)
+    monkeypatch.setattr(sm, "_find_element", lambda d, sel: None)
+    monkeypatch.setattr(sm, "_find_and_fill", lambda d, sel, val: False)
+    monkeypatch.setattr(sm, "_find_and_click", lambda d, sel: True)
+
+    authed_calls = [False, False, True]
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: authed_calls.pop(0) if authed_calls else True)
+
+    sm.relogin_poste(username="mario.rossi", password="pwd", mode="app")
+    assert any("Impossibile compilare automaticamente le credenziali PosteID" in m for m in notified)
+
+
+def test_relogin_poste_provider_selection_exceptions_handled(tmp_path, monkeypatch):
+    sm = SessionManager(browser=MagicMock(), cookie_dir=tmp_path)
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_driver.current_url = "https://posteid.poste.it/jod-fod/app/login"
+    # execute_script raises during provider click
+    mock_driver.execute_script.side_effect = Exception("DOM detached")
+    sm.browser.start.return_value = mock_driver
+
+    authed_calls = [False, True]
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: authed_calls.pop(0) if authed_calls else True)
+    # Should not crash, catches exception and authenticates
+    drv = sm.relogin_poste(username="mario.rossi", password="pwd")
+    assert drv == mock_driver
+
+
+def test_relogin_poste_provider_selection_by_index(tmp_path, monkeypatch):
+    sm = SessionManager(browser=MagicMock(), cookie_dir=tmp_path)
+    mock_driver = MagicMock()
+    mock_driver.get_cookies.return_value = []
+    mock_driver.current_url = "https://posteid.poste.it/jod-fod/app/login"
+    sm.browser.start.return_value = mock_driver
+
+    # 10 boxes, none has "poste" in text
+    boxes = [MagicMock(text=f"Provider {i}") for i in range(10)]
+    mock_driver.find_elements.return_value = boxes
+
+    scripts_executed = []
+    mock_driver.execute_script.side_effect = lambda script, *args: scripts_executed.append((script, args))
+
+    authed_calls = [False, True]
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: authed_calls.pop(0) if authed_calls else True)
+    sm.relogin_poste(username="mario.rossi", password="pwd")
+    # Verify target clicked was boxes[6]
+    assert any(args and args[0] == boxes[6] for script, args in scripts_executed)
+
+
+def test_cattura_qr_poste_all_screenshots_fail(tmp_path, monkeypatch):
+    sm = SessionManager(browser=MagicMock(), cookie_dir=tmp_path)
+    mock_driver = MagicMock()
+    mock_qr_el = MagicMock()
+    mock_qr_el.get_attribute.return_value = None
+    mock_qr_el.screenshot.side_effect = Exception("element screenshot failed")
+    mock_driver.save_screenshot.side_effect = Exception("page screenshot failed")
+
+    notified = []
+    sm.on_notify = lambda msg: notified.append(msg)
+
+    monkeypatch.setattr(sm, "_find_element", lambda d, sel: mock_qr_el)
+    monkeypatch.setattr(sm, "_find_and_click", lambda d, sel: True)
+
+    assert sm._cattura_e_invia_qr_poste(mock_driver, auth_callback=MagicMock()) is False
+    assert any("Impossibile acquisire lo screenshot del QR Code PosteID" in m for m in notified)
+
+
+def test_cattura_qr_poste_auth_callback_fails_completely_notifies(tmp_path, monkeypatch):
+    sm = SessionManager(browser=MagicMock(), cookie_dir=tmp_path)
+    mock_driver = MagicMock()
+    mock_qr_el = MagicMock()
+    mock_qr_el.get_attribute.return_value = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+
+    notified = []
+    sm.on_notify = lambda msg: notified.append(msg)
+
+    monkeypatch.setattr(sm, "_find_element", lambda d, sel: mock_qr_el)
+
+    # auth_callback throws on both send_photo and send_file
+    auth_cb = MagicMock(side_effect=Exception("network error"))
+
+    assert sm._cattura_e_invia_qr_poste(mock_driver, auth_callback=auth_cb) is True
+    assert any("QR Code PosteID visualizzato: scansionalo con l'app PosteID" in m for m in notified)
+
+
+def test_chiedi_e_inserisci_otp_poste_verification_failure(tmp_path, monkeypatch):
+    sm = SessionManager(browser=MagicMock(), cookie_dir=tmp_path)
+    mock_driver = MagicMock()
+
+    notified = []
+    sm.on_notify = lambda msg: notified.append(msg)
+
+    monkeypatch.setattr(sm, "_find_and_fill", lambda d, sel, val: True)
+    monkeypatch.setattr(sm, "_find_and_click", lambda d, sel: True)
+    # is_autenticato remains False after entering OTP
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: False)
+
+    auth_cb = MagicMock(return_value="123456")
+    res = sm._chiedi_e_inserisci_otp_poste(mock_driver, auth_callback=auth_cb)
+    assert res is False
+    assert any("Codice OTP PosteID non valido o autenticazione non riuscita" in m for m in notified)
+
+
+def test_chiedi_e_inserisci_otp_poste_auth_callback_exception_falls_back(tmp_path, monkeypatch):
+    sm = SessionManager(browser=MagicMock(), cookie_dir=tmp_path)
+    mock_driver = MagicMock()
+
+    monkeypatch.setattr(sm, "_find_and_fill", lambda d, sel, val: True)
+    monkeypatch.setattr(sm, "_find_and_click", lambda d, sel: True)
+    monkeypatch.setattr(sm, "is_autenticato", lambda d: True)
+
+    # auth_callback throws, but on_otp_prompt succeeds
+    auth_cb = MagicMock(side_effect=Exception("tg timeout"))
+    sm.on_otp_prompt = MagicMock(return_value="654321")
+
+    res = sm._chiedi_e_inserisci_otp_poste(mock_driver, auth_callback=auth_cb)
+    assert res is True
+

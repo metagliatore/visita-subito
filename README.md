@@ -30,7 +30,7 @@
 > [!IMPORTANT]
 > **Compatibilità e limitazioni attuali**:
 > - **Portale regionale**: al momento questo progetto supporta **esclusivamente il portale del Fascicolo Sanitario di Regione Lombardia** (`https://www.fascicolosanitario.regione.lombardia.it`).
-> - **Autenticazione**: sono supportati l'accesso tramite **SPID** (testato e ottimizzato per **SielteID** e **PosteID / Poste Italiane** con notifica push, SMS OTP o scansione QR Code inviato su Telegram) e l'accesso tramite **CIE (Carta d'Identità Elettronica)** (Livello 2 con credenziali/app CieID o scansione diretta del QR Code inviato su Telegram). Gli altri provider SPID sono supportati a livello standard con credenziali e secondo fattore.
+> - **Autenticazione**: sono supportati l'accesso tramite **SPID** (testato e ottimizzato per **SielteID**; in **fase sperimentale per PosteID / Poste Italiane** con notifica push, SMS OTP o scansione QR Code inviato su Telegram) e l'accesso tramite **CIE (Carta d'Identità Elettronica)** (Livello 2 con credenziali/app CieID o scansione diretta del QR Code inviato su Telegram). Gli altri provider SPID sono supportati a livello standard con credenziali e secondo fattore.
 
 ---
 
@@ -208,7 +208,7 @@ SPID_USERNAME=il_tuo_username
 SPID_PASSWORD=la_tua_password
 SPID_OTP_MODE=notifica
 
-# Oppure SPID PosteID (Poste Italiane)
+# Oppure SPID PosteID (Poste Italiane) [SPERIMENTALE]
 # SPID_PROVIDER=poste
 # POSTE_USERNAME=il_tuo_username
 # POSTE_PASSWORD=la_tua_password
@@ -253,7 +253,7 @@ Alla prima esecuzione:
 1. Il container si avvia e naviga automaticamente verso il portale di autenticazione.
 2. In base alla modalità scelta in `AUTH_METHOD`:
    - **SPID (SielteID)**: riceverai un messaggio su Telegram (`📲 Sto per inviare la notifica SielteID...`). Apri l'app **SielteID** sul tuo smartphone e approva la richiesta push entro 3 minuti.
-   - **SPID (PosteID)**: supporta l'approvazione push su app **PosteID**, l'inserimento interattivo del codice **SMS OTP**, oppure la ricezione istantanea del **QR Code** su Telegram da inquadrare con la fotocamera dell'app PosteID.
+   - **SPID (PosteID - Sperimentale)**: supporta l'approvazione push su app **PosteID**, l'inserimento interattivo del codice **SMS OTP**, oppure la ricezione istantanea del **QR Code** su Telegram da inquadrare con la fotocamera dell'app PosteID.
    - **CIE**: il bot supporta l'accesso Livello 2 (credenziali + notifica su app CieID con fallback interattivo su Telegram che recapita il **QR Code** direttamente in chat da inquadrare con l'app CieID, oppure modalità diretta `CIE_MODE=qr`).
 3. I cookie di sessione verranno salvati automaticamente nel volume persistente `./data/cookies/cookies.pkl`. Da questo momento in poi il monitor rimarrà attivo autonomamente.
 

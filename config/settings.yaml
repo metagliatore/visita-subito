@@ -7,7 +7,7 @@ auth:
 
   spid:
     # Provider SPID supportati:
-    # "sielte" (automatizzato con push/OTP), "poste" (automatizzato con push/SMS/QR),
+    # "sielte" (automatizzato con push/OTP), "poste" (sperimentale: con push/SMS/QR),
     # "aruba", "infocert", "lepida", "namirial", "tim", "register", "etna", "infocamere", "intesigroup"
     provider: "sielte"
     otp_mode: "notifica"  # "notifica"/"app" (push app), "sms"/"otp" (SMS OTP), "qr" (QR Code)

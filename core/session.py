@@ -823,7 +823,7 @@ class SessionManager:
             mode_lbl = "App PosteID (Notifica push)"
 
         if self.on_notify:
-            self.on_notify(f"🔑 Avvio accesso SPID PosteID ({mode_lbl})...")
+            self.on_notify(f"🔑 Avvio accesso SPID PosteID [Sperimentale] ({mode_lbl})...")
 
         driver.get(selectors.LOGIN_SPID["url_accedi"])
         time.sleep(3)

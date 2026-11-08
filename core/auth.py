@@ -118,6 +118,7 @@ class AuthConfig:
                     mode_lbl = ", SMS OTP"
                 else:
                     mode_lbl = ", App notifica"
+                return f"SPID ({label} [Sperimentale]{mode_lbl}) [{status}]"
             else:
                 mode_lbl = f", {self.spid_otp_mode}" if self.spid_otp_mode else ""
             return f"SPID ({label}{mode_lbl}) [{status}]"
@@ -165,7 +166,7 @@ class SielteSpidAuthProvider(BaseAuthProvider):
 
 
 class PosteSpidAuthProvider(BaseAuthProvider):
-    """SPID login with PosteID (Poste Italiane).
+    """SPID login with PosteID (Poste Italiane) [Sperimentale].
     Supports:
       - App push notification (default Level 2)
       - SMS OTP fallback
@@ -178,6 +179,7 @@ class PosteSpidAuthProvider(BaseAuthProvider):
         self.mode = (mode or "app").lower()
 
     def login(self, session_manager, browser, notify_cb=None, auth_callback=None, **kwargs) -> webdriver.Chrome:
+        log.info("Autenticazione SPID PosteID selezionata (funzionalità sperimentale)")
         if notify_cb and not getattr(session_manager, "on_notify", None):
             session_manager.on_notify = notify_cb
         kw = {"username": self.username, "password": self.password, "mode": self.mode}
