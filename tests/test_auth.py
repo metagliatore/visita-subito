@@ -121,7 +121,7 @@ def test_spid_providers_login():
     # Poste
     p_poste = PosteSpidAuthProvider(username="POSTE_U", password="PWD")
     p_poste.login(mock_sess, mock_browser)
-    mock_sess.relogin_spid.assert_called_with("poste", username="POSTE_U", password="PWD")
+    mock_sess.relogin_poste.assert_called_with(username="POSTE_U", password="PWD", mode="app")
 
     # Aruba
     p_aruba = ArubaSpidAuthProvider(username="ARUBA_U", password="PWD")

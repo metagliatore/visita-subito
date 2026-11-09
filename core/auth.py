@@ -72,6 +72,22 @@ class AuthConfig:
                     os.environ.get("SIELTE_PASSWORD") or
                     spid_sec.get("password", ""))
 
+        # PosteID specific overrides
+        poste_mode = (os.environ.get("POSTE_MODE") or
+                      os.environ.get("SPID_POSTE_MODE") or
+                      spid_sec.get("poste_mode") or
+                      spid_sec.get("mode"))
+        if spid_provider == "poste" and poste_mode:
+            spid_otp_mode = poste_mode
+
+        poste_user = os.environ.get("POSTE_USERNAME") or spid_sec.get("poste_username")
+        poste_pwd = os.environ.get("POSTE_PASSWORD") or spid_sec.get("poste_password")
+        if spid_provider == "poste":
+            if poste_user:
+                spid_user = poste_user
+            if poste_pwd:
+                spid_pwd = poste_pwd
+
         cie_user = os.environ.get("CIE_USERNAME") or cie_sec.get("username", "")
         cie_pwd = os.environ.get("CIE_PASSWORD") or cie_sec.get("password", "")
 
@@ -92,7 +108,19 @@ class AuthConfig:
             info = SPID_PROVIDERS.get(self.spid_provider, {})
             label = info.get("label", self.spid_provider.upper())
             status = "automatico" if self.spid_user and self.spid_pwd else "semi-automatico"
-            mode_lbl = f", {self.spid_otp_mode}" if self.spid_otp_mode else ""
+            if self.spid_provider == "poste":
+                mode_norm = (self.spid_otp_mode or "app").lower()
+                if mode_norm in ("qr", "qrcode"):
+                    mode_lbl = ", QR Code"
+                    if not (self.spid_user and self.spid_pwd):
+                        status = "automatico"
+                elif mode_norm in ("sms", "otp"):
+                    mode_lbl = ", SMS OTP"
+                else:
+                    mode_lbl = ", App notifica"
+                return f"SPID ({label} [Sperimentale]{mode_lbl}) [{status}]"
+            else:
+                mode_lbl = f", {self.spid_otp_mode}" if self.spid_otp_mode else ""
             return f"SPID ({label}{mode_lbl}) [{status}]"
         elif self.method == "cie":
             if self.cie_mode in ("qr", "qrcode"):
@@ -138,16 +166,27 @@ class SielteSpidAuthProvider(BaseAuthProvider):
 
 
 class PosteSpidAuthProvider(BaseAuthProvider):
-    """SPID login with PosteID (Poste Italiane)."""
+    """SPID login with PosteID (Poste Italiane) [Sperimentale].
+    Supports:
+      - App push notification (default Level 2)
+      - SMS OTP fallback
+      - QR Code mode
+    """
 
-    def __init__(self, username: str = "", password: str = ""):
+    def __init__(self, username: str = "", password: str = "", mode: str = "app"):
         self.username = username
         self.password = password
+        self.mode = (mode or "app").lower()
 
     def login(self, session_manager, browser, notify_cb=None, auth_callback=None, **kwargs) -> webdriver.Chrome:
-        kw = {"username": self.username, "password": self.password}
+        log.info("Autenticazione SPID PosteID selezionata (funzionalità sperimentale)")
+        if notify_cb and not getattr(session_manager, "on_notify", None):
+            session_manager.on_notify = notify_cb
+        kw = {"username": self.username, "password": self.password, "mode": self.mode}
         if auth_callback is not None:
             kw["auth_callback"] = auth_callback
+        if hasattr(session_manager, "relogin_poste"):
+            return session_manager.relogin_poste(**kw)
         return session_manager.relogin_spid("poste", **kw)
 
 
@@ -258,7 +297,11 @@ def get_auth_provider(auth_config: AuthConfig) -> BaseAuthProvider:
                 password=auth_config.spid_pwd,
                 otp_mode=auth_config.spid_otp_mode,
             ),
-            "poste": lambda: PosteSpidAuthProvider(username=auth_config.spid_user, password=auth_config.spid_pwd),
+            "poste": lambda: PosteSpidAuthProvider(
+                username=auth_config.spid_user,
+                password=auth_config.spid_pwd,
+                mode=auth_config.spid_otp_mode,
+            ),
             "aruba": lambda: ArubaSpidAuthProvider(username=auth_config.spid_user, password=auth_config.spid_pwd),
             "infocert": lambda: InfocertSpidAuthProvider(username=auth_config.spid_user, password=auth_config.spid_pwd),
             "lepida": lambda: LepidaSpidAuthProvider(username=auth_config.spid_user, password=auth_config.spid_pwd),
