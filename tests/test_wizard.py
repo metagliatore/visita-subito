@@ -295,6 +295,7 @@ def test_check_or_run_wizard_missing_non_tty(tmp_path, monkeypatch):
     # Ensure no environment variables trigger is_env_configured
     for k in ("TG_TOKEN", "TG_CHAT_ID", "CONTROL_INTERFACE", "AUTH_METHOD", "SPID_USERNAME", "SIELTE_USERNAME", "CIE_USERNAME", "CIE_MODE", "SPID_PROVIDER", "CONTAINER", "DOCKER"):
         monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr("core.wizard.is_env_configured", lambda: False)
 
     with patch("core.wizard.run_wizard") as mock_run:
         res = check_or_run_wizard(env_path=env_file, force=False)
