@@ -439,6 +439,7 @@ Una volta avviato, tutte le operazioni si gestiscono comodamente dalla chat con 
 | `/anticipa` | **Scorciatoia rapida anticipo**: seleziona un appuntamento esistente per cercare una data precedente, con verifica preventiva immediata della deadline anti-penale. |
 | `/stop` | Mostra i monitor attivi e permette di interromperne uno con un click. |
 | `/status` | Visualizza lo stato di tutti i monitor attivi (inclusa la deadline di sicurezza per le riprogrammazioni), lo stato della sessione SPID/CIE e il tempo rimanente al prossimo controllo. |
+| `/screenshot` | **Screenshot su richiesta**: cattura uno screenshot prioritario del portale regionale e lo invia direttamente su Telegram (senza interrompere i controlli o i flussi in corso). |
 | `/poll` | Forza un giro di verifica immediato delle disponibilità senza attendere l'intervallo schedulato. |
 | `/ricette` | Mostra le ricette dematerializzate più recenti presenti sul fascicolo (con stato e pulsante per scaricare il PDF promemoria). |
 | `/appuntamenti` | Mostra l'elenco degli appuntamenti già prenotati con data, struttura sanitaria, indirizzo e link rapido a Google Maps. |

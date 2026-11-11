@@ -28,6 +28,7 @@ HELP_TEXT = (
     "/status - stato monitor e sessione\n"
     "/poll - forza il controllo disponibilità\n"
     "/anticipa - cerca date precedenti per un appuntamento già prenotato\n"
+    "/screenshot - cattura e invia screenshot attuale del portale\n"
     "/pause - metti in pausa o riprendi la ricerca (/resume per riprendere)\n"
     "\n📋 <b>Informazioni</b>\n"
     "/ricette - elenca le ricette da prenotare\n"
@@ -690,6 +691,12 @@ class TelegramBot:
                     await q.edit_message_text("❌ <b>Inserimento OTP annullato.</b>", parse_mode=ParseMode.HTML)
                 return
 
+            # Screenshot on demand via button
+            if data in ("screenshot", "action:screenshot"):
+                await q.answer("📸 Acquisizione screenshot...")
+                await self._invia_screenshot(update, ctx)
+                return
+
             # Generate calendar event (.ics) from /appuntamenti
             if data.startswith("app:ics:"):
                 await self._h_genera_ics_callback(update, ctx, data)
@@ -1323,6 +1330,126 @@ class TelegramBot:
             text = "🔄 Login sbloccato e riavviato!\n\n" + text
         await update.message.reply_text(text)
 
+    async def _invia_screenshot(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Cattura uno screenshot istantaneo del portale e lo invia nella chat."""
+        target_msg = update.effective_message
+        if not self.controller:
+            if target_msg:
+                await target_msg.reply_text("❌ Controller non inizializzato.")
+            return
+
+        status_msg = None
+        if target_msg:
+            try:
+                status_msg = await target_msg.reply_text("📸 Acquisizione screenshot del portale in corso...")
+            except Exception as e_status:
+                log.debug("Invio messaggio di attesa screenshot non riuscito: %s", e_status)
+
+        loop = asyncio.get_running_loop()
+        try:
+            res = await loop.run_in_executor(None, self.controller.cattura_screenshot)
+        except Exception as e:
+            log.warning("Errore executor cattura_screenshot: %s", e)
+            if status_msg:
+                try:
+                    await status_msg.edit_text(f"❌ Errore durante l'acquisizione dello screenshot: {e}")
+                except Exception:
+                    pass
+            return
+
+        if not res or not res.get("ok"):
+            err_msg = res.get("error", "browser non disponibile") if res else "errore sconosciuto"
+            if status_msg:
+                try:
+                    await status_msg.edit_text(
+                        f"❌ Impossibile acquisire lo screenshot del portale:\n<code>{self._esc(err_msg)}</code>",
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception:
+                    pass
+            return
+
+        png_path = res.get("png_path", "")
+        url = res.get("url", "")
+        title = res.get("title", "")
+        stato = res.get("stato", "")
+        ts = res.get("timestamp", "")
+        in_corso = res.get("in_corso", False)
+
+        caption_lines = [
+            "📸 <b>Screenshot del Portale</b>",
+            "",
+            f"🌐 <b>URL:</b> <code>{self._esc(url)}</code>" if url else "",
+            f"📄 <b>Titolo:</b> {self._esc(title)}" if title else "",
+            f"ℹ️ <b>Stato:</b> {self._esc(stato)}" if stato else "",
+            "⚡ <i>Catturato con priorità (flusso attivo preservato)</i>" if in_corso else "",
+            f"⏱ <i>{self._esc(ts)}</i>",
+        ]
+        caption = "\n".join(line for line in caption_lines if line)
+
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        bot = ctx.bot if (ctx and hasattr(ctx, "bot")) else getattr(self, "app", None).bot if getattr(self, "app", None) else None
+
+        sent = False
+        try:
+            with open(png_path, "rb") as f:
+                if target_msg and hasattr(target_msg, "reply_photo"):
+                    await target_msg.reply_photo(
+                        photo=f,
+                        caption=caption,
+                        parse_mode=ParseMode.HTML,
+                    )
+                elif bot and chat_id:
+                    await bot.send_photo(
+                        chat_id=chat_id,
+                        photo=f,
+                        caption=caption,
+                        parse_mode=ParseMode.HTML,
+                    )
+                sent = True
+        except Exception as e_photo:
+            log.warning("reply_photo fallito (%s), tento invio come file/documento", e_photo)
+            try:
+                from pathlib import Path
+                filename = Path(png_path).name
+                with open(png_path, "rb") as f:
+                    if target_msg and hasattr(target_msg, "reply_document"):
+                        await target_msg.reply_document(
+                            document=f,
+                            filename=filename,
+                            caption=caption,
+                            parse_mode=ParseMode.HTML,
+                        )
+                    elif bot and chat_id:
+                        await bot.send_document(
+                            chat_id=chat_id,
+                            document=f,
+                            filename=filename,
+                            caption=caption,
+                            parse_mode=ParseMode.HTML,
+                        )
+                    sent = True
+            except Exception as e_doc:
+                log.error("Invio screenshot come documento fallito: %s", e_doc)
+                if status_msg:
+                    try:
+                        await status_msg.edit_text(f"❌ Errore durante l'invio dell'immagine: {e_doc}")
+                    except Exception:
+                        pass
+                return
+
+        if sent and status_msg:
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+
+    async def _h_screenshot(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._autorizzato(update):
+            return
+        self._risveglia_se_needed(update)
+        await self._invia_screenshot(update, ctx)
+
     async def _h_poll(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
             return
@@ -1701,6 +1828,7 @@ class TelegramBot:
                 BotCommand("status", "Stato dei monitor e sessione SPID"),
                 BotCommand("poll", "Forza controllo disponibilità adesso"),
                 BotCommand("anticipa", "Cerca date precedenti per visita prenotata"),
+                BotCommand("screenshot", "Cattura e invia screenshot del portale"),
                 BotCommand("pause", "Mette in pausa o riprende la ricerca automatica"),
                 BotCommand("resume", "Riprende la ricerca automatica"),
                 BotCommand("ricette", "Elenco delle ricette dematerializzate"),
@@ -1732,6 +1860,7 @@ class TelegramBot:
         self.app.add_handler(CommandHandler(["appuntamenti", "calendario", "ics"], self._h_appuntamenti))
         self.app.add_handler(CommandHandler("poll", self._h_poll))
         self.app.add_handler(CommandHandler("anticipa", self._h_anticipa))
+        self.app.add_handler(CommandHandler(["screenshot", "screen", "foto"], self._h_screenshot))
         self.app.add_handler(CommandHandler(["pause", "pause_unpause"], self._h_pause))
         self.app.add_handler(CommandHandler(["resume", "unpause"], self._h_resume))
         self.app.add_handler(CommandHandler("monitora", self._h_monitora))

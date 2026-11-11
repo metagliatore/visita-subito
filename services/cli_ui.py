@@ -419,6 +419,8 @@ class CliUI:
             self._cmd_ricette()
         elif cmd in ("anticipa", "a"):
             self._cmd_anticipa(arg)
+        elif cmd in ("screenshot", "screen", "foto"):
+            self._cmd_screenshot()
         elif cmd in ("monitora", "m"):
             self._cmd_monitora()
         elif cmd in ("blacklist", "b"):
@@ -450,6 +452,7 @@ class CliUI:
         print("  ricette, r         - Elenca le ricette mediche (prenotabili e prenotate)")
         print("  monitora, m        - Procedura guidata per creare un nuovo monitoraggio")
         print("  anticipa, a        - Avvia la ricerca di anticipi su un appuntamento")
+        print("  screenshot, screen - Cattura e salva screenshot attuale del portale")
         print("  pause              - Mette in pausa il polling automatico")
         print("  resume             - Riattiva il polling automatico")
         print("  blacklist, b       - Visualizza o svuota le disponibilità rifiutate")
@@ -476,6 +479,26 @@ class CliUI:
             for lbl, url in row:
                 print(f"  • {lbl}: {url}")
         print("=" * 66 + "\n")
+
+    def _cmd_screenshot(self) -> None:
+        if not self.controller:
+            print("[!] Controller non inizializzato.")
+            return
+        print("📸 Acquisizione screenshot del portale in corso...")
+        res = self.controller.cattura_screenshot(prefix="cli")
+        if not res or not res.get("ok"):
+            err = res.get("error", "errore sconosciuto") if res else "errore sconosciuto"
+            print(f"[!] Errore acquisizione screenshot: {err}")
+            return
+        print(f"✅ Screenshot salvato: {res['png_path']}")
+        if res.get("url"):
+            print(f"   URL: {res['url']}")
+        if res.get("title"):
+            print(f"   Titolo: {res['title']}")
+        if res.get("stato"):
+            print(f"   Stato: {res['stato']}")
+        if res.get("in_corso"):
+            print("   ⚡ Catturato con priorità (flusso attivo in background preservato)")
 
     def _cmd_status(self) -> None:
         if not self.controller:

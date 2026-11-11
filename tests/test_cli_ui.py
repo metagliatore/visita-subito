@@ -427,3 +427,35 @@ def test_command_monitora_interactive_with_fascia(monkeypatch, capsys):
     ui._dispatch_input("monitora")
     kwargs_custom = mock_ctl.aggiungi_monitor.call_args[1]
     assert kwargs_custom["criteri"]["fascia"] == "08:30-11:30"
+
+
+def test_cmd_screenshot_success(capsys):
+    ui = CliUI()
+    mock_ctl = MagicMock()
+    mock_ctl.cattura_screenshot.return_value = {
+        "ok": True,
+        "png_path": "/path/to/shot.png",
+        "url": "https://example.com/portal",
+        "title": "Portale",
+        "stato": "Sessione attiva",
+        "in_corso": True,
+    }
+    ui.controller = mock_ctl
+    ui._dispatch_input("screenshot")
+    out = capsys.readouterr().out
+    assert "Screenshot salvato: /path/to/shot.png" in out
+    assert "URL: https://example.com/portal" in out
+    assert "Catturato con priorità" in out
+
+
+def test_cmd_screenshot_error(capsys):
+    ui = CliUI()
+    mock_ctl = MagicMock()
+    mock_ctl.cattura_screenshot.return_value = {
+        "ok": False,
+        "error": "Driver non disponibile",
+    }
+    ui.controller = mock_ctl
+    ui._dispatch_input("screen")
+    out = capsys.readouterr().out
+    assert "Errore acquisizione screenshot: Driver non disponibile" in out
