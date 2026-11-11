@@ -1097,3 +1097,161 @@ def test_h_callback_decide_deny_day():
     msg = q.edit_message_text.call_args[0][0]
     assert "Giorno rifiutato" in msg
     assert "intera giornata è stata aggiunta alla blacklist" in msg
+
+
+def test_h_screenshot_success(tmp_path):
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    bot.controller = mock_ctl
+
+    png_file = tmp_path / "shot.png"
+    png_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    mock_ctl.cattura_screenshot.return_value = {
+        "ok": True,
+        "png_path": str(png_file),
+        "url": "https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata",
+        "title": "Portale Fascicolo",
+        "stato": "Sessione attiva (idle)",
+        "timestamp": "12/11/2026 12:00:00",
+        "in_corso": False,
+    }
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    status_msg = MagicMock()
+    status_msg.edit_text = AsyncMock()
+    status_msg.delete = AsyncMock()
+    up.effective_message.reply_text = AsyncMock(return_value=status_msg)
+    up.effective_message.reply_photo = AsyncMock()
+
+    ctx = MagicMock()
+    asyncio.run(bot._h_screenshot(up, ctx))
+
+    up.effective_message.reply_text.assert_awaited_once()
+    up.effective_message.reply_photo.assert_awaited_once()
+    call_kw = up.effective_message.reply_photo.call_args[1]
+    assert "Screenshot del Portale" in call_kw["caption"]
+    assert "Portale Fascicolo" in call_kw["caption"]
+    assert "Sessione attiva" in call_kw["caption"]
+    status_msg.delete.assert_awaited_once()
+
+
+def test_h_screenshot_fallback_to_document(tmp_path):
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    bot.controller = mock_ctl
+
+    png_file = tmp_path / "shot2.png"
+    png_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    mock_ctl.cattura_screenshot.return_value = {
+        "ok": True,
+        "png_path": str(png_file),
+        "url": "https://example.com",
+        "title": "Title",
+        "stato": "Ricerca in corso",
+        "timestamp": "12/11/2026 12:00:00",
+        "in_corso": True,
+    }
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    status_msg = MagicMock()
+    status_msg.edit_text = AsyncMock()
+    status_msg.delete = AsyncMock()
+    up.effective_message.reply_text = AsyncMock(return_value=status_msg)
+    up.effective_message.reply_photo = AsyncMock(side_effect=Exception("Telegram photo format error"))
+    up.effective_message.reply_document = AsyncMock()
+
+    ctx = MagicMock()
+    asyncio.run(bot._h_screenshot(up, ctx))
+
+    up.effective_message.reply_photo.assert_awaited_once()
+    up.effective_message.reply_document.assert_awaited_once()
+    call_kw = up.effective_message.reply_document.call_args[1]
+    assert "Catturato con priorità" in call_kw["caption"]
+    status_msg.delete.assert_awaited_once()
+
+
+def test_h_screenshot_error():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    bot.controller = mock_ctl
+
+    mock_ctl.cattura_screenshot.return_value = {
+        "ok": False,
+        "error": "Driver crash details",
+    }
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    status_msg = MagicMock()
+    status_msg.edit_text = AsyncMock()
+    up.effective_message.reply_text = AsyncMock(return_value=status_msg)
+
+    ctx = MagicMock()
+    asyncio.run(bot._h_screenshot(up, ctx))
+
+    status_msg.edit_text.assert_awaited_once()
+    assert "Driver crash details" in status_msg.edit_text.call_args[0][0]
+
+
+def test_h_screenshot_unauthorized():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    bot.controller = mock_ctl
+
+    up = MagicMock()
+    up.effective_chat.id = 99999  # Unauthorized chat
+    up.message.reply_text = AsyncMock()
+
+    ctx = MagicMock()
+    asyncio.run(bot._h_screenshot(up, ctx))
+
+    mock_ctl.cattura_screenshot.assert_not_called()
+
+
+def test_h_callback_screenshot(tmp_path):
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    bot.controller = mock_ctl
+
+    png_file = tmp_path / "shot3.png"
+    png_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    mock_ctl.cattura_screenshot.return_value = {
+        "ok": True,
+        "png_path": str(png_file),
+        "url": "https://example.com",
+        "title": "Title",
+        "stato": "Sessione attiva",
+        "timestamp": "12/11/2026 12:00:00",
+        "in_corso": False,
+    }
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    q = up.callback_query
+    q.data = "screenshot"
+    q.answer = AsyncMock()
+    status_msg = MagicMock()
+    status_msg.delete = AsyncMock()
+    up.effective_message.reply_text = AsyncMock(return_value=status_msg)
+    up.effective_message.reply_photo = AsyncMock()
+
+    ctx = MagicMock()
+    asyncio.run(bot._h_callback(up, ctx))
+
+    q.answer.assert_awaited_once()
+    up.effective_message.reply_photo.assert_awaited_once()

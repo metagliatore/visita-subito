@@ -222,6 +222,183 @@ class Controller:
         from core.debug import salva_debug_dump
         return salva_debug_dump(driver, tag=name)
 
+    def cattura_screenshot(self, tag: str = "richiesta_utente", prefix: str = "tg") -> dict:
+        """Cattura uno screenshot istantaneo del portale con priorità, senza interrompere i flussi in corso.
+
+        Se il browser è attivo, esegue l'acquisizione con priorità:
+          - Prova ad acquisire il lock per brevissimo tempo (0.5s);
+          - Se il lock è occupato da un flusso in corso (ricerca/polling/login),
+            esegue la cattura direttamente dal driver (operazione read-only a livello di framebuffer),
+            garantendo la priorità della risposta e preservando inalterato lo stato della pagina e del flusso.
+        Se il browser non è ancora avviato, acquisisce il lock, lo avvia navigando al portale ed effettua lo scatto.
+
+        Returns:
+            dict con chiavi:
+              - 'ok': bool
+              - 'png_path': str
+              - 'html_path': Optional[str]
+              - 'url': str
+              - 'title': str
+              - 'stato': str
+              - 'timestamp': str
+              - 'in_corso': bool
+              - 'error': Optional[str]
+        """
+        from datetime import datetime
+        from core.debug import get_debug_dir
+
+        dump_dir = get_debug_dir()
+        ts_file = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ts_readable = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        ref_id = f"{ts_file}_{prefix}_{tag}"
+        png_file = dump_dir / f"{ref_id}.png"
+
+        driver = getattr(self.browser, "driver", None)
+        is_alive = False
+        if driver is not None:
+            try:
+                is_alive = self.browser.is_alive()
+            except Exception:
+                is_alive = False
+
+        # Caso 1: Browser non avviato o non responsivo
+        if not is_alive:
+            lock = getattr(self, "_browser_lock", None) or threading.RLock()
+            acquired = False
+            try:
+                acquired = lock.acquire(timeout=10.0)
+            except Exception:
+                acquired = False
+
+            if not acquired:
+                return {"ok": False, "error": "Browser non avviato e lock occupato"}
+
+            try:
+                driver = self.browser.start()
+                max_idle = self.cfg.settings.get("session", {}).get("max_idle_seconds", 21600)
+                if getattr(self.sess, "session_valid", False) and not self.sess.needs_login() and not self.sess.is_expired(max_idle):
+                    driver.get("https://www.fascicolosanitario.regione.lombardia.it")
+                    time.sleep(1.5)
+                    self.sess.load_cookies(driver)
+                    driver.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
+                else:
+                    driver.get("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
+                time.sleep(3)
+
+                driver.save_screenshot(str(png_file))
+                url = getattr(driver, "current_url", "") or ""
+                title = getattr(driver, "title", "") or ""
+
+                html_path = None
+                try:
+                    html_file = dump_dir / f"{ref_id}.html"
+                    src = getattr(driver, "page_source", "")
+                    if src:
+                        html_file.write_text(str(src), encoding="utf-8")
+                        html_path = str(html_file)
+                except Exception:
+                    pass
+
+                return {
+                    "ok": True,
+                    "png_path": str(png_file),
+                    "html_path": html_path,
+                    "url": url,
+                    "title": title,
+                    "stato": "Browser avviato su richiesta (idle)",
+                    "timestamp": ts_readable,
+                    "in_corso": False,
+                }
+            except Exception as e:
+                log.warning("cattura_screenshot fallita all'avvio browser: %s", e)
+                return {"ok": False, "error": f"Errore avvio browser o screenshot: {e}"}
+            finally:
+                if acquired:
+                    lock.release()
+
+        # Caso 2: Browser attivo
+        stato_parts = []
+        in_corso = False
+        if getattr(self, "login_in_corso", False):
+            stato_parts.append("Autenticazione in corso")
+            in_corso = True
+        elif getattr(self, "polling_in_corso", False):
+            stato_parts.append("Ricerca disponibilità in corso")
+            in_corso = True
+        elif getattr(self, "paused", False):
+            stato_parts.append("Monitoraggio in pausa")
+        elif getattr(self.sess, "session_valid", False):
+            stato_parts.append("Sessione attiva (idle)")
+        else:
+            stato_parts.append("In attesa")
+
+        active_mids = [
+            f.mid for f in getattr(self, "_flows", [])
+            if hasattr(self, "store") and hasattr(self.store, "get_action") and self.store.get_action(f.mid) in ("polling", "executing")
+        ]
+        if active_mids:
+            stato_parts.append(f"Monitor: {', '.join(active_mids)}")
+
+        stato = " · ".join(stato_parts)
+
+        lock = getattr(self, "_browser_lock", None) or threading.RLock()
+        acquired = False
+        try:
+            acquired = lock.acquire(timeout=0.5)
+        except Exception:
+            acquired = False
+
+        try:
+            successo = False
+            last_err = None
+            for attempt in range(2):
+                try:
+                    driver.save_screenshot(str(png_file))
+                    successo = True
+                    break
+                except Exception as e_shot:
+                    last_err = e_shot
+                    log.debug("cattura_screenshot tentativo %d fallito: %s", attempt + 1, e_shot)
+                    time.sleep(0.3)
+
+            if not successo:
+                log.warning("cattura_screenshot fallita: %s", last_err)
+                return {"ok": False, "error": f"Impossibile salvare lo screenshot: {last_err}"}
+
+            try:
+                url = getattr(driver, "current_url", "") or ""
+            except Exception:
+                url = ""
+            try:
+                title = getattr(driver, "title", "") or ""
+            except Exception:
+                title = ""
+
+            html_path = None
+            try:
+                html_file = dump_dir / f"{ref_id}.html"
+                src = getattr(driver, "page_source", "")
+                if src:
+                    html_file.write_text(str(src), encoding="utf-8")
+                    html_path = str(html_file)
+            except Exception as e_html:
+                log.debug("Salvataggio HTML dump per screenshot fallito: %s", e_html)
+
+            log.info("Screenshot del portale acquisito: %s (url=%s, priorità=%s)", png_file, url, not acquired)
+            return {
+                "ok": True,
+                "png_path": str(png_file),
+                "html_path": html_path,
+                "url": url,
+                "title": title,
+                "stato": stato,
+                "timestamp": ts_readable,
+                "in_corso": in_corso,
+            }
+        finally:
+            if acquired:
+                lock.release()
+
     def get_ricette(self) -> list | None:
         """Read Prescriptions page and return classified cards.
 
