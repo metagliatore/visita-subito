@@ -19,6 +19,7 @@ def test_main_missing_env_non_tty(tmp_path, monkeypatch):
     monkeypatch.setattr("core.config.get_base_dir", lambda: tmp_path)
     monkeypatch.setattr("core.wizard.get_base_dir", lambda: tmp_path)
     monkeypatch.setattr(main, "get_base_dir", lambda: tmp_path)
+    monkeypatch.setattr("core.wizard.is_env_configured", lambda: False)
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     for k in (
         "TG_TOKEN",
