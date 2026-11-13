@@ -1071,6 +1071,7 @@ class Flow:
                 f"senza pagare alcuna sanzione (rispettando il termine di 3 giorni lavorativi di preavviso)."
             )
             self._chiedi_post_prenotazione(slot)
+            self._invia_messaggio_donazione(slot)
         except Exception as ex:
             log.warning("[%s] Errore invio notifica post-autobook: %s", self.mid, ex)
 
@@ -1203,6 +1204,7 @@ class Flow:
             sostituito_txt = f" in sostituzione di quello del {d_attuale}" if d_attuale else ""
             self.bot.notify(f"✅ Appuntamento {slot.date_str} ore {slot.time_str} prenotato{sostituito_txt}.")
             self._chiedi_post_prenotazione(slot)
+            self._invia_messaggio_donazione(slot)
             return "ok"
         except Exception as e:  # noqa: BLE001
             log.exception("[%s] esecuzione fallita", self.mid)
@@ -1237,3 +1239,18 @@ class Flow:
                 self.bot.notify(msg)
         except Exception as e:  # noqa: BLE001
             log.warning("[%s] invio richiesta post-prenotazione fallito: %s", self.mid, e)
+
+    def _invia_messaggio_donazione(self, slot=None) -> None:
+        """Invia messaggio di ringraziamento e supporto/donazione se configurato."""
+        try:
+            from services.donation import invia_messaggio_donazione
+            settings = getattr(self, "settings", None)
+            if not settings:
+                try:
+                    from core.config import Config
+                    settings = Config.load().settings
+                except Exception:
+                    settings = {}
+            invia_messaggio_donazione(self.bot, slot=slot, monitor=self.monitor, settings=settings)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[%s] invio notifica donazione fallito: %s", self.mid, e)

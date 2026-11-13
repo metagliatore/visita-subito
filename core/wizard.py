@@ -209,7 +209,7 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
     elif scelta_auth == "spid_other":
         values["AUTH_METHOD"] = "spid"
         prov_opts = [
-            ("Poste Italiane (PosteID)", "poste"),
+            ("Poste Italiane (PosteID) [Sperimentale]", "poste"),
             ("Aruba ID", "aruba"),
             ("InfoCert ID", "infocert"),
             ("Lepida ID", "lepida"),
@@ -221,9 +221,28 @@ def _run_wizard_interactive(env_path: Path | None = None, example_path: Path | N
             ("EtnaID", "etna"),
         ]
         values["SPID_PROVIDER"] = prompt_choice("Seleziona il tuo gestore SPID:", prov_opts, default=1)
-        values["SPID_USERNAME"] = prompt_input(f"Username {values['SPID_PROVIDER'].upper()}")
-        values["SPID_PASSWORD"] = prompt_input("Password", secret=True)
-        values["SPID_OTP_MODE"] = "notifica"
+        if values["SPID_PROVIDER"] == "poste":
+            print("\n⚠️  NOTA: L'integrazione con SPID PosteID è attualmente in fase sperimentale.")
+            mode_opts = [
+                ("Notifica push sull'app PosteID (Consigliata: credenziali + approvazione in-app)", "app"),
+                ("Codice OTP via SMS (Credenziali + inserimento codice SMS)", "sms"),
+                ("QR Code (Senza password salvata: scansione immediata da app PosteID)", "qr"),
+            ]
+            chosen_mode = prompt_choice("Modalità di accesso PosteID:", mode_opts, default=1)
+            values["SPID_OTP_MODE"] = chosen_mode
+            values["POSTE_MODE"] = chosen_mode
+            if chosen_mode != "qr":
+                values["SPID_USERNAME"] = prompt_input("Username PosteID / Codice Fiscale")
+                values["SPID_PASSWORD"] = prompt_input("Password PosteID", secret=True)
+                values["POSTE_USERNAME"] = values["SPID_USERNAME"]
+                values["POSTE_PASSWORD"] = values["SPID_PASSWORD"]
+            else:
+                values["SPID_USERNAME"] = ""
+                values["SPID_PASSWORD"] = ""
+        else:
+            values["SPID_USERNAME"] = prompt_input(f"Username {values['SPID_PROVIDER'].upper()}")
+            values["SPID_PASSWORD"] = prompt_input("Password", secret=True)
+            values["SPID_OTP_MODE"] = "notifica"
 
     elif scelta_auth == "cie_app":
         values["AUTH_METHOD"] = "cie"

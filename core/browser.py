@@ -282,11 +282,13 @@ class Browser:
     def ec(self):
         return EC
 
-    def screenshot(self, path: str) -> None:
-        """Captures a screenshot for debugging or inspection."""
+    def screenshot(self, path: str) -> bool:
+        """Captures a screenshot for debugging or inspection. Returns True on success."""
         if self.driver is None:
-            return
+            return False
         try:
             self.driver.save_screenshot(path)
+            return True
         except Exception as e:  # noqa: BLE001
             log.warning("screenshot fallita: %s", e)
+            return False

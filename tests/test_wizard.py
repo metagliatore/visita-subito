@@ -175,6 +175,100 @@ def test_run_wizard_cie_qr_mode(tmp_path, monkeypatch):
     assert "POLL_INTERVAL_SECONDS=600" in content
 
 
+def test_run_wizard_spid_poste_mode(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    example_file = tmp_path / ".env.example"
+    example_file.write_text("CONTROL_INTERFACE=telegram\nTG_TOKEN=\nTG_CHAT_ID=\nAUTH_METHOD=spid\nSPID_PROVIDER=sielte\n", encoding="utf-8")
+
+    inputs = [
+        "1",                 # Modalità: Telegram
+        "bot_poste:TOKEN",   # TG_TOKEN
+        "99887766",          # TG_CHAT_ID
+        "",                  # TG_CHAT_ID_SECONDARY
+        "2",                 # Metodo: SPID con altro fornitore
+        "1",                 # Provider: Poste Italiane (PosteID)
+        "1",                 # Modalità: Notifica push su App PosteID
+        "mario.rossi",       # Username PosteID
+        "PostePass123!",     # Password PosteID
+        "1",                 # first_match
+        "5",                 # 5 minuti
+    ]
+    input_iter = iter(inputs)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(input_iter))
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": next(input_iter))
+
+    ok = run_wizard(env_path=env_file, example_path=example_file)
+    assert ok is True
+    content = env_file.read_text(encoding="utf-8")
+    assert "AUTH_METHOD=spid" in content
+    assert "SPID_PROVIDER=poste" in content
+    assert "SPID_USERNAME=mario.rossi" in content
+    assert "SPID_PASSWORD=PostePass123!" in content
+    assert "POSTE_MODE=app" in content
+    assert "SPID_OTP_MODE=app" in content
+
+
+def test_run_wizard_spid_poste_qr_mode(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    example_file = tmp_path / ".env.example"
+    example_file.write_text("CONTROL_INTERFACE=telegram\nTG_TOKEN=\nTG_CHAT_ID=\nAUTH_METHOD=spid\nSPID_PROVIDER=sielte\n", encoding="utf-8")
+
+    inputs = [
+        "1",                 # Modalità: Telegram
+        "bot_poste:TOKEN",   # TG_TOKEN
+        "99887766",          # TG_CHAT_ID
+        "",                  # TG_CHAT_ID_SECONDARY
+        "2",                 # Metodo: SPID con altro fornitore
+        "1",                 # Provider: Poste Italiane (PosteID)
+        "3",                 # Modalità: QR Code (nessun username/pwd richiesto)
+        "1",                 # first_match
+        "5",                 # 5 minuti
+    ]
+    input_iter = iter(inputs)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(input_iter))
+
+    ok = run_wizard(env_path=env_file, example_path=example_file)
+    assert ok is True
+    content = env_file.read_text(encoding="utf-8")
+    assert "AUTH_METHOD=spid" in content
+    assert "SPID_PROVIDER=poste" in content
+    assert "POSTE_MODE=qr" in content
+    assert "SPID_OTP_MODE=qr" in content
+
+
+def test_run_wizard_spid_poste_sms_mode(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    example_file = tmp_path / ".env.example"
+    example_file.write_text("CONTROL_INTERFACE=telegram\nTG_TOKEN=\nTG_CHAT_ID=\nAUTH_METHOD=spid\nSPID_PROVIDER=sielte\n", encoding="utf-8")
+
+    inputs = [
+        "1",                 # Modalità: Telegram
+        "bot_poste:TOKEN",   # TG_TOKEN
+        "99887766",          # TG_CHAT_ID
+        "",                  # TG_CHAT_ID_SECONDARY
+        "2",                 # Metodo: SPID con altro fornitore
+        "1",                 # Provider: Poste Italiane (PosteID)
+        "2",                 # Modalità: SMS OTP
+        "luigi.verdi",       # Username PosteID
+        "SmsPass456!",       # Password PosteID
+        "1",                 # first_match
+        "5",                 # 5 minuti
+    ]
+    input_iter = iter(inputs)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(input_iter))
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": next(input_iter))
+
+    ok = run_wizard(env_path=env_file, example_path=example_file)
+    assert ok is True
+    content = env_file.read_text(encoding="utf-8")
+    assert "AUTH_METHOD=spid" in content
+    assert "SPID_PROVIDER=poste" in content
+    assert "SPID_USERNAME=luigi.verdi" in content
+    assert "SPID_PASSWORD=SmsPass456!" in content
+    assert "POSTE_MODE=sms" in content
+    assert "SPID_OTP_MODE=sms" in content
+
+
 def test_check_or_run_wizard_when_file_exists(tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text("TG_TOKEN=test\n", encoding="utf-8")
@@ -201,6 +295,7 @@ def test_check_or_run_wizard_missing_non_tty(tmp_path, monkeypatch):
     # Ensure no environment variables trigger is_env_configured
     for k in ("TG_TOKEN", "TG_CHAT_ID", "CONTROL_INTERFACE", "AUTH_METHOD", "SPID_USERNAME", "SIELTE_USERNAME", "CIE_USERNAME", "CIE_MODE", "SPID_PROVIDER", "CONTAINER", "DOCKER"):
         monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr("core.wizard.is_env_configured", lambda: False)
 
     with patch("core.wizard.run_wizard") as mock_run:
         res = check_or_run_wizard(env_path=env_file, force=False)

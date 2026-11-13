@@ -1,3 +1,5 @@
+import threading
+from pathlib import Path
 from unittest.mock import MagicMock
 import pytest
 
@@ -560,6 +562,116 @@ def test_avvia_login_failure_no_dump():
         assert ok is False
         ctrl.bot.send_photo.assert_not_called()
         ctrl.bot.notify.assert_called_once()
+
+
+def test_cattura_screenshot_browser_alive_idle(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEBUG_DUMP_DIR", str(tmp_path))
+    ctrl = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.save_screenshot.side_effect = lambda p: Path(p).write_bytes(b"\x89PNG\r\n\x1a\n")
+    mock_driver.current_url = "https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata"
+    mock_driver.title = "Fascicolo Sanitario"
+    mock_driver.page_source = "<html><body>Home</body></html>"
+    ctrl.browser.driver = mock_driver
+    ctrl.browser.is_alive.return_value = True
+    ctrl._browser_lock = threading.RLock()
+    ctrl.login_in_corso = False
+    ctrl.polling_in_corso = False
+    ctrl.paused = False
+    ctrl.sess.session_valid = True
+    ctrl._flows = []
+
+    res = Controller.cattura_screenshot(ctrl, tag="test", prefix="tg")
+    assert res["ok"] is True
+    assert res["in_corso"] is False
+    assert res["url"] == "https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata"
+    assert res["title"] == "Fascicolo Sanitario"
+    assert "Sessione attiva" in res["stato"]
+    assert Path(res["png_path"]).exists()
+    mock_driver.save_screenshot.assert_called_once_with(res["png_path"])
+
+
+def test_cattura_screenshot_browser_alive_busy_priority(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEBUG_DUMP_DIR", str(tmp_path))
+    ctrl = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.save_screenshot.side_effect = lambda p: Path(p).write_bytes(b"\x89PNG\r\n\x1a\n")
+    mock_driver.current_url = "https://www.fascicolosanitario.regione.lombardia.it/prenotazione/scelta"
+    mock_driver.title = "Scelta Slot"
+    mock_driver.page_source = "<html><body>Slots</body></html>"
+    ctrl.browser.driver = mock_driver
+    ctrl.browser.is_alive.return_value = True
+
+    # Simulate _browser_lock already acquired by another thread
+    busy_lock = threading.Lock()
+    busy_lock.acquire()
+    ctrl._browser_lock = busy_lock
+    ctrl.login_in_corso = False
+    ctrl.polling_in_corso = True
+    flow_mock = MagicMock(mid="mon_oculistica")
+    ctrl._flows = [flow_mock]
+    ctrl.store.get_action.return_value = "polling"
+
+    res = Controller.cattura_screenshot(ctrl, tag="test_busy", prefix="tg")
+    assert res["ok"] is True
+    assert res["in_corso"] is True
+    assert "Ricerca disponibilità in corso" in res["stato"]
+    assert "mon_oculistica" in res["stato"]
+    assert Path(res["png_path"]).exists()
+    mock_driver.save_screenshot.assert_called_once()
+    busy_lock.release()
+
+
+def test_cattura_screenshot_browser_not_alive_starts_browser(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEBUG_DUMP_DIR", str(tmp_path))
+    ctrl = MagicMock()
+    ctrl.browser.driver = None
+    mock_driver = MagicMock()
+    mock_driver.save_screenshot.side_effect = lambda p: Path(p).write_bytes(b"\x89PNG\r\n\x1a\n")
+    mock_driver.current_url = "https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata"
+    mock_driver.title = "Login Fascicolo"
+    ctrl.browser.start.return_value = mock_driver
+    ctrl._browser_lock = threading.RLock()
+    ctrl.sess.session_valid = False
+    ctrl.cfg.settings = {}
+
+    res = Controller.cattura_screenshot(ctrl, tag="test_start", prefix="tg")
+    assert res["ok"] is True
+    assert res["in_corso"] is False
+    ctrl.browser.start.assert_called_once()
+    mock_driver.get.assert_called_with("https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata")
+    mock_driver.save_screenshot.assert_called_once()
+
+
+def test_cattura_screenshot_failure_handling(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEBUG_DUMP_DIR", str(tmp_path))
+    ctrl = MagicMock()
+    mock_driver = MagicMock()
+    mock_driver.save_screenshot.side_effect = RuntimeError("Render crash")
+    ctrl.browser.driver = mock_driver
+    ctrl.browser.is_alive.return_value = True
+    ctrl._browser_lock = threading.RLock()
+    ctrl.login_in_corso = False
+    ctrl.polling_in_corso = False
+    ctrl._flows = []
+
+    res = Controller.cattura_screenshot(ctrl, tag="test_err", prefix="tg")
+    assert res["ok"] is False
+    assert "Impossibile salvare lo screenshot" in res["error"]
+
+
+def test_browser_screenshot_wrapper():
+    from core.browser import Browser, BrowserSettings
+    b = Browser(BrowserSettings())
+    assert b.screenshot("any.png") is False
+
+    mock_driver = MagicMock()
+    b.driver = mock_driver
+    assert b.screenshot("any.png") is True
+    mock_driver.save_screenshot.assert_called_once_with("any.png")
+
+    mock_driver.save_screenshot.side_effect = Exception("failed")
+    assert b.screenshot("any.png") is False
 
 
 

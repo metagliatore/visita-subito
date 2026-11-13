@@ -770,6 +770,7 @@ def test_telegram_send_photo(tmp_path):
     with patch("telegram.ext.Application.builder") as mock_builder:
         mock_app = MagicMock()
         mock_builder.return_value.token.return_value.build.return_value = mock_app
+        mock_builder.return_value.token.return_value.request.return_value.build.return_value = mock_app
         mock_app.__aenter__.return_value = mock_app
         mock_app.__aexit__.return_value = None
         mock_app.bot.send_photo = AsyncMock()
@@ -788,6 +789,7 @@ def test_telegram_send_photo_fallback_to_document(tmp_path):
     with patch("telegram.ext.Application.builder") as mock_builder:
         mock_app = MagicMock()
         mock_builder.return_value.token.return_value.build.return_value = mock_app
+        mock_builder.return_value.token.return_value.request.return_value.build.return_value = mock_app
         mock_app.__aenter__.return_value = mock_app
         mock_app.__aexit__.return_value = None
         mock_app.bot.send_photo = AsyncMock(side_effect=Exception("send_photo failed"))
@@ -808,6 +810,7 @@ def test_telegram_send_photo_with_buttons(tmp_path):
     with patch("telegram.ext.Application.builder") as mock_builder:
         mock_app = MagicMock()
         mock_builder.return_value.token.return_value.build.return_value = mock_app
+        mock_builder.return_value.token.return_value.request.return_value.build.return_value = mock_app
         mock_app.__aenter__.return_value = mock_app
         mock_app.__aexit__.return_value = None
         mock_app.bot.send_photo = AsyncMock()
@@ -1097,3 +1100,254 @@ def test_h_callback_decide_deny_day():
     msg = q.edit_message_text.call_args[0][0]
     assert "Giorno rifiutato" in msg
     assert "intera giornata è stata aggiunta alla blacklist" in msg
+
+
+def test_h_screenshot_success(tmp_path):
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    bot.controller = mock_ctl
+
+    png_file = tmp_path / "shot.png"
+    png_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    mock_ctl.cattura_screenshot.return_value = {
+        "ok": True,
+        "png_path": str(png_file),
+        "url": "https://www.fascicolosanitario.regione.lombardia.it/prenotaonline/riservata",
+        "title": "Portale Fascicolo",
+        "stato": "Sessione attiva (idle)",
+        "timestamp": "12/11/2026 12:00:00",
+        "in_corso": False,
+    }
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    status_msg = MagicMock()
+    status_msg.edit_text = AsyncMock()
+    status_msg.delete = AsyncMock()
+    up.effective_message.reply_text = AsyncMock(return_value=status_msg)
+    up.effective_message.reply_photo = AsyncMock()
+
+    ctx = MagicMock()
+    asyncio.run(bot._h_screenshot(up, ctx))
+
+    up.effective_message.reply_text.assert_awaited_once()
+    up.effective_message.reply_photo.assert_awaited_once()
+    call_kw = up.effective_message.reply_photo.call_args[1]
+    assert "Screenshot del Portale" in call_kw["caption"]
+    assert "Portale Fascicolo" in call_kw["caption"]
+    assert "Sessione attiva" in call_kw["caption"]
+    status_msg.delete.assert_awaited_once()
+
+
+def test_h_screenshot_fallback_to_document(tmp_path):
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    bot.controller = mock_ctl
+
+    png_file = tmp_path / "shot2.png"
+    png_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    mock_ctl.cattura_screenshot.return_value = {
+        "ok": True,
+        "png_path": str(png_file),
+        "url": "https://example.com",
+        "title": "Title",
+        "stato": "Ricerca in corso",
+        "timestamp": "12/11/2026 12:00:00",
+        "in_corso": True,
+    }
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    status_msg = MagicMock()
+    status_msg.edit_text = AsyncMock()
+    status_msg.delete = AsyncMock()
+    up.effective_message.reply_text = AsyncMock(return_value=status_msg)
+    up.effective_message.reply_photo = AsyncMock(side_effect=Exception("Telegram photo format error"))
+    up.effective_message.reply_document = AsyncMock()
+
+    ctx = MagicMock()
+    asyncio.run(bot._h_screenshot(up, ctx))
+
+    up.effective_message.reply_photo.assert_awaited_once()
+    up.effective_message.reply_document.assert_awaited_once()
+    call_kw = up.effective_message.reply_document.call_args[1]
+    assert "Catturato con priorità" in call_kw["caption"]
+    status_msg.delete.assert_awaited_once()
+
+
+def test_h_screenshot_error():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    bot.controller = mock_ctl
+
+    mock_ctl.cattura_screenshot.return_value = {
+        "ok": False,
+        "error": "Driver crash details",
+    }
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    status_msg = MagicMock()
+    status_msg.edit_text = AsyncMock()
+    up.effective_message.reply_text = AsyncMock(return_value=status_msg)
+
+    ctx = MagicMock()
+    asyncio.run(bot._h_screenshot(up, ctx))
+
+    status_msg.edit_text.assert_awaited_once()
+    assert "Driver crash details" in status_msg.edit_text.call_args[0][0]
+
+
+def test_h_screenshot_unauthorized():
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    bot.controller = mock_ctl
+
+    up = MagicMock()
+    up.effective_chat.id = 99999  # Unauthorized chat
+    up.message.reply_text = AsyncMock()
+
+    ctx = MagicMock()
+    asyncio.run(bot._h_screenshot(up, ctx))
+
+    mock_ctl.cattura_screenshot.assert_not_called()
+
+
+def test_h_callback_screenshot(tmp_path):
+    from services.telegram_bot import TelegramBot
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    bot.controller = mock_ctl
+
+    png_file = tmp_path / "shot3.png"
+    png_file.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    mock_ctl.cattura_screenshot.return_value = {
+        "ok": True,
+        "png_path": str(png_file),
+        "url": "https://example.com",
+        "title": "Title",
+        "stato": "Sessione attiva",
+        "timestamp": "12/11/2026 12:00:00",
+        "in_corso": False,
+    }
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    q = up.callback_query
+    q.data = "screenshot"
+    q.answer = AsyncMock()
+    status_msg = MagicMock()
+    status_msg.delete = AsyncMock()
+    up.effective_message.reply_text = AsyncMock(return_value=status_msg)
+    up.effective_message.reply_photo = AsyncMock()
+
+    ctx = MagicMock()
+    asyncio.run(bot._h_callback(up, ctx))
+
+    q.answer.assert_awaited_once()
+    up.effective_message.reply_photo.assert_awaited_once()
+
+
+def test_h_callback_decide_deny_retries_on_transient_connect_error():
+    import telegram.error
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    bot.controller = mock_ctl
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    q = up.callback_query
+    q.data = "decide:deny:req_456"
+    # First attempt raises NetworkError(httpx.ConnectError), second succeeds
+    q.edit_message_text = AsyncMock(side_effect=[
+        telegram.error.NetworkError("httpx.ConnectError: [Errno 111] Connection refused"),
+        None,
+    ])
+    q.answer = AsyncMock()
+
+    asyncio.run(bot._h_callback(up, MagicMock()))
+
+    mock_ctl.decide_request.assert_called_once_with("req_456", False, extra={"azione": "deny"})
+    assert q.edit_message_text.await_count == 2
+    # Verify that the final successful call was the intended user message, NOT "Errore: httpx.ConnectError:"
+    last_call_text = q.edit_message_text.call_args[0][0]
+    assert "Richiesta rifiutata" in last_call_text
+    assert "Errore: httpx" not in last_call_text
+
+
+def test_h_callback_decide_deny_permanent_network_error_never_shows_error_text():
+    import telegram.error
+    bot = TelegramBot.__new__(TelegramBot)
+    bot.chat_ids = ["12345"]
+    mock_ctl = MagicMock()
+    bot.controller = mock_ctl
+
+    up = MagicMock()
+    up.effective_chat.id = 12345
+    q = up.callback_query
+    q.data = "decide:deny:req_789"
+    q.edit_message_text = AsyncMock(
+        side_effect=telegram.error.NetworkError("httpx.ConnectError: [Errno 111] Connection refused")
+    )
+    q.answer = AsyncMock()
+
+    asyncio.run(bot._h_callback(up, MagicMock()))
+
+    mock_ctl.decide_request.assert_called_once_with("req_789", False, extra={"azione": "deny"})
+    # It must never edit the message to display raw technical connect error
+    for call in q.edit_message_text.call_args_list:
+        call_text = call[0][0]
+        assert "Errore: httpx" not in call_text
+
+
+def test_safe_edit_message_text_retries_and_handles_bad_request():
+    import telegram.error
+    bot = TelegramBot.__new__(TelegramBot)
+    q = MagicMock()
+
+    # 1. Successful on 2nd retry after NetworkError
+    q.edit_message_text = AsyncMock(side_effect=[
+        telegram.error.NetworkError("httpx.ConnectError"),
+        "success"
+    ])
+    res = asyncio.run(bot._safe_edit_message_text(q, "test", retry_delay=0.01))
+    assert res == "success"
+    assert q.edit_message_text.await_count == 2
+
+    # 2. BadRequest ("Message is not modified") is treated as harmless
+    q.edit_message_text = AsyncMock(
+        side_effect=telegram.error.BadRequest("Message is not modified: specified new message content and reply markup are exactly the same")
+    )
+    res = asyncio.run(bot._safe_edit_message_text(q, "test", retry_delay=0.01))
+    assert res is None
+
+    # 3. Permanent NetworkError exhausts retries gracefully without unhandled exception
+    q.edit_message_text = AsyncMock(
+        side_effect=telegram.error.NetworkError("httpx.ConnectError")
+    )
+    res = asyncio.run(bot._safe_edit_message_text(q, "test", max_retries=2, retry_delay=0.01))
+    assert res is None
+    assert q.edit_message_text.await_count == 2
+
+
+def test_create_application_builder_configures_timeouts():
+    bot = TelegramBot("123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11", "12345")
+    builder = bot._create_application_builder()
+    app = builder.build()
+    req = app.bot.request
+    assert req._client_kwargs["limits"].max_connections >= 8
+    assert req._client_kwargs["timeout"].connect >= 10.0
+    assert req._client_kwargs["timeout"].read >= 10.0

@@ -12,9 +12,12 @@ import asyncio
 import logging
 import threading
 
+import httpx
+import telegram.error
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
+from telegram.request import HTTPXRequest
 
 log = logging.getLogger(__name__)
 
@@ -28,12 +31,14 @@ HELP_TEXT = (
     "/status - stato monitor e sessione\n"
     "/poll - forza il controllo disponibilità\n"
     "/anticipa - cerca date precedenti per un appuntamento già prenotato\n"
+    "/screenshot - cattura e invia screenshot attuale del portale\n"
     "/pause - metti in pausa o riprendi la ricerca (/resume per riprendere)\n"
     "\n📋 <b>Informazioni</b>\n"
     "/ricette - elenca le ricette da prenotare\n"
     "/appuntamenti - elenca gli appuntamenti esistenti e genera eventi calendario (.ics)\n"
     "/version - versione corrente e verifica aggiornamenti su GitHub\n"
     "/bug - segnala un problema o malfunzionamento\n"
+    "/dona - supporta il progetto offrendo un caffè allo sviluppatore ☕\n"
     "\n❓ /help - questo messaggio"
 )
 
@@ -62,19 +67,77 @@ class TelegramBot:
         self._pending_otp = False
         self._received_otp = None
 
+    # ---------- Application builder & HTTP client resilience ----------
+    def _create_application_builder(self):
+        """Creates an ApplicationBuilder configured with hardened timeouts and connection pool."""
+        req = HTTPXRequest(
+            connection_pool_size=16,
+            connect_timeout=15.0,
+            read_timeout=20.0,
+            write_timeout=20.0,
+            pool_timeout=10.0,
+        )
+        builder = Application.builder().token(self.token)
+        try:
+            from unittest.mock import Mock
+            if isinstance(builder, Mock):
+                builder.request.return_value = builder
+        except ImportError:
+            pass
+        return builder.request(req)
+
+    async def _safe_edit_message_text(self, q, *args, max_retries: int = 3, retry_delay: float = 0.5, **kwargs):
+        """Safely edit callback query message text with retries on transient network errors.
+
+        Handles BadRequest('Message is not modified') silently and prevents leaking raw
+        httpx.ConnectError / NetworkError strings to the chat.
+        """
+        for attempt in range(1, max_retries + 1):
+            try:
+                return await q.edit_message_text(*args, **kwargs)
+            except telegram.error.BadRequest as e:
+                if "Message is not modified" in str(e):
+                    return None
+                log.warning("Impossibile modificare il messaggio Telegram (BadRequest): %s", e)
+                return None
+            except (telegram.error.NetworkError, telegram.error.TimedOut, httpx.HTTPError, ConnectionError, OSError) as e:
+                if attempt < max_retries:
+                    log.warning(
+                        "Errore di rete Telegram (%s) durante modifica messaggio (tentativo %d/%d). Riprovo...",
+                        e, attempt, max_retries
+                    )
+                    await asyncio.sleep(retry_delay * attempt)
+                else:
+                    log.error(
+                        "Errore di rete persistente durante modifica messaggio Telegram dopo %d tentativi: %s",
+                        max_retries, e
+                    )
+                    return None
+            except Exception as e:
+                log.exception("Errore imprevisto durante modifica messaggio Telegram: %s", e)
+                raise
+
     # ---------- sending (used by poller/flows) ----------
     async def _send(self, text: str) -> None:
         if not (self.token and self.chat_ids):
             log.warning("TG non configurato, notifica non inviata: %s", text)
             return
-        app = Application.builder().token(self.token).build()
+        app = self._create_application_builder().build()
         async with app:
             for cid in self.chat_ids:
-                try:
-                    await app.bot.send_message(chat_id=cid, text=text,
-                                               parse_mode=ParseMode.HTML)
-                except Exception as e:  # noqa: BLE001
-                    log.error("invio TG a %s fallito: %s", cid, e)
+                for attempt in range(1, 4):
+                    try:
+                        await app.bot.send_message(chat_id=cid, text=text,
+                                                   parse_mode=ParseMode.HTML)
+                        break
+                    except (telegram.error.NetworkError, telegram.error.TimedOut, httpx.HTTPError, ConnectionError, OSError) as e:
+                        if attempt < 3:
+                            await asyncio.sleep(0.5 * attempt)
+                        else:
+                            log.error("invio TG a %s fallito per errore di rete: %s", cid, e)
+                    except Exception as e:  # noqa: BLE001
+                        log.error("invio TG a %s fallito: %s", cid, e)
+                        break
 
     def notify(self, text: str) -> None:
         """Synchronous/asynchronous callback from flows/poller or handlers (handles active event loops)."""
@@ -109,15 +172,23 @@ class TelegramBot:
             else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
         ] for row in buttons])
         sent = []
-        app = Application.builder().token(self.token).build()
+        app = self._create_application_builder().build()
         async with app:
             for cid in self.chat_ids:
-                try:
-                    m = await app.bot.send_message(chat_id=cid, text=text,
-                                                   reply_markup=kb, parse_mode=ParseMode.HTML)
-                    sent.append((cid, m.message_id))
-                except Exception as e:  # noqa: BLE001
-                    log.error("invio TG con pulsanti a %s fallito: %s", cid, e)
+                for attempt in range(1, 4):
+                    try:
+                        m = await app.bot.send_message(chat_id=cid, text=text,
+                                                       reply_markup=kb, parse_mode=ParseMode.HTML)
+                        sent.append((cid, m.message_id))
+                        break
+                    except (telegram.error.NetworkError, telegram.error.TimedOut, httpx.HTTPError, ConnectionError, OSError) as e:
+                        if attempt < 3:
+                            await asyncio.sleep(0.5 * attempt)
+                        else:
+                            log.error("invio TG con pulsanti a %s fallito per errore di rete: %s", cid, e)
+                    except Exception as e:  # noqa: BLE001
+                        log.error("invio TG con pulsanti a %s fallito: %s", cid, e)
+                        break
         return sent
 
     def notify_buttons(self, text: str, buttons: list) -> list:
@@ -143,16 +214,24 @@ class TelegramBot:
         """Replace text (and remove buttons) of sent messages."""
         if not (self.token and destinations):
             return
-        app = Application.builder().token(self.token).build()
+        app = self._create_application_builder().build()
         async with app:
             for cid, mid in destinations:
-                try:
-                    await app.bot.edit_message_text(
-                        chat_id=cid, message_id=mid, text=text,
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=InlineKeyboardMarkup([]))
-                except Exception as e:  # noqa: BLE001
-                    log.error("edit TG %s/%s fallito: %s", cid, mid, e)
+                for attempt in range(1, 4):
+                    try:
+                        await app.bot.edit_message_text(
+                            chat_id=cid, message_id=mid, text=text,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=InlineKeyboardMarkup([]))
+                        break
+                    except (telegram.error.NetworkError, telegram.error.TimedOut, httpx.HTTPError, ConnectionError, OSError) as e:
+                        if attempt < 3:
+                            await asyncio.sleep(0.5 * attempt)
+                        else:
+                            log.error("edit TG %s/%s fallito per errore di rete: %s", cid, mid, e)
+                    except Exception as e:  # noqa: BLE001
+                        log.error("edit TG %s/%s fallito: %s", cid, mid, e)
+                        break
 
     def edit_message(self, text: str, destinations: list) -> None:
         """Synchronous: edit messages (used by flows/poller)."""
@@ -172,7 +251,7 @@ class TelegramBot:
         if not (self.token and self.chat_ids):
             log.warning("TG non configurato, file non inviato: %s", path)
             return
-        app = Application.builder().token(self.token).build()
+        app = self._create_application_builder().build()
         async with app:
             for cid in self.chat_ids:
                 try:
@@ -214,7 +293,7 @@ class TelegramBot:
                 InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://", "cieid://"))
                 else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
             ] for row in buttons])
-        app = Application.builder().token(self.token).build()
+        app = self._create_application_builder().build()
         async with app:
             for cid in self.chat_ids:
                 try:
@@ -416,6 +495,35 @@ class TelegramBot:
         self._risveglia_se_needed(update)
         from services.updater import format_issue_guide
         testo, bottoni = format_issue_guide()
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://"))
+            else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
+        ] for row in bottoni])
+        await update.message.reply_text(
+            testo,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+    async def _h_dona(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show donation and support information with interactive tier buttons."""
+        if not self._autorizzato(update):
+            return
+        self._risveglia_se_needed(update)
+        from services.donation import get_donation_config, build_donation_message, build_donation_buttons
+        settings = getattr(self.controller, "settings", {}) if hasattr(self, "controller") else {}
+        cfg = get_donation_config(settings)
+        if not cfg["enabled"]:
+            await update.message.reply_text(
+                "ℹ️ <b>Nessun link di donazione o supporto configurato.</b>\n\n"
+                "VisitaSubito è un progetto 100% open source e gratuito. Per abilitare le donazioni, "
+                "configura la variabile <code>DONATION_URL</code> nel file <code>.env</code>.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        testo = build_donation_message()
+        bottoni = build_donation_buttons(cfg)
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton(lbl, url=cb) if str(cb).startswith(("http://", "https://"))
             else InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in row
@@ -690,6 +798,12 @@ class TelegramBot:
                     await q.edit_message_text("❌ <b>Inserimento OTP annullato.</b>", parse_mode=ParseMode.HTML)
                 return
 
+            # Screenshot on demand via button
+            if data in ("screenshot", "action:screenshot"):
+                await q.answer("📸 Acquisizione screenshot...")
+                await self._invia_screenshot(update, ctx)
+                return
+
             # Generate calendar event (.ics) from /appuntamenti
             if data.startswith("app:ics:"):
                 await self._h_genera_ics_callback(update, ctx, data)
@@ -717,13 +831,18 @@ class TelegramBot:
                 approved = azione in ("approve", "anticipa", "posticipa")
                 if self.controller:
                     self.controller.decide_request(req_id, approved, extra={"azione": azione})
-                    await q.edit_message_text(
-                        {"approve": "✅ Approvato: procedo con la prenotazione.",
-                         "deny": "❌ Richiesta rifiutata. La disponibilità è stata aggiunta alla blacklist (puoi gestirla con /blacklist).",
-                         "deny_day": "🚫 Giorno rifiutato. L'intera giornata è stata aggiunta alla blacklist (puoi gestirla con /blacklist).",
-                         "anticipa": "↩️ Anticipo dell'appuntamento in corso...",
-                         "posticipa": "↪️ Posticipo dell'appuntamento in corso...",
-                         }.get(azione, "Azione registrata."))
+                    try:
+                        await q.answer()
+                    except Exception as e_ans:
+                        log.debug("q.answer non riuscita: %s", e_ans)
+                    msg_text = {
+                        "approve": "✅ Approvato: procedo con la prenotazione.",
+                        "deny": "❌ Richiesta rifiutata. La disponibilità è stata aggiunta alla blacklist (puoi gestirla con /blacklist).",
+                        "deny_day": "🚫 Giorno rifiutato. L'intera giornata è stata aggiunta alla blacklist (puoi gestirla con /blacklist).",
+                        "anticipa": "↩️ Anticipo dell'appuntamento in corso...",
+                        "posticipa": "↪️ Posticipo dell'appuntamento in corso...",
+                    }.get(azione, "Azione registrata.")
+                    await self._safe_edit_message_text(q, msg_text)
                 else:
                     await q.answer("Controller non inizializzato")
                 return
@@ -946,10 +1065,12 @@ class TelegramBot:
                 await q.edit_message_text("Monitoraggio annullato.")
             else:
                 await q.answer("Scelta non riconosciuta")
+        except (telegram.error.NetworkError, telegram.error.TimedOut, httpx.HTTPError, ConnectionError, OSError) as net_err:
+            log.warning("Errore di rete Telegram durante gestione callback %s: %s", data, net_err)
         except Exception as e:  # noqa: BLE001
-            import traceback; traceback.print_exc()
+            log.exception("Errore non gestito durante callback %s: %s", data, e)
             try:
-                await q.edit_message_text(f"Errore: {e}")
+                await self._safe_edit_message_text(q, f"⚠️ Si è verificato un errore: {e}")
             except Exception:  # noqa: BLE001
                 pass
 
@@ -1322,6 +1443,126 @@ class TelegramBot:
         if was_blocked:
             text = "🔄 Login sbloccato e riavviato!\n\n" + text
         await update.message.reply_text(text)
+
+    async def _invia_screenshot(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Cattura uno screenshot istantaneo del portale e lo invia nella chat."""
+        target_msg = update.effective_message
+        if not self.controller:
+            if target_msg:
+                await target_msg.reply_text("❌ Controller non inizializzato.")
+            return
+
+        status_msg = None
+        if target_msg:
+            try:
+                status_msg = await target_msg.reply_text("📸 Acquisizione screenshot del portale in corso...")
+            except Exception as e_status:
+                log.debug("Invio messaggio di attesa screenshot non riuscito: %s", e_status)
+
+        loop = asyncio.get_running_loop()
+        try:
+            res = await loop.run_in_executor(None, self.controller.cattura_screenshot)
+        except Exception as e:
+            log.warning("Errore executor cattura_screenshot: %s", e)
+            if status_msg:
+                try:
+                    await status_msg.edit_text(f"❌ Errore durante l'acquisizione dello screenshot: {e}")
+                except Exception:
+                    pass
+            return
+
+        if not res or not res.get("ok"):
+            err_msg = res.get("error", "browser non disponibile") if res else "errore sconosciuto"
+            if status_msg:
+                try:
+                    await status_msg.edit_text(
+                        f"❌ Impossibile acquisire lo screenshot del portale:\n<code>{self._esc(err_msg)}</code>",
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception:
+                    pass
+            return
+
+        png_path = res.get("png_path", "")
+        url = res.get("url", "")
+        title = res.get("title", "")
+        stato = res.get("stato", "")
+        ts = res.get("timestamp", "")
+        in_corso = res.get("in_corso", False)
+
+        caption_lines = [
+            "📸 <b>Screenshot del Portale</b>",
+            "",
+            f"🌐 <b>URL:</b> <code>{self._esc(url)}</code>" if url else "",
+            f"📄 <b>Titolo:</b> {self._esc(title)}" if title else "",
+            f"ℹ️ <b>Stato:</b> {self._esc(stato)}" if stato else "",
+            "⚡ <i>Catturato con priorità (flusso attivo preservato)</i>" if in_corso else "",
+            f"⏱ <i>{self._esc(ts)}</i>",
+        ]
+        caption = "\n".join(line for line in caption_lines if line)
+
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        bot = ctx.bot if (ctx and hasattr(ctx, "bot")) else getattr(self, "app", None).bot if getattr(self, "app", None) else None
+
+        sent = False
+        try:
+            with open(png_path, "rb") as f:
+                if target_msg and hasattr(target_msg, "reply_photo"):
+                    await target_msg.reply_photo(
+                        photo=f,
+                        caption=caption,
+                        parse_mode=ParseMode.HTML,
+                    )
+                elif bot and chat_id:
+                    await bot.send_photo(
+                        chat_id=chat_id,
+                        photo=f,
+                        caption=caption,
+                        parse_mode=ParseMode.HTML,
+                    )
+                sent = True
+        except Exception as e_photo:
+            log.warning("reply_photo fallito (%s), tento invio come file/documento", e_photo)
+            try:
+                from pathlib import Path
+                filename = Path(png_path).name
+                with open(png_path, "rb") as f:
+                    if target_msg and hasattr(target_msg, "reply_document"):
+                        await target_msg.reply_document(
+                            document=f,
+                            filename=filename,
+                            caption=caption,
+                            parse_mode=ParseMode.HTML,
+                        )
+                    elif bot and chat_id:
+                        await bot.send_document(
+                            chat_id=chat_id,
+                            document=f,
+                            filename=filename,
+                            caption=caption,
+                            parse_mode=ParseMode.HTML,
+                        )
+                    sent = True
+            except Exception as e_doc:
+                log.error("Invio screenshot come documento fallito: %s", e_doc)
+                if status_msg:
+                    try:
+                        await status_msg.edit_text(f"❌ Errore durante l'invio dell'immagine: {e_doc}")
+                    except Exception:
+                        pass
+                return
+
+        if sent and status_msg:
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+
+    async def _h_screenshot(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._autorizzato(update):
+            return
+        self._risveglia_se_needed(update)
+        await self._invia_screenshot(update, ctx)
 
     async def _h_poll(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._autorizzato(update):
@@ -1701,6 +1942,7 @@ class TelegramBot:
                 BotCommand("status", "Stato dei monitor e sessione SPID"),
                 BotCommand("poll", "Forza controllo disponibilità adesso"),
                 BotCommand("anticipa", "Cerca date precedenti per visita prenotata"),
+                BotCommand("screenshot", "Cattura e invia screenshot del portale"),
                 BotCommand("pause", "Mette in pausa o riprende la ricerca automatica"),
                 BotCommand("resume", "Riprende la ricerca automatica"),
                 BotCommand("ricette", "Elenco delle ricette dematerializzate"),
@@ -1718,13 +1960,14 @@ class TelegramBot:
             await self._send_startup_welcome(application)
 
         async def _error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-            import telegram.error
             if isinstance(context.error, telegram.error.Conflict):
                 log.error("⚠️ Conflitto Telegram (HTTP 409 Conflict): un'altra istanza del bot sta usando lo stesso TG_TOKEN contemporaneamente! Assicurati che solo una istanza del bot sia in esecuzione (es. arresta istanze locali o stack duplicati su Portainer/server).")
+            elif isinstance(context.error, (telegram.error.NetworkError, telegram.error.TimedOut, httpx.HTTPError, ConnectionError, OSError)):
+                log.warning("Avviso di rete gestito da TelegramBot: %s", context.error)
             else:
                 log.error("Errore gestito da TelegramBot: %s", context.error, exc_info=context.error)
 
-        self.app = Application.builder().token(self.token).post_init(_post_init).build()
+        self.app = self._create_application_builder().post_init(_post_init).build()
         self.app.add_error_handler(_error_handler)
         self.app.add_handler(CommandHandler("start", self._h_start))
         self.app.add_handler(CommandHandler("status", self._h_status))
@@ -1732,6 +1975,7 @@ class TelegramBot:
         self.app.add_handler(CommandHandler(["appuntamenti", "calendario", "ics"], self._h_appuntamenti))
         self.app.add_handler(CommandHandler("poll", self._h_poll))
         self.app.add_handler(CommandHandler("anticipa", self._h_anticipa))
+        self.app.add_handler(CommandHandler(["screenshot", "screen", "foto"], self._h_screenshot))
         self.app.add_handler(CommandHandler(["pause", "pause_unpause"], self._h_pause))
         self.app.add_handler(CommandHandler(["resume", "unpause"], self._h_resume))
         self.app.add_handler(CommandHandler("monitora", self._h_monitora))
@@ -1739,6 +1983,7 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("stop", self._h_stop))
         self.app.add_handler(CommandHandler(["version", "versione", "aggiornamenti", "update"], self._h_version))
         self.app.add_handler(CommandHandler("bug", self._h_bug))
+        self.app.add_handler(CommandHandler(["dona", "donazione", "caffe", "coffee", "supporto"], self._h_dona))
         self.app.add_handler(CommandHandler("help", self._h_help))
         # Inline buttons (wizard /monitora and replies)
         self.app.add_handler(CallbackQueryHandler(self._h_callback))

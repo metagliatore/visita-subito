@@ -7,10 +7,10 @@ auth:
 
   spid:
     # Provider SPID supportati:
-    # "sielte" (automatizzato con push/OTP), "poste", "aruba", "infocert",
-    # "lepida", "namirial", "tim", "register", "etna", "infocamere", "intesigroup"
+    # "sielte" (automatizzato con push/OTP), "poste" (sperimentale: con push/SMS/QR),
+    # "aruba", "infocert", "lepida", "namirial", "tim", "register", "etna", "infocamere", "intesigroup"
     provider: "sielte"
-    otp_mode: "notifica"  # "notifica" (push app) oppure "otp" (SMS/app)
+    otp_mode: "notifica"  # "notifica"/"app" (push app), "sms"/"otp" (SMS OTP), "qr" (QR Code)
 
   cie:
     # Modalità CIE:
@@ -102,5 +102,15 @@ app:
   check_updates: true
   # Invia messaggio di benvenuto con stato versione su Telegram all'avvio (sovrascrivibile con TG_STARTUP_NOTIFICATION in .env)
   tg_startup_notification: true
+
+donations:
+  # Messaggio di ringraziamento e supporto inviato su Telegram dopo una prenotazione effettuata con successo
+  # (sovrascrivibile tramite DONATION_URL, DONATION_ENABLED, ecc. in .env)
+  enabled: true
+  url: ""                  # URL principale (es. https://buymeacoffee.com/tuonome o https://paypal.me/tuonome)
+  # Link opzionali con importi preimpostati (se vuoti, usa url o calcola importi se supportati es. PayPal)
+  url_2eur: ""
+  url_3eur: ""
+  url_5eur: ""
 
 
