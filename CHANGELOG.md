@@ -1,3 +1,15 @@
+## v0.4.0 (2026-11-14)
+
+### Feat
+
+- **donations**: add post-booking support prompt and /dona command with configurable tiers
+- **debug**: add on-demand priority portal screenshot command via Telegram and CLI
+- **auth**: add robust SPID PosteID login with push, SMS OTP, and QR Code fallbacks
+
+### Fix
+
+- **telegram**: handle transient network errors on proposal callbacks and harden HTTPXRequest
+
 ## v0.3.0 (2026-11-07)
 
 ### Feat
