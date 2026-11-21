@@ -1,3 +1,14 @@
+## v0.5.0 (2026-11-21)
+
+### Feat
+
+- **donations**: integrate Buy Me a Coffee with dual action buttons (coffee and GitHub star)
+- **docs**: add official Buy Me a Coffee badge and dedicated support section in README
+
+### Fix
+
+- **test**: freeze reference date in CLI reschedule test to prevent working-day deadline shifts
+
 ## v0.4.0 (2026-11-14)
 
 ### Feat
