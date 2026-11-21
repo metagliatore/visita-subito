@@ -76,13 +76,15 @@ def test_build_donation_buttons_paypal():
     assert len(buttons) == 2
     row1, row2 = buttons[0], buttons[1]
     assert len(row1) == 2
-    assert len(row2) == 1
+    assert len(row2) == 2
     assert row1[0][0] == "☕ Offri 2€"
     assert row1[0][1] == "https://paypal.me/mario/2EUR"
     assert row1[1][0] == "🍕 Offri 5€"
     assert row1[1][1] == "https://paypal.me/mario/5EUR"
     assert row2[0][0] == "💝 Altro importo"
     assert row2[0][1] == "https://paypal.me/mario"
+    assert row2[1][0] == "⭐ Stella su GitHub"
+    assert "github.com/metagliatore/visita-subito" in row2[1][1]
 
 
 def test_build_donation_buttons_custom_tiers():
@@ -99,18 +101,16 @@ def test_build_donation_buttons_custom_tiers():
     assert buttons[0][1][1] == "https://buymeacoffee.com/test/5eur"
     assert buttons[1][0][0] == "💝 Altro importo"
     assert buttons[1][0][1] == "https://buymeacoffee.com/test"
+    assert buttons[1][1][0] == "⭐ Stella su GitHub"
 
 
 def test_build_donation_buttons_buymeacoffee():
     cfg = {"url": "https://buymeacoffee.com/metagliatore"}
     buttons = build_donation_buttons(cfg)
-    assert len(buttons) == 2
-    assert buttons[0][0][0] == "☕ Offri 2€"
-    assert buttons[0][0][1] == "https://buymeacoffee.com/metagliatore"
-    assert buttons[0][1][0] == "🍕 Offri 5€"
-    assert buttons[0][1][1] == "https://buymeacoffee.com/metagliatore"
-    assert buttons[1][0][0] == "💝 Altro importo"
-    assert buttons[1][0][1] == "https://buymeacoffee.com/metagliatore"
+    assert len(buttons) == 1
+    assert len(buttons[0]) == 2
+    assert buttons[0][0] == ("☕ Offri un caffè", "https://buymeacoffee.com/metagliatore")
+    assert buttons[0][1] == ("⭐ Dai una stella su GitHub", "https://github.com/metagliatore/visita-subito")
 
 
 def test_build_donation_buttons_empty():
@@ -123,6 +123,7 @@ def test_build_donation_message():
     assert "100€ e 150€" in msg
     assert "open source" in msg
     assert "offrirmi un caffè" in msg
+    assert "stella su GitHub" in msg
 
 
 def test_invia_messaggio_donazione_disabled():
@@ -143,7 +144,10 @@ def test_invia_messaggio_donazione_enabled(monkeypatch):
     mock_bot.notify_buttons.assert_called_once()
     args, _ = mock_bot.notify_buttons.call_args
     assert "Prenotazione confermata" in args[0]
-    assert len(args[1]) == 2
+    assert len(args[1]) == 1
+    assert len(args[1][0]) == 2
+    assert args[1][0][0][0] == "☕ Offri un caffè"
+    assert args[1][0][1][0] == "⭐ Dai una stella su GitHub"
 
 
 def test_invia_messaggio_donazione_handles_exception(monkeypatch):
