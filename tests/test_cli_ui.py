@@ -1,3 +1,4 @@
+from datetime import datetime
 import os
 import sys
 from pathlib import Path
@@ -301,6 +302,7 @@ def test_commands_ricette(capsys):
 
 
 def test_command_anticipa(monkeypatch, capsys):
+    monkeypatch.setattr("services.deadline.get_now", lambda: datetime(2026, 11, 1, 10, 0))
     ui = CliUI()
     mock_ctl = MagicMock()
     mock_ctl.aggiungi_monitor.return_value = "reschedule-CARD-1"

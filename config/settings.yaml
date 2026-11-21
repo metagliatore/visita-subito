@@ -107,7 +107,7 @@ donations:
   # Messaggio di ringraziamento e supporto inviato su Telegram dopo una prenotazione effettuata con successo
   # (sovrascrivibile tramite DONATION_URL, DONATION_ENABLED, ecc. in .env)
   enabled: true
-  url: ""                  # URL principale (es. https://buymeacoffee.com/tuonome o https://paypal.me/tuonome)
+  url: ""                  # URL principale (es. https://buymeacoffee.com/metagliatore o https://paypal.me/metagliatore)
   # Link opzionali con importi preimpostati (se vuoti, usa url o calcola importi se supportati es. PayPal)
   url_2eur: ""
   url_3eur: ""

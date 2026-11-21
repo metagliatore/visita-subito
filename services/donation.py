@@ -42,34 +42,42 @@ def get_donation_config(settings: dict | None = None) -> dict[str, Any]:
     }
 
 
+GITHUB_REPO_URL = "https://github.com/metagliatore/visita-subito"
+
+
 def build_donation_buttons(donation_cfg: dict) -> list[list[tuple[str, str]]]:
-    """Build inline keyboard buttons for Telegram with direct donation tiers."""
+    """Build inline keyboard buttons for Telegram.
+
+    Default layout:
+      [☕ Offri un caffè]  [⭐ Dai una stella su GitHub]
+
+    If specific tier URLs are configured (e.g. url_2eur and url_5eur):
+      Row 1: [☕ Offri 2€]  [🍕 Offri 5€]
+      Row 2: [💝 Altro importo]  [⭐ Stella su GitHub]
+    """
     url = donation_cfg.get("url", "").strip()
     if not url:
         return []
 
     url_2 = donation_cfg.get("url_2eur", "").strip()
-    url_3 = donation_cfg.get("url_3eur", "").strip()
     url_5 = donation_cfg.get("url_5eur", "").strip()
+    github_url = donation_cfg.get("github_url", "").strip() or GITHUB_REPO_URL
 
-    # Smart synthesis for PayPal.me if specific tier URLs are not set
-    # e.g. https://paypal.me/user -> https://paypal.me/user/2EUR
     if "paypal.me" in url.lower():
         base_pp = url.rstrip("/")
         if not url_2:
             url_2 = f"{base_pp}/2EUR"
-        if not url_3:
-            url_3 = f"{base_pp}/3EUR"
         if not url_5:
             url_5 = f"{base_pp}/5EUR"
 
-    url_2 = url_2 or url
-    url_3 = url_3 or url
-    url_5 = url_5 or url
+    if url_2 and url_5 and (url_2 != url or url_5 != url):
+        return [
+            [("☕ Offri 2€", url_2), ("🍕 Offri 5€", url_5)],
+            [("💝 Altro importo", url), ("⭐ Stella su GitHub", github_url)],
+        ]
 
     return [
-        [("☕ Offri un caffè (2€)", url_2), ("🥐 Caffè & Cornetto (3€)", url_3)],
-        [("🍕 Offri una pizza (5€)", url_5), ("💝 Importo a piacere", url)],
+        [("☕ Offri un caffè", url), ("⭐ Dai una stella su GitHub", github_url)],
     ]
 
 
@@ -83,7 +91,7 @@ def build_donation_message(slot: Any = None, monitor: dict | None = None) -> str
         "Questo bot è un progetto <b>100% open source, gratuito e senza scopo di lucro</b>, "
         "sviluppato e costantemente aggiornato nel tempo libero.\n\n"
         "Se hai apprezzato il lavoro e vuoi premiare l'impegno, puoi <b>offrirmi un caffè</b> "
-        "per sostenere lo sviluppo di nuove funzionalità! ☕"
+        "o lasciare una <b>stella su GitHub</b> per sostenere il progetto! ☕⭐"
     )
 
 

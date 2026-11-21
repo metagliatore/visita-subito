@@ -15,10 +15,11 @@
 
 <p align="center">
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue?logo=python" alt="Python Version"></a>
-  <a href="https://docs.pytest.org/"><img src="https://img.shields.io/badge/tests-400%20passed-success?logo=pytest" alt="Tests"></a>
+  <a href="https://docs.pytest.org/"><img src="https://img.shields.io/badge/tests-408%20passed-success?logo=pytest" alt="Tests"></a>
   <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/docker-ready-2496ED?logo=docker" alt="Docker"></a>
   <a href="https://telegram.org/"><img src="https://img.shields.io/badge/telegram-bot-2CA5E0?logo=telegram" alt="Telegram"></a>
   <a href="https://www.fascicolosanitario.regione.lombardia.it"><img src="https://img.shields.io/badge/regione-lombardia-00875A" alt="Lombardia"></a>
+  <a href="https://buymeacoffee.com/metagliatore"><img src="https://img.shields.io/badge/Buy%20Me%20A%20Coffee-metagliatore-yellow.svg?logo=buy-me-a-coffee" alt="Buy Me A Coffee"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-orange" alt="License"></a>
 </p>
 
@@ -526,6 +527,18 @@ pytest
       <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=metagliatore/visita-subito&type=Date" />
       <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=metagliatore/visita-subito&type=Date" width="100%" />
     </picture>
+  </a>
+</p>
+
+---
+
+## ☕ Supporta il progetto
+
+Se **VisitaSubito** ti è stato utile, ti ha fatto risparmiare tempo o ti ha permesso di anticipare visite mediche ed esami saltando mesi di liste d'attesa, puoi sostenere lo sviluppo e premiare l'impegno offrendomi un caffè!
+
+<p align="center">
+  <a href="https://www.buymeacoffee.com/metagliatore" target="_blank">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50">
   </a>
 </p>
 
