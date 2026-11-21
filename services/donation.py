@@ -43,33 +43,29 @@ def get_donation_config(settings: dict | None = None) -> dict[str, Any]:
 
 
 def build_donation_buttons(donation_cfg: dict) -> list[list[tuple[str, str]]]:
-    """Build inline keyboard buttons for Telegram with direct donation tiers."""
+    """Build inline keyboard buttons for Telegram with direct donation tiers (2€, 5€, custom)."""
     url = donation_cfg.get("url", "").strip()
     if not url:
         return []
 
     url_2 = donation_cfg.get("url_2eur", "").strip()
-    url_3 = donation_cfg.get("url_3eur", "").strip()
     url_5 = donation_cfg.get("url_5eur", "").strip()
 
-    # Smart synthesis for PayPal.me if specific tier URLs are not set
-    # e.g. https://paypal.me/user -> https://paypal.me/user/2EUR
+    # Smart direct synthesis for PayPal.me if specific tier URLs are not set
+    # e.g. https://paypal.me/user -> https://paypal.me/user/2EUR and https://paypal.me/user/5EUR
     if "paypal.me" in url.lower():
         base_pp = url.rstrip("/")
         if not url_2:
             url_2 = f"{base_pp}/2EUR"
-        if not url_3:
-            url_3 = f"{base_pp}/3EUR"
         if not url_5:
             url_5 = f"{base_pp}/5EUR"
 
     url_2 = url_2 or url
-    url_3 = url_3 or url
     url_5 = url_5 or url
 
     return [
-        [("☕ Offri un caffè (2€)", url_2), ("🥐 Caffè & Cornetto (3€)", url_3)],
-        [("🍕 Offri una pizza (5€)", url_5), ("💝 Importo a piacere", url)],
+        [("☕ Offri 2€", url_2), ("🍕 Offri 5€", url_5)],
+        [("💝 Altro importo", url)],
     ]
 
 

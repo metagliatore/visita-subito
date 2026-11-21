@@ -75,28 +75,42 @@ def test_build_donation_buttons_paypal():
     buttons = build_donation_buttons(cfg)
     assert len(buttons) == 2
     row1, row2 = buttons[0], buttons[1]
-    assert row1[0][0] == "☕ Offri un caffè (2€)"
+    assert len(row1) == 2
+    assert len(row2) == 1
+    assert row1[0][0] == "☕ Offri 2€"
     assert row1[0][1] == "https://paypal.me/mario/2EUR"
-    assert row1[1][0] == "🥐 Caffè & Cornetto (3€)"
-    assert row1[1][1] == "https://paypal.me/mario/3EUR"
-    assert row2[0][0] == "🍕 Offri una pizza (5€)"
-    assert row2[0][1] == "https://paypal.me/mario/5EUR"
-    assert row2[1][0] == "💝 Importo a piacere"
-    assert row2[1][1] == "https://paypal.me/mario"
+    assert row1[1][0] == "🍕 Offri 5€"
+    assert row1[1][1] == "https://paypal.me/mario/5EUR"
+    assert row2[0][0] == "💝 Altro importo"
+    assert row2[0][1] == "https://paypal.me/mario"
 
 
 def test_build_donation_buttons_custom_tiers():
     cfg = {
         "url": "https://buymeacoffee.com/test",
         "url_2eur": "https://buymeacoffee.com/test/2eur",
-        "url_3eur": "https://buymeacoffee.com/test/3eur",
         "url_5eur": "https://buymeacoffee.com/test/5eur",
     }
     buttons = build_donation_buttons(cfg)
+    assert len(buttons) == 2
+    assert buttons[0][0][0] == "☕ Offri 2€"
     assert buttons[0][0][1] == "https://buymeacoffee.com/test/2eur"
-    assert buttons[0][1][1] == "https://buymeacoffee.com/test/3eur"
-    assert buttons[1][0][1] == "https://buymeacoffee.com/test/5eur"
-    assert buttons[1][1][1] == "https://buymeacoffee.com/test"
+    assert buttons[0][1][0] == "🍕 Offri 5€"
+    assert buttons[0][1][1] == "https://buymeacoffee.com/test/5eur"
+    assert buttons[1][0][0] == "💝 Altro importo"
+    assert buttons[1][0][1] == "https://buymeacoffee.com/test"
+
+
+def test_build_donation_buttons_buymeacoffee():
+    cfg = {"url": "https://buymeacoffee.com/metagliatore"}
+    buttons = build_donation_buttons(cfg)
+    assert len(buttons) == 2
+    assert buttons[0][0][0] == "☕ Offri 2€"
+    assert buttons[0][0][1] == "https://buymeacoffee.com/metagliatore"
+    assert buttons[0][1][0] == "🍕 Offri 5€"
+    assert buttons[0][1][1] == "https://buymeacoffee.com/metagliatore"
+    assert buttons[1][0][0] == "💝 Altro importo"
+    assert buttons[1][0][1] == "https://buymeacoffee.com/metagliatore"
 
 
 def test_build_donation_buttons_empty():
